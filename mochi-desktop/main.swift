@@ -279,14 +279,42 @@ var skinIndex: Int {
     get { min(max(UserDefaults.standard.integer(forKey: "skinIndex"), 0), skins.count - 1) }
     set { UserDefaults.standard.set(newValue, forKey: "skinIndex") }
 }
-var palette: [Character: NSColor] { skins[skinIndex].palette }
-var face: NSColor { skins[skinIndex].face }
+var palette: [Character: NSColor] {
+    var colours = skins[skinIndex].palette
+    if let body = currentLook.bodyColor { colours["B"] = body }
+    return colours
+}
+var face: NSColor { currentLook.bodyColor ?? skins[skinIndex].face }
 var eye: NSColor { skins[skinIndex].eye }
+
+/// How Mochi Studio has dressed her. Missing or unreadable means the defaults.
+struct MochiLook: Decodable {
+    var body: String?
+    var eyes: String?
+    var accessory: String?
+    var name: String?
+    var speed: Double?
+
+    var bodyColor: NSColor? {
+        guard let body, let v = UInt32(body, radix: 16) else { return nil }
+        return NSColor(hex: Int(v))
+    }
+    static func read() -> MochiLook {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi/look.json")
+        guard let data = try? Data(contentsOf: url), let look = try? JSONDecoder().decode(MochiLook.self, from: data) else {
+            return MochiLook()
+        }
+        return look
+    }
+}
+
+/// Mochi's look as last read from Mochi Studio, refreshed every second
+var currentLook = MochiLook()
 
 func pixelColor(_ cell: Character, _ status: Status, blinking: Bool) -> NSColor? {
     switch cell {
-    case "E": return status == .blocked || blinking ? face : eye
-    case "W": return status == .blocked || blinking ? face : status == .ready ? eye : .white
+    case "E": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : eye
+    case "W": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : status == .ready ? eye : .white
     case "e": return status == .ready ? face : eye
     case ".": return nil
     default: return palette[cell]
@@ -317,7 +345,7 @@ final class MochiView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let t = Double(tick) / 12
+        let t = Double(tick) / 12 * (currentLook.speed ?? 1)
         let blinking = status != .ready && status != .blocked && tick % 48 >= 46
 
         // How she moves: trots while working, hops when ready, wiggles when she needs you
@@ -345,6 +373,7 @@ final class MochiView: NSView {
                 NSRect(x: CGFloat(x) * scale, y: CGFloat(y) * scale, width: scale, height: scale).fill()
             }
         }
+        drawAccessory(currentLook.accessory ?? "none")
         ctx.restoreGState()
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
@@ -353,6 +382,28 @@ final class MochiView: NSView {
     }
 
     /// The little status dot by her ear: dots, a clock, a check, a cross or a "z"
+    /// An accessory from Mochi Studio, drawn in her own grid squares (5 points each)
+    private func drawAccessory(_ name: String) {
+        func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSRect {
+            NSRect(x: x * scale, y: y * scale, width: w * scale, height: h * scale)
+        }
+        switch name {
+        case "bow":
+            NSColor(hex: 0x1C7ED6).setFill()
+            NSBezierPath(ovalIn: box(5, 1.5, 3, 2.5)).fill()
+            NSBezierPath(ovalIn: box(8, 1.5, 3, 2.5)).fill()
+        case "hat":
+            NSColor(hex: 0x3A3A48).setFill()
+            NSBezierPath(rect: box(4, -1, 8, 1.2)).fill()
+            NSBezierPath(rect: box(5.5, -4, 5, 3.2)).fill()
+        case "scarf":
+            NSColor(hex: 0xE03131).setFill()
+            NSBezierPath(rect: box(3, 11, 10, 1.6)).fill()
+            NSBezierPath(rect: box(10, 12.2, 2, 2.2)).fill()
+        default: break
+        }
+    }
+
     private func drawBadge(at center: NSPoint) {
         let r: CGFloat = 9
         let ring = NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
@@ -714,7 +765,7 @@ func claudeToolPath() -> String? {
     return ["/usr/local/bin/claude", "/opt/homebrew/bin/claude"].first { FileManager.default.isExecutableFile(atPath: $0) }
 }
 
-/// Reads "Oct 9 at 1:39pm (Europe/London)" into a date
+/// Reads "Oct 9 at 1:39pm (Asia/Saigon)" into a date
 func parseResetDate(_ text: String) -> Date? {
     guard let open = text.firstIndex(of: "("), let close = text.firstIndex(of: ")") else { return nil }
     let zone = TimeZone(identifier: String(text[text.index(after: open)..<close])) ?? .current
@@ -893,6 +944,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     /// Reads every chat, picks the most urgent status, and announces anything new
     func look() {
+        currentLook = MochiLook.read()
         chats = readChats()
         checkUsage()
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
@@ -1090,13 +1142,24 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let size = CardView.size
         let gap: CGFloat = 6
-        let stack = CGFloat(cards.count) * (size.height + gap)
-        let isAbove = screen.maxY - window.frame.maxY >= stack || screen.maxY - window.frame.maxY >= window.frame.minY - screen.minY
+        let count = CGFloat(cards.count)
+        guard count > 0 else { return }
+        let stackHeight = count * size.height + (count - 1) * gap
+
+        // Above Mochi when there is room, otherwise below; the one with more room wins
+        let roomAbove = screen.maxY - window.frame.maxY - 4
+        let roomBelow = window.frame.minY - screen.minY - 4
+        let goAbove = roomAbove >= stackHeight || roomAbove >= roomBelow
+
+        // The whole stack moves as one block, so cards never land on each other at the screen edge
+        var bottom = goAbove ? window.frame.maxY + 2 : window.frame.minY - 2 - stackHeight
+        bottom = min(max(bottom, screen.minY + 4), screen.maxY - 4 - stackHeight)
+
         let x = min(max(window.frame.midX - size.width / 2, screen.minX + 4), screen.maxX - size.width - 4)
         for (i, panel) in cards.enumerated() {
             let step = CGFloat(i) * (size.height + gap)
-            var y = isAbove ? window.frame.maxY + 2 + step : window.frame.minY - size.height - 2 - step
-            y = min(max(y, screen.minY + 4), screen.maxY - size.height - 4)
+            // Newest card sits nearest Mochi; older cards stack away from her
+            let y = goAbove ? bottom + step : bottom + stackHeight - size.height - step
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
     }
@@ -1159,7 +1222,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let open = chats.filter(\.isOpen).count
         var lines = [Line(text: chats.isEmpty
                               ? "Mochi · no Claude chats yet"
-                              : "Mochi · \(open) open chat\(open == 1 ? "" : "s") · \(view.status.label)",
+                              : "\(currentLook.name ?? "Mochi") · \(open) open chat\(open == 1 ? "" : "s") · \(view.status.label)",
                           bold: true, color: view.status.color)]
         if let usage {
             let worst = max(usage.fiveHour, usage.week)
