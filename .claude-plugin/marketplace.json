@@ -1,5 +1,5 @@
 {
   "name": "mochi",
-  "owner": { "name": "YOUR NAME" },
+  "owner": { "name": "Emma Nguyen" },
   "plugins": [{ "name": "pet-mod", "source": "./pet-mod" }]
 }

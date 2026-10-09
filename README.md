@@ -50,6 +50,10 @@ The project has two parts:
 | `pet-mod/` | A Claude Code plugin. It reports what each chat is doing. |
 | `mochi-desktop/` | A macOS app that shows Mochi on your screen. |
 
+## About Claude Code mods
+
+Mochi is built as a **mod** for Claude Code. A mod is a small TypeScript plugin that runs inside Claude Code and reacts to events, such as a chat finishing or a tool asking for approval. According to a [report from IT-Connect](https://www.it-connect.fr/claude-code-mods-plugins/), Anthropic announced mods on 1 October 2026, and they are enabled by default from Claude Code 2.1.287. That date comes from a single source, so check it against Anthropic's own documentation. Plugins, a related feature, were announced on [9 October 2025](https://anthropic.com/news/claude-code-plugins).
+
 ## Requirements
 
 - macOS 13 or later. The Liquid Glass look needs macOS 26; earlier versions use a frosted style.
