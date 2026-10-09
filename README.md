@@ -1,28 +1,23 @@
 # Mochi
 
+> **Work in progress.** Mochi works day to day, but parts are still changing, and some things may break. Feedback and issues are welcome.
+
 <p align="center">
   <img src="docs/mochi-working.gif" alt="Mochi walking while Claude works" width="260">
 </p>
 
-A pixel-art cat for Claude. She sits above your message box in Claude Code, floats on your Mac, and tells you what every Claude chat is doing:
+Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code) on macOS. She sits above your message box, floats on your desktop, and keeps you informed about every chat without you having to watch them.
 
-- **Status:** working, needs your OK, ready, or blocked, with a badge and colours.
-- **Notifications:** Liquid Glass cards beside her for finished work, questions, and tool approvals, with a sound when a chat needs you.
-- **Click her** to see every chat and its latest news. Click a line to jump to that chat in Claude.
-- **Six skins:** classic orange, midnight black, snow white, tuxedo, mint, and lavender galaxy. Pick one from her right-click menu under **Skin**.
-- **Plan usage:** a label under her shows your 5-hour and weekly limits, and clicking it asks Claude for the exact numbers, the same as `/usage`. When you run out, she shows when you can continue.
+## Features
 
-Two parts work together:
-
-| Part | What it is |
-| --- | --- |
-| `pet-mod/` | A Claude Code plugin. It tells Mochi what each chat is doing. |
-| `mochi-desktop/` | A small macOS app that shows Mochi on your screen. |
-
-## Skins
+- **Status at a glance.** Working, needs your OK, ready, or blocked, shown by her pose, her badge, and her colours.
+- **Notifications beside her.** Finished work, questions, and tool approvals appear as Liquid Glass cards next to her. A sound plays when a chat needs you.
+- **Every chat in one list.** Click her to see all your recent chats and their latest news. Click a line to open that chat in Claude.
+- **Plan usage.** A label under her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
+- **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 
 <p align="center">
-  <img src="docs/mochi-skins.png" alt="Six skins: classic orange, midnight black, snow white, tuxedo, mint, lavender galaxy" width="640">
+  <img src="docs/mochi-skins.png" alt="Six skins: classic orange, midnight black, snow white, tuxedo, mint, and lavender galaxy" width="640">
 </p>
 
 ## How it works
@@ -30,54 +25,68 @@ Two parts work together:
 ```mermaid
 flowchart LR
     C[Claude chat] -->|plugin reports status and events| F[~/.claude/mochi/]
-    F -->|Mochi reads each second| M[Mochi on your screen]
+    F -->|Mochi reads every second| M[Mochi on your screen]
     M --> L[Click her: list of every chat]
     M --> K[Cards beside her: finished, questions, approvals]
     M --> U[Usage label under her]
     U -->|click| CL[Runs /usage for exact numbers]
 ```
 
-| Mochi shows | When |
+| Mochi | Meaning |
 | --- | --- |
-| **Working** (walking, dots on her badge) | Claude is answering |
-| **Needs you** (red clock, sound) | Claude needs your OK for a tool, or asks a question |
-| **Ready** (hopping, green check) | Claude has finished; she stays ready until your next message |
-| **Blocked** (grey, squinting) | A reply was interrupted or failed |
+| Walking, dots on her badge | Claude is working |
+| Red clock, sound | Claude needs your OK or has a question |
+| Hopping, green check | Claude has finished; she stays "ready" until your next message |
+| Grey, squinting | A reply was interrupted or failed |
 
-## Why Mochi exists
+The project has two parts:
 
-Claude didn't have a pet, so I made one for myself. I wanted a little companion that lives with my work: one that tells me when things finish, asks for my attention when a chat needs me, and shows me how much of my limit I have left, without my having to watch every chat.
-
-## History
-
-Mochi grew one request at a time:
-
-1. **A text pet in Claude's side panel.** A small ASCII character with a status line, using Claude Code's mod system, which lets a plugin draw inside the app.
-2. **A pet that walks.** The pet moved back and forth while Claude worked and reacted when it finished or was blocked.
-3. **A strip above the message box.** The pet moved out of the side panel into a thin strip above the message box, so it no longer took up space on the screen.
-4. **Pixel art and colour.** The character became a 16×16 pixel cat with a status badge, and later a blinking, animated look in the desktop app.
-5. **A floating app.** Mochi became her own small window on the Mac that you can drag anywhere, plus a list of every chat you have open.
-6. **Notifications beside her.** Finished work, questions, and approvals appear as Liquid Glass cards next to her, each one opening its chat when clicked, with a sound when a chat needs you.
-7. **Plan usage.** A label under her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
-8. **Skins.** Six looks, from classic orange to lavender galaxy, chosen from her right-click menu.
-
-## Setting it up
-
-The easiest way is to open Claude Code and say:
-
-> Follow CLAUDE-SETUP.md in this folder to set up Mochi.
-
-Or follow the steps by hand in [CLAUDE-SETUP.md](CLAUDE-SETUP.md).
+| Part | What it is |
+| --- | --- |
+| `pet-mod/` | A Claude Code plugin. It reports what each chat is doing. |
+| `mochi-desktop/` | A macOS app that shows Mochi on your screen. |
 
 ## Requirements
 
-- macOS 13 or later (the Liquid Glass look needs macOS 26)
-- Claude Code 2.1 or later, with the desktop app
-- Xcode command line tools (`xcode-select --install`)
+- macOS 13 or later. The Liquid Glass look needs macOS 26; earlier versions use a frosted style.
+- Claude Code 2.1 or later, with the Claude desktop app.
+- Xcode command line tools (`xcode-select --install`), to build the app.
+
+## Installation
+
+The simplest way is to open Claude Code and say:
+
+> Follow CLAUDE-SETUP.md in this folder to set up Mochi.
+
+To install by hand, follow the steps in [CLAUDE-SETUP.md](CLAUDE-SETUP.md).
 
 ## Privacy
 
-Mochi reads only the files Claude Code writes on your own Mac, in `~/.claude/mochi/` and the Claude app's own folders. It makes no network calls of its own. Usage checks run the copy of Claude that comes with the app, which reads your usage the same way `/usage` does.
+- Mochi reads and writes files only in `~/.claude/mochi/` and in the Claude app's own folders.
+- Mochi's own code makes no network requests.
+- The usage check runs the copy of Claude that comes with the app. That copy contacts Anthropic's servers to read your usage, the same way `/usage` does. Nothing is sent that you haven't already sent through Claude.
+
+## Background
+
+Claude didn't have a pet, so I made one for myself. I wanted a companion that lives alongside my work: one that tells me when things finish, asks for my attention when a chat needs me, and shows how much of my limit is left, without my having to watch every chat.
+
+### History
+
+1. **A text pet in the side panel.** A small character with a status line, drawn with Claude Code's plugin system.
+2. **A pet that walks.** It moved while Claude worked, and reacted when work finished or was blocked.
+3. **A strip above the message box.** It moved out of the side panel, so it no longer took up space.
+4. **Pixel art.** A 16×16 pixel cat with a status badge, later with a blinking, animated look.
+5. **A floating app.** Mochi became her own small window that you can drag anywhere, with a list of every chat.
+6. **Notification cards.** Finished work, questions, and approvals appear beside her as Liquid Glass cards that open their chat when clicked.
+7. **Plan usage.** A label showing your 5-hour and weekly limits, and when you can continue.
+8. **Skins.** Six looks to choose from.
+
+## Roadmap
+
+- Clean screenshots of the notification cards and usage panel
+- Sign and notarise the desktop app so it opens without warnings
+- Start automatically at login from the plugin, not only from the app's menu
+- Support for Claude chats outside Claude Code
 
 ## Licence
 
