@@ -85,7 +85,6 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 
 - Clean screenshots of the notification cards and usage panel
 - Sign and notarise the desktop app so it opens without warnings
-- Start automatically at login from the plugin, not only from the app's menu
 - Support for Claude chats outside Claude Code
 
 ## Licence
