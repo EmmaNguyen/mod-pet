@@ -850,6 +850,9 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var hideBubble: Timer?
     var chats: [Chat] = []
     /// The last usage warning given, so each level is said once: 80 then 100, for each window
+    /// True while a usage check is running; when the last one finished
+    var usageBusy = false
+    var usageCheckedAt: Date?
     /// Whether you were out of usage at the last look, to tell when it comes back
     var wasBlocked = false
     var warnedFiveHour = 0
@@ -939,6 +942,9 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             self.view.needsDisplay = true
         }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.look() }
+        // Keep the usage numbers fresh in the background, so a click shows them at once
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.refreshUsageQuietly() }
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refreshUsageQuietly() }
         look()
     }
 
@@ -1014,26 +1020,38 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         warnedWeek = week < warnedWeek ? week : max(warnedWeek, week)
     }
 
-    /// Click the usage label: asks Claude for the exact numbers (like /usage), then shows both limits
+    /// Click the usage label: shows the numbers Mochi already has at once, then refreshes them
     func showUsageDetails() {
-        bubbleView.lines = [Line(text: "Checking your usage…", bold: true), Line(text: "Asking Claude, same as /usage", dim: true)]
-        bubbleView.accent = view.status.color
-        hideBubble?.invalidate()
-        showBubble()
+        if let known = Usage.read() { usage = known; view.usage = known }
+        renderUsagePanel(fresh: false, updating: true)
+        refreshUsageQuietly { [weak self] ok in
+            self?.renderUsagePanel(fresh: ok, updating: false)
+        }
+    }
+
+    /// Asks Claude for usage in the background. Skipped if the last check was under 30 seconds ago,
+    /// so a flurry of clicks never starts a flurry of checks.
+    func refreshUsageQuietly(_ done: ((Bool) -> Void)? = nil) {
+        if usageBusy { done?(false); return }
+        if let last = usageCheckedAt, Date().timeIntervalSince(last) < 30 {
+            done?(true)
+            return
+        }
+        usageBusy = true
         refreshUsageFromClaude { [weak self] ok in
-            // Called on a background thread: the screen is only touched on the main thread
             DispatchQueue.main.async {
                 guard let self else { return }
-                if !ok, let older = Usage.read() { self.usage = older }
+                self.usageBusy = false
+                if ok { self.usageCheckedAt = Date() }
                 if let fresh = Usage.read() { self.usage = fresh; self.view.usage = fresh }
                 self.view.needsDisplay = true
-                self.renderUsagePanel(fresh: ok)
+                done?(ok)
             }
         }
     }
 
     /// The glass panel: both limits as bars, when each resets, and how fresh the reading is
-    func renderUsagePanel(fresh: Bool) {
+    func renderUsagePanel(fresh: Bool, updating: Bool = false) {
         guard let usage else {
             say("No usage reading yet. Send a message and I'll get one.", color: Status.idle.color)
             return
@@ -1058,7 +1076,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if let back = usage.backText {
             lines.append(Line(text: "⏳ \(back)", bold: true, color: Usage.color(100)))
         }
-        lines.append(Line(text: fresh ? "Just checked · \(when)" : "Couldn't check now · last read \(when)", dim: true))
+        let status = updating ? "Updating… · last read \(when)" : fresh ? "Just checked · \(when)" : "Couldn't check now · last read \(when)"
+        lines.append(Line(text: status, dim: true))
         bubbleView.lines = lines
         bubbleView.accent = Usage.color(worst)
         showBubble()
