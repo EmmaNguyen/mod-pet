@@ -1,0 +1,6 @@
+{
+  "name": "pet-mod",
+  "version": "0.2.0",
+  "description": "Tells the floating Mochi app what each Claude chat is doing",
+  "types": "./types/index.d.ts"
+}
