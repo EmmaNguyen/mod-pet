@@ -15,6 +15,7 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Every chat in one list.** Click her to see all your recent chats and their latest news. Click a line to open that chat in Claude.
 - **Plan usage.** A label under her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
+- **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads.
 
 <p align="center">
   <img src="docs/mochi-card-mockup.png" alt="Mock-up: a notification card above Mochi" width="640">
@@ -49,6 +50,7 @@ The project has two parts:
 | --- | --- |
 | `pet-mod/` | A Claude Code plugin. It reports what each chat is doing. |
 | `mochi-desktop/` | A macOS app that shows Mochi on your screen. |
+| `mochi-studio/` | A macOS app for customising how Mochi looks. |
 
 ## About Claude Code mods
 
@@ -88,6 +90,7 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 6. **Notification cards.** Finished work, questions, and approvals appear beside her as Liquid Glass cards that open their chat when clicked.
 7. **Plan usage.** A label showing your 5-hour and weekly limits, and when you can continue.
 8. **Skins.** Six looks to choose from.
+9. **Mochi Studio.** A preview app for designing Mochi's look.
 
 ## Roadmap
 
