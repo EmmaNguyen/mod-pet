@@ -1,5 +1,9 @@
 # Mochi
 
+<p align="center">
+  <img src="docs/mochi-working.gif" alt="Mochi walking while Claude works" width="260">
+</p>
+
 A pixel-art cat for Claude. She sits above your message box in Claude Code, floats on your Mac, and tells you what every Claude chat is doing:
 
 - **Status:** working, needs your OK, ready, or blocked, with a badge and colours.
@@ -14,6 +18,31 @@ Two parts work together:
 | --- | --- |
 | `pet-mod/` | A Claude Code plugin. It tells Mochi what each chat is doing. |
 | `mochi-desktop/` | A small macOS app that shows Mochi on your screen. |
+
+## Skins
+
+<p align="center">
+  <img src="docs/mochi-skins.png" alt="Six skins: classic orange, midnight black, snow white, tuxedo, mint, lavender galaxy" width="640">
+</p>
+
+## How it works
+
+```mermaid
+flowchart LR
+    C[Claude chat] -->|plugin reports status and events| F[~/.claude/mochi/]
+    F -->|Mochi reads each second| M[Mochi on your screen]
+    M --> L[Click her: list of every chat]
+    M --> K[Cards beside her: finished, questions, approvals]
+    M --> U[Usage label under her]
+    U -->|click| CL[Runs /usage for exact numbers]
+```
+
+| Mochi shows | When |
+| --- | --- |
+| **Working** (walking, dots on her badge) | Claude is answering |
+| **Needs you** (red clock, sound) | Claude needs your OK for a tool, or asks a question |
+| **Ready** (hopping, green check) | Claude has finished; she stays ready until your next message |
+| **Blocked** (grey, squinting) | A reply was interrupted or failed |
 
 ## Why Mochi exists
 
