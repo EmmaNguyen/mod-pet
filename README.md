@@ -17,6 +17,10 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 
 <p align="center">
+  <img src="docs/mochi-card-mockup.png" alt="Mock-up: a notification card above Mochi" width="640">
+</p>
+
+<p align="center">
   <img src="docs/mochi-skins.png" alt="Six skins: classic orange, midnight black, snow white, tuxedo, mint, and lavender galaxy" width="640">
 </p>
 
