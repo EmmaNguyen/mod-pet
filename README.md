@@ -15,6 +15,23 @@ Two parts work together:
 | `pet-mod/` | A Claude Code plugin. It tells Mochi what each chat is doing. |
 | `mochi-desktop/` | A small macOS app that shows Mochi on your screen. |
 
+## Why Mochi exists
+
+Claude didn't have a pet, so I made one for myself. I wanted a little companion that lives with my work: one that tells me when things finish, asks for my attention when a chat needs me, and shows me how much of my limit I have left, without my having to watch every chat.
+
+## History
+
+Mochi grew one request at a time:
+
+1. **A text pet in Claude's side panel.** A small ASCII character with a status line, using Claude Code's mod system, which lets a plugin draw inside the app.
+2. **A pet that walks.** The pet moved back and forth while Claude worked and reacted when it finished or was blocked.
+3. **A strip above the message box.** The pet moved out of the side panel into a thin strip above the message box, so it no longer took up space on the screen.
+4. **Pixel art and colour.** The character became a 16×16 pixel cat with a status badge, and later a blinking, animated look in the desktop app.
+5. **A floating app.** Mochi became her own small window on the Mac that you can drag anywhere, plus a list of every chat you have open.
+6. **Notifications beside her.** Finished work, questions, and approvals appear as Liquid Glass cards next to her, each one opening its chat when clicked, with a sound when a chat needs you.
+7. **Plan usage.** A label under her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
+8. **Skins.** Six looks, from classic orange to lavender galaxy, chosen from her right-click menu.
+
 ## Setting it up
 
 The easiest way is to open Claude Code and say:
