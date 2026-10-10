@@ -1156,30 +1156,33 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         placeCards()
     }
 
-    /// Cards stack above Mochi, centred on her, the newest closest; below her when there is no room above
+    /// The chat list (when open) and the cards stack beside Mochi as one block, the list nearest her,
+    /// then the newest card. Above her when there is room, otherwise below; the whole block stays on screen
     func placeCards() {
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let size = CardView.size
-        let gap: CGFloat = 6
-        let count = CGFloat(cards.count)
-        guard count > 0 else { return }
-        let stackHeight = count * size.height + (count - 1) * gap
+        let gap: CGFloat = 12 // room between cards, so their glass edges never touch
+        var stack: [NSPanel] = cards
+        if bubble.isVisible { stack.insert(bubble, at: 0) }
+        guard !stack.isEmpty else { return }
+        let heights = stack.map { $0.frame.height }
+        let stackHeight = heights.reduce(0, +) + CGFloat(stack.count - 1) * gap
 
         // Above Mochi when there is room, otherwise below; the one with more room wins
         let roomAbove = screen.maxY - window.frame.maxY - 4
         let roomBelow = window.frame.minY - screen.minY - 4
         let goAbove = roomAbove >= stackHeight || roomAbove >= roomBelow
 
-        // The whole stack moves as one block, so cards never land on each other at the screen edge
         var bottom = goAbove ? window.frame.maxY + 2 : window.frame.minY - 2 - stackHeight
         bottom = min(max(bottom, screen.minY + 4), screen.maxY - 4 - stackHeight)
 
-        let x = min(max(window.frame.midX - size.width / 2, screen.minX + 4), screen.maxX - size.width - 4)
-        for (i, panel) in cards.enumerated() {
-            let step = CGFloat(i) * (size.height + gap)
-            // Newest card sits nearest Mochi; older cards stack away from her
-            let y = goAbove ? bottom + step : bottom + stackHeight - size.height - step
+        // Above Mochi the nearest item sits lowest; below her it sits highest
+        var cursor = goAbove ? bottom : bottom + stackHeight
+        for (panel, height) in zip(stack, heights) {
+            let width = panel.frame.width
+            let x = min(max(window.frame.midX - width / 2, screen.minX + 4), screen.maxX - width - 4)
+            let y = goAbove ? cursor : cursor - height
             panel.setFrameOrigin(NSPoint(x: x, y: y))
+            cursor = goAbove ? cursor + height + gap : cursor - height - gap
         }
     }
 
@@ -1229,12 +1232,13 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         hideBubble?.invalidate()
         hideBubble = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             self?.bubble.orderOut(nil)
+            self?.placeCards()
         }
     }
 
     /// Click Mochi: every project and chat, what it is doing, and its latest news; click the list to close it
     func toggleNotifications() {
-        if bubble.isVisible { bubble.orderOut(nil); return }
+        if bubble.isVisible { bubble.orderOut(nil); placeCards(); return }
         hideBubble?.invalidate()
         view.unread = 0
 
@@ -1300,20 +1304,12 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         bubbleView.scroll(.zero) // start at the top, the newest
         bubbleView.needsDisplay = true
         bubble.invalidateCursorRects(for: bubbleView)
-        placeBubble()
         bubble.orderFrontRegardless()
+        placeCards()
     }
 
-    /// The bubble sits above Mochi, kept on screen
-    func placeBubble() {
-        let size = bubble.frame.size
-        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        var x = window.frame.midX - size.width / 2
-        var y = window.frame.maxY + 2
-        if y + size.height > screen.maxY { y = window.frame.minY - size.height - 2 }
-        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
-        bubble.setFrameOrigin(NSPoint(x: x, y: y))
-    }
+    /// The chat list and the cards share one place beside Mochi, so they never cover each other
+    func placeBubble() { placeCards() }
 
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
