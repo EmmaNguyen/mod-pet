@@ -13,7 +13,9 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Status at a glance.** Working, needs your OK, ready, or blocked, shown by her pose, her badge, and her colours.
 - **Notifications beside her.** Finished work, questions, and tool approvals appear as Liquid Glass cards next to her. A sound plays when a chat needs you.
 - **Every chat in one list.** Click her to see all your recent chats and their latest news. Click a line to open that chat in Claude.
-- **Plan usage.** A label under her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
+- **Plan usage.** A label above her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
+- **Quick note.** A pencil button under her opens a small box. Press Enter to start a new Claude Code session with your note.
+- **Talk.** A microphone button under her types what you say into the same box, using your Mac's speech recognition. Nothing is sent until you press Enter.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 - **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads.
 
@@ -33,8 +35,10 @@ flowchart LR
     F -->|Mochi reads every second| M[Mochi on your screen]
     M --> L[Click her: list of every chat]
     M --> K[Cards beside her: finished, questions, approvals]
-    M --> U[Usage label under her]
+    M --> U[Usage label above her]
     U -->|click| CL[Runs /usage for exact numbers]
+    M --> Q[Pencil: quick note, starts a session]
+    M --> T[Microphone: speak into the note]
 ```
 
 | Mochi | Meaning |
@@ -91,10 +95,11 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 7. **Plan usage.** A label showing your 5-hour and weekly limits, and when you can continue.
 8. **Skins.** Six looks to choose from.
 9. **Mochi Studio.** A preview app for designing Mochi's look.
+10. **Quick note and talk.** Two buttons under Mochi: type a note or speak it, and start a session with it.
 
 ## Roadmap
 
-- Clean screenshots of the notification cards and usage panel
+- Clean screenshots of the notification cards, usage panel, and quick note
 - Sign and notarise the desktop app so it opens without warnings
 - Support for Claude chats outside Claude Code
 
