@@ -180,7 +180,8 @@ func readChats() -> [Chat] {
         guard let data = try? Data(contentsOf: url),
               let report = try? JSONDecoder().decode(Report.self, from: data),
               let status = Status(rawValue: report.status),
-              now - (report.updatedAt ?? 0) < 12 * 3600 * 1000
+              now - (report.updatedAt ?? 0) < 12 * 3600 * 1000,
+              !([.idle, .ended].contains(status) && (report.log ?? []).isEmpty) // resting or ended, nothing to report: left out
         else { continue }
         let id = url.deletingPathExtension().lastPathComponent
         live[id] = Chat(id: id, title: report.title ?? "Claude", status: status, log: report.log ?? [],
@@ -216,6 +217,8 @@ func readChats() -> [Chat] {
             let text = !needs.isEmpty ? "Needs you" : category == "blocked" ? "Stopped" : "Done"
             log.append(Event(kind: "turn", text: text, detail: needs.isEmpty ? detail : needs, seconds: nil, at: updated))
         }
+        // A chat that is resting with nothing to report is left out: its link is not one Mochi can trust
+        if status == .idle && log.isEmpty { continue }
         chats.append(Chat(id: session.sessionId, title: title, status: status, log: log, updatedAt: updated,
                           link: link, waiting: needs, isRecent: now - updated < recent))
     }
