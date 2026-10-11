@@ -965,7 +965,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             if chat.status == .needsInput, needed.insert(chat.id).inserted, !firstLook {
                 let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
                 showCard(title: "⏰ \(chat.title) needs you", body: why, color: Status.needsInput.color,
-                         link: chat.link, seconds: 20)
+                         link: chat.link)
                 notify(title: "⏰ \(chat.title) needs you", body: why, link: chat.link, silent: true)
                 playNeedsSound()
             }
@@ -1000,19 +1000,19 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // You ran out: say when you can continue
         if let back = now.backText, !wasBlocked {
             showCard(title: "⏳ \(now.blocked?.what ?? "Limit") reached", body: back,
-                     color: Usage.color(100), link: nil, seconds: 30)
+                     color: Usage.color(100), link: nil)
             warnedFiveHour = max(warnedFiveHour, five); warnedWeek = max(warnedWeek, week)
         } else if five > warnedFiveHour, five < 100 {
             showCard(title: "⚠️ 5-hour usage at \(now.fiveHour)%", body: "Week: \(now.week)% used",
-                     color: Usage.color(now.fiveHour), link: nil, seconds: 15)
+                     color: Usage.color(now.fiveHour), link: nil)
         } else if week > warnedWeek, week < 100 {
             showCard(title: "⚠️ Weekly usage at \(now.week)%",
-                     body: "5-hour window: \(now.fiveHour)% used", color: Usage.color(now.week), link: nil, seconds: 15)
+                     body: "5-hour window: \(now.fiveHour)% used", color: Usage.color(now.week), link: nil)
         }
         // The limit lifted: you can continue
         if wasBlocked, now.blocked == nil {
             showCard(title: "✅ Claude is back", body: "Your usage reset. You can continue!",
-                     color: Status.ready.color, link: nil, seconds: 30)
+                     color: Status.ready.color, link: nil)
             NSSound(named: "Glass")?.play()
         }
         wasBlocked = now.blocked != nil
@@ -1084,7 +1084,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     /// A notification card beside Mochi; it fades out on its own after a while
-    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 8) {
+    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5) {
         let panel = floatingPanel(size: CardView.size)
         panel.hasShadow = false // the glass draws its own soft edge
         let card = CardView(title: title, body: body, accent: color)
