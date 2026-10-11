@@ -1081,6 +1081,12 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         bubbleView.lines = lines
         bubbleView.accent = Usage.color(worst)
         showBubble()
+        // The usage panel closes on its own a few seconds after the click
+        hideBubble?.invalidate()
+        hideBubble = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            self?.bubble.orderOut(nil)
+            self?.placeCards()
+        }
     }
 
     /// A notification card beside Mochi; it fades out on its own after a while
