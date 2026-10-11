@@ -1379,8 +1379,13 @@ final class Dictation {
 /// The small text box for a quick note; it takes the keyboard, and Escape closes it
 final class NotePanel: NSPanel {
     var onCancel: (() -> Void)?
+    var onSubmit: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onCancel?() }
+    // Return sends the note, even when the text box is not the one taking keys
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 76 { onSubmit?() } else { super.keyDown(with: event) }
+    }
 }
 
 /// A notification in the corner of the screen and in Notification Center
@@ -1536,6 +1541,7 @@ final class NotePanel: NSPanel {
         box.addSubview(noteField)
         panel.contentView = makeGlass(size: size, content: box, radius: 14)
         panel.onCancel = { [weak self] in self?.closeNote() }
+        panel.onSubmit = { [weak self] in self?.sendNote() }
         return panel
     }()
 
@@ -1567,6 +1573,10 @@ final class NotePanel: NSPanel {
             guard let self else { return }
             self.noteField.stringValue = [before, words].filter { !$0.isEmpty }.joined(separator: " ")
         }, onStop: { [weak self] in self?.setRecording(false) })
+        // The microphone press can take the keys away from the box; hand them back so Enter still sends
+        NSApp.activate(ignoringOtherApps: true)
+        note.makeKeyAndOrderFront(nil)
+        note.makeFirstResponder(noteField)
     }
 
     func setRecording(_ on: Bool) {
