@@ -878,9 +878,9 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         set { UserDefaults.standard.set(newValue, forKey: "needsSound") }
     }
 
-    /// Mochi's sounds play at two thirds of the Mac's volume
+    /// Mochi's sounds play at a fifth of the Mac's volume
 func playAtTwoThirds(_ sound: NSSound?) {
-    sound?.volume = 2.0 / 3.0
+    sound?.volume = 1.0 / 5.0
     sound?.play()
 }
 
