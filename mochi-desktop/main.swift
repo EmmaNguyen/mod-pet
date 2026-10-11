@@ -878,10 +878,16 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         set { UserDefaults.standard.set(newValue, forKey: "needsSound") }
     }
 
-    /// Plays the "a chat needs you" sound, whatever the notification settings
+    /// Mochi's sounds play at two thirds of the Mac's volume
+func playAtTwoThirds(_ sound: NSSound?) {
+    sound?.volume = 2.0 / 3.0
+    sound?.play()
+}
+
+/// Plays the "a chat needs you" sound, whatever the notification settings
     func playNeedsSound() {
         guard needsSound != "None" else { return }
-        NSSound(named: NSSound.Name(needsSound))?.play()
+        playAtTwoThirds(NSSound(named: NSSound.Name(needsSound)))
     }
 
     /// Whether macOS opens Mochi when you log in (System Settings → General → Login Items)
@@ -980,7 +986,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 let color = event.text == "Stopped" ? Status.blocked.color : chat.status.color
                 showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link)
             }
-            NSSound(named: "Pop")?.play()
+            playAtTwoThirds(NSSound(named: "Pop"))
         }
         // One Mac notification per new event, oldest first
         for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) {
@@ -1013,7 +1019,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if wasBlocked, now.blocked == nil {
             showCard(title: "✅ Claude is back", body: "Your usage reset. You can continue!",
                      color: Status.ready.color, link: nil)
-            NSSound(named: "Glass")?.play()
+            playAtTwoThirds(NSSound(named: "Glass"))
         }
         wasBlocked = now.blocked != nil
         warnedFiveHour = five < warnedFiveHour ? five : max(warnedFiveHour, five) // a new window starts the warnings over
