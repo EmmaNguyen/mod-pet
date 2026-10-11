@@ -16,6 +16,8 @@ cat > Mochi.app/Contents/Info.plist <<'PLIST'
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Mochi listens when you press the microphone, to write your note.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Mochi turns what you say into text for your note.</string>
 </dict>
 </plist>
 PLIST

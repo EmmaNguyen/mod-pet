@@ -9,7 +9,9 @@
 // the notifications; right-click for the menu.
 
 import AppKit
+import AVFoundation
 import ServiceManagement
+import Speech
 import UserNotifications
 
 // MARK: - What the chats report
@@ -337,6 +339,12 @@ final class MochiView: NSView {
     /// Where the usage label is drawn, so a click on it can be told from a click on her
     var usagePill: NSRect = .zero
     var onUsageClick: (() -> Void)?
+    /// The two buttons under her, and whether Mochi is listening
+    var quickRect: NSRect = .zero
+    var talkRect: NSRect = .zero
+    var recording = false
+    var onQuickNote: (() -> Void)?
+    var onTalk: (() -> Void)?
     var tick = 0
     var onClick: (() -> Void)?
     var onMenu: ((NSEvent) -> Void)?
@@ -363,7 +371,7 @@ final class MochiView: NSView {
         }
 
         let originX = (bounds.width - petSize) / 2
-        let originY = bounds.height - petSize - 24 - lift // room for the usage label below
+        let originY = 28 - lift // the usage label above her, the two buttons below
         ctx.saveGState()
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
@@ -382,6 +390,44 @@ final class MochiView: NSView {
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
+        drawButtons()
+    }
+
+    /// Two round buttons under her: a quick note to start a session, and talk to Mochi (red while listening)
+    private func drawButtons() {
+        let y: CGFloat = 126
+        let center = bounds.width / 2
+        quickRect = NSRect(x: center - 18 - 13, y: y - 13, width: 26, height: 26)
+        talkRect = NSRect(x: center + 18 - 13, y: y - 13, width: 26, height: 26)
+        let ink = NSColor(white: 0.25, alpha: 1)
+        NSColor.white.withAlphaComponent(0.92).setFill()
+        NSBezierPath(ovalIn: quickRect).fill()
+        if recording { NSColor(hex: 0xE03131).setFill() } else { NSColor.white.withAlphaComponent(0.92).setFill() }
+        NSBezierPath(ovalIn: talkRect).fill()
+
+        // The quick note: a pencil
+        ink.setStroke()
+        let pencil = NSBezierPath()
+        pencil.move(to: NSPoint(x: quickRect.midX - 4, y: quickRect.midY + 4))
+        pencil.line(to: NSPoint(x: quickRect.midX + 4, y: quickRect.midY - 4))
+        pencil.lineWidth = 2.2
+        pencil.lineCapStyle = .round
+        pencil.stroke()
+
+        // Talk: a microphone
+        (recording ? NSColor.white : ink).setStroke()
+        let cx = talkRect.midX, cy = talkRect.midY
+        let mic = NSBezierPath(roundedRect: NSRect(x: cx - 3, y: cy - 6, width: 6, height: 9), xRadius: 3, yRadius: 3)
+        mic.lineWidth = 1.6
+        mic.stroke()
+        let stem = NSBezierPath()
+        stem.move(to: NSPoint(x: cx, y: cy + 3))
+        stem.line(to: NSPoint(x: cx, y: cy + 6))
+        stem.move(to: NSPoint(x: cx - 3, y: cy + 6))
+        stem.line(to: NSPoint(x: cx + 3, y: cy + 6))
+        stem.lineWidth = 1.6
+        stem.lineCapStyle = .round
+        stem.stroke()
     }
 
     /// The little status dot by her ear: dots, a clock, a check, a cross or a "z"
@@ -441,7 +487,7 @@ final class MochiView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white,
         ])
         let size = text.size()
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 7, y: bounds.height - 19, width: size.width + 14, height: 16)
+        let pill = NSRect(x: (bounds.width - size.width) / 2 - 7, y: 1, width: size.width + 14, height: 16)
         usagePill = pill
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
@@ -479,7 +525,10 @@ final class MochiView: NSView {
     override func mouseUp(with event: NSEvent) {
         if !dragged {
             let point = convert(event.locationInWindow, from: nil)
-            if usagePill.insetBy(dx: -4, dy: -4).contains(point) { onUsageClick?() } else { onClick?() }
+            if quickRect.insetBy(dx: -4, dy: -4).contains(point) { onQuickNote?() }
+            else if talkRect.insetBy(dx: -4, dy: -4).contains(point) { onTalk?() }
+            else if usagePill.insetBy(dx: -4, dy: -4).contains(point) { onUsageClick?() }
+            else { onClick?() }
         }
         if dragged, let origin = window?.frame.origin {
             UserDefaults.standard.set([origin.x, origin.y], forKey: "origin")
@@ -905,7 +954,7 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
 // MARK: - The app
 
 final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    let window = floatingPanel(size: NSSize(width: 130, height: 124))
+    let window = floatingPanel(size: NSSize(width: 130, height: 146))
     let view = MochiView()
     let bubble = floatingPanel(size: NSSize(width: 260, height: 40))
     let bubbleView = BubbleView()
@@ -1006,6 +1055,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
         view.onClick = { [weak self] in self?.toggleNotifications() }
         view.onUsageClick = { [weak self] in self?.showUsageDetails() }
+        view.onQuickNote = { [weak self] in self?.toggleNote() }
+        view.onTalk = { [weak self] in self?.toggleTalk() }
         view.onMenu = { [weak self] event in self?.showMenu(event) }
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
@@ -1269,7 +1320,70 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
     }
 
-    /// A notification in the corner of the screen and in Notification Center
+    /// Turns speech into text with the Mac's own recognition while it runs
+final class Dictation {
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    var isRunning: Bool { engine.isRunning }
+
+    /// Asks for permission the first time; `onText` gets the words so far, `onStop` runs when listening ends
+    func start(onText: @escaping (String) -> Void, onStop: @escaping () -> Void) {
+        SFSpeechRecognizer.requestAuthorization { status in
+            guard status == .authorized else { DispatchQueue.main.async { onStop() }; return }
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    guard granted, let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { onStop(); return }
+                    self.begin(with: recognizer, onText: onText, onStop: onStop)
+                }
+            }
+        }
+    }
+
+    private func begin(with recognizer: SFSpeechRecognizer, onText: @escaping (String) -> Void, onStop: @escaping () -> Void) {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        self.request = request
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+            request.append(buffer)
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            onStop()
+            return
+        }
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            DispatchQueue.main.async {
+                if let result { onText(result.bestTranscription.formattedString) }
+                if error != nil || result?.isFinal == true {
+                    self?.stop()
+                    onStop()
+                }
+            }
+        }
+    }
+
+    func stop() {
+        guard engine.isRunning else { return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        request = nil
+    }
+}
+
+/// The small text box for a quick note; it takes the keyboard, and Escape closes it
+final class NotePanel: NSPanel {
+    var onCancel: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onCancel?() }
+}
+
+/// A notification in the corner of the screen and in Notification Center
     func notify(title: String, body: String, link: String?, silent: Bool = false) {
         guard macNotifications else { return }
         if notificationsUnavailable {
@@ -1394,6 +1508,95 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// The chat list and the cards share one place beside Mochi, so they never cover each other
     func placeBubble() { placeCards() }
+
+    // MARK: - Quick note and talk
+
+    lazy var noteField: NSTextField = {
+        let field = NSTextField(frame: NSRect(x: 12, y: 9, width: 256, height: 22))
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 13)
+        field.placeholderString = "Write a note to start a session"
+        field.target = self
+        field.action = #selector(sendNote)
+        return field
+    }()
+
+    lazy var note: NotePanel = {
+        let size = NSSize(width: 280, height: 40)
+        let panel = NotePanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+                              backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        let box = NSView(frame: NSRect(origin: .zero, size: size))
+        box.addSubview(noteField)
+        panel.contentView = makeGlass(size: size, content: box, radius: 14)
+        panel.onCancel = { [weak self] in self?.closeNote() }
+        return panel
+    }()
+
+    let dictation = Dictation()
+
+    /// The pencil button: opens the note box, or closes it if it is open
+    func toggleNote() {
+        if note.isVisible { closeNote(); return }
+        placeNote()
+        NSApp.activate(ignoringOtherApps: true)
+        note.makeKeyAndOrderFront(nil)
+        note.makeFirstResponder(noteField)
+    }
+
+    /// Stops listening and hides the note box; whatever was written stays in it
+    func closeNote() {
+        dictation.stop()
+        setRecording(false)
+        note.orderOut(nil)
+    }
+
+    /// The microphone button: types what you say into the note box, until you press it again or send
+    func toggleTalk() {
+        if dictation.isRunning { dictation.stop(); setRecording(false); return }
+        if !note.isVisible { toggleNote() }
+        let before = noteField.stringValue
+        setRecording(true)
+        dictation.start(onText: { [weak self] words in
+            guard let self else { return }
+            self.noteField.stringValue = [before, words].filter { !$0.isEmpty }.joined(separator: " ")
+        }, onStop: { [weak self] in self?.setRecording(false) })
+    }
+
+    func setRecording(_ on: Bool) {
+        view.recording = on
+        view.needsDisplay = true
+    }
+
+    /// Sends the note as a new Claude Code session; Claude opens with it written in
+    @objc func sendNote() {
+        let text = noteField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=#?")
+        guard let encoded = text.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: "claude://code/new?source=mochi&q=\(encoded)") else { return }
+        closeNote()
+        noteField.stringValue = ""
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Just above Mochi when there is room, otherwise below her, on screen
+    func placeNote() {
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let size = note.frame.size
+        var x = window.frame.midX - size.width / 2
+        var y = window.frame.maxY + 4
+        if y + size.height > screen.maxY { y = window.frame.minY - size.height - 4 }
+        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
+        note.setFrameOrigin(NSPoint(x: x, y: y))
+    }
 
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
