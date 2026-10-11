@@ -371,7 +371,7 @@ final class MochiView: NSView {
         }
 
         let originX = (bounds.width - petSize) / 2
-        let originY = 28 - lift // the usage label above her, the two buttons below
+        let originY = 30 - lift // the usage label above her, the two buttons below
         ctx.saveGState()
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
@@ -479,15 +479,15 @@ final class MochiView: NSView {
 
     /// A small pill under her: "5h 34% · wk 12%", coloured by the fuller of the two
     private func drawUsage(_ usage: Usage) {
-        var words = "5h \(usage.fiveHour)% · wk \(usage.week)%"
+        var words = "5h \(usage.fiveHour)% · \(usage.week)%"
         if let blocked = usage.blocked {
             words = blocked.until.map { "Back \(Usage.clock($0))" } ?? "Limit reached"
         }
         let text = NSAttributedString(string: words, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
         ])
         let size = text.size()
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 7, y: 1, width: size.width + 14, height: 16)
+        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 0, width: size.width + 18, height: 20)
         usagePill = pill
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
