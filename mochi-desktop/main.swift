@@ -1587,13 +1587,13 @@ final class NotePanel: NSPanel {
         NSWorkspace.shared.open(url)
     }
 
-    /// Just above Mochi when there is room, otherwise below her, on screen
+    /// Under the buttons, near the pencil, so the box opens where you pressed; above Mochi when there is no room below
     func placeNote() {
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let size = note.frame.size
-        var x = window.frame.midX - size.width / 2
-        var y = window.frame.maxY + 4
-        if y + size.height > screen.maxY { y = window.frame.minY - size.height - 4 }
+        var x = window.frame.minX + 4
+        var y = window.frame.minY - size.height - 4
+        if y < screen.minY + 4 { y = window.frame.maxY + 4 }
         x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
         note.setFrameOrigin(NSPoint(x: x, y: y))
     }
