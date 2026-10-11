@@ -507,8 +507,28 @@ struct Line {
     var link: String? = nil
 }
 
+/// Lets a view know when the pointer moves over it, even when its window is not in front
+func trackHover(_ view: NSView) {
+    view.trackingAreas.forEach { view.removeTrackingArea($0) }
+    view.addTrackingArea(NSTrackingArea(rect: view.bounds,
+                                        options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                        owner: view, userInfo: nil))
+}
+
+/// A thin line under text, drawn while the pointer is over a link
+func underline(from x: CGFloat, width: CGFloat, y: CGFloat, color: NSColor) {
+    color.setStroke()
+    let path = NSBezierPath()
+    path.move(to: NSPoint(x: x, y: y))
+    path.line(to: NSPoint(x: x + width, y: y))
+    path.lineWidth = 1
+    path.stroke()
+}
+
 final class BubbleView: NSView {
     var lines: [Line] = []
+    /// The line under the pointer, when it is a link
+    var hovered: Int?
     var accent: NSColor = .systemBlue
     override var isFlipped: Bool { true }
 
@@ -533,14 +553,40 @@ final class BubbleView: NSView {
                 .paragraphStyle: style,
             ]).draw(in: NSRect(x: 12 + line.indent, y: 8 + CGFloat(i) * 18,
                                width: bounds.width - 24 - line.indent, height: 18))
+            if i == hovered {
+                let width = min(NSAttributedString(string: line.text, attributes: [.font: line.bold ? Self.bold : Self.font]).size().width,
+                                bounds.width - 24 - line.indent)
+                underline(from: 12 + line.indent, width: width, y: 8 + CGFloat(i) * 18 + 16, color: color)
+            }
         }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackHover(self)
+    }
+
+    /// Underlines a chat's line while the pointer is over it
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = Int((point.y - 8) / 18)
+        let link = point.y >= 8 && lines.indices.contains(row) && lines[row].link != nil ? row : nil
+        if link != hovered {
+            hovered = link
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = nil
+        needsDisplay = true
     }
 
     /// Clicking a chat's line opens it in Claude; anywhere else closes the bubble
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let row = Int((point.y - 8) / 18)
-        if lines.indices.contains(row), let link = lines[row].link { openChat(link) }
+        if point.y >= 8, lines.indices.contains(row), let link = lines[row].link { openChat(link) }
         window?.orderOut(nil)
     }
 
@@ -594,6 +640,8 @@ final class CardView: NSView {
     let accent: NSColor
     var onOpen: (() -> Void)?
     var onClose: (() -> Void)?
+    /// Whether the pointer is over the card, so its title shows it can be opened
+    var hovering = false
     override var isFlipped: Bool { true }
 
     static let size = NSSize(width: 300, height: 56)
@@ -621,6 +669,10 @@ final class CardView: NSView {
         NSAttributedString(string: title, attributes: [
             .font: Self.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ]).draw(in: NSRect(x: 22, y: 10, width: bounds.width - 52, height: 18))
+        if hovering {
+            let width = min(NSAttributedString(string: title, attributes: [.font: Self.titleFont]).size().width, bounds.width - 52)
+            underline(from: 22, width: width, y: 27, color: NSColor.labelColor)
+        }
         NSAttributedString(string: body, attributes: [
             .font: Self.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
         ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 17))
@@ -632,6 +684,21 @@ final class CardView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if closeBox.contains(point) { onClose?() } else { onOpen?() }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackHover(self)
+    }
+
+    override func mouseEntered(with event: NSEvent) { setHovering(true) }
+    override func mouseExited(with event: NSEvent) { setHovering(false) }
+    override func mouseMoved(with event: NSEvent) { setHovering(true) }
+
+    private func setHovering(_ on: Bool) {
+        guard hovering != on else { return }
+        hovering = on
+        needsDisplay = true
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
@@ -1101,6 +1168,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// A notification card beside Mochi; it fades out on its own after a while
     func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5) {
         let panel = floatingPanel(size: CardView.size)
+        panel.acceptsMouseMovedEvents = true // so the title underlines under the pointer
         panel.hasShadow = false // the glass draws its own soft edge
         let card = CardView(title: title, body: body, accent: color)
         let glass = glassBackground(for: card, tint: color)
@@ -1319,6 +1387,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         bubbleView.scroll(.zero) // start at the top, the newest
         bubbleView.needsDisplay = true
         bubble.invalidateCursorRects(for: bubbleView)
+        bubble.acceptsMouseMovedEvents = true // so a chat's line underlines under the pointer
         bubble.orderFrontRegardless()
         placeCards()
     }
