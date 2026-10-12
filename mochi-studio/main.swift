@@ -1,6 +1,7 @@
 // Mochi Studio: change how Mochi looks. Saves to ~/.claude/mochi/look.json, which Mochi reads
 // every second, so a change shows at once.
 import SwiftUI
+import AppKit
 
 struct Look: Codable, Equatable {
     var body: String = "F4A259"      // hex, without the #
@@ -9,7 +10,7 @@ struct Look: Codable, Equatable {
     var name: String = "Mochi"
     var speed: Double = 1.0          // 0.5 slow ... 2 fast
     var pixels: [String]? = nil      // a square of letters, one row per line, when painted by hand
-    var detail: Int = 16             // how many squares across the default cat is drawn with: 16, 24 or 32
+    var detail: Int = 16             // how many squares across the default cat is drawn with: 16 or 32
 
     /// The grid Mochi draws: the painted one when it is valid, otherwise the default at this detail
     var art: [String] {
@@ -41,9 +42,36 @@ let mochiGrid = [
     "..KKBBLLLLBBKK..", "..KBBKBLLBKBBK..", "..KBBK.KK.KBBK..", "...KK......KK...",
 ]
 
-/// The same drawing on a finer or rougher grid, squares copied from the nearest place in the old one
+/// The same drawing with twice as many squares across. Each square becomes four, with corners and
+/// diagonals smoothed (the Scale2x rule), so the finer grid shows real detail rather than copies of the old squares.
+func scale2x(_ rows: [String]) -> [String] {
+    let m = rows.count
+    let g = rows.map { Array($0) }
+    func at(_ x: Int, _ y: Int, _ p: Character) -> Character {
+        (0..<m).contains(y) && (0..<m).contains(x) ? g[y][x] : p
+    }
+    var out: [String] = []
+    for y in 0..<m {
+        var top: [Character] = [], bottom: [Character] = []
+        for x in 0..<m {
+            let p = g[y][x]
+            let a = at(x, y - 1, p), b = at(x + 1, y, p), c = at(x - 1, y, p), d = at(x, y + 1, p)
+            top.append(c == a && c != d && a != b ? a : p)
+            top.append(a == b && a != c && b != d ? b : p)
+            bottom.append(d == c && d != b && c != a ? c : p)
+            bottom.append(b == d && b != a && d != c ? d : p)
+        }
+        out.append(String(top))
+        out.append(String(bottom))
+    }
+    return out
+}
+
+/// The drawing on a finer or rougher grid. Twice as fine is smoothed; anything else takes the nearest squares.
 func resample(_ rows: [String], to n: Int) -> [String] {
     let m = rows.count
+    if n == 2 * m { return scale2x(rows) }
+    if n == m { return rows }
     let src = rows.map { Array($0) }
     return (0..<n).map { y in String((0..<n).map { x in src[y * m / n][x * m / n] }) }
 }
@@ -113,36 +141,65 @@ struct Preview: View {
     }
 }
 
-/// The 16 by 16 square you paint on. Click or drag to paint; the gesture reports the square under the pointer.
-struct PixelEditor: View {
+/// The same colours as a native colour, for drawing the square you paint on
+func nsColor(_ ch: Character, _ look: Look) -> NSColor? {
+    guard let fill = pixelFill(ch, look) else { return nil }
+    return NSColor(fill)
+}
+
+/// The square you paint on. A plain mouse view, so clicks and drags reach it even inside the scrolling form.
+final class PixelGridView: NSView {
+    var look = Look()
+    var onPaint: ((Int, Int) -> Void)?
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { false }
+    /// A click paints straight away, even when the window was not in front
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let n = look.art.count
+        let s = bounds.width / CGFloat(n)
+        for (y, row) in look.art.enumerated() {
+            for (x, ch) in row.enumerated() {
+                let rect = NSRect(x: CGFloat(x) * s, y: CGFloat(y) * s, width: s, height: s)
+                (nsColor(ch, look) ?? NSColor.secondaryLabelColor.withAlphaComponent(0.12)).setFill()
+                rect.fill()
+            }
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) { paint(event) }
+    override func mouseDragged(with event: NSEvent) { paint(event) }
+
+    private func paint(_ event: NSEvent) {
+        let n = look.art.count
+        let s = bounds.width / CGFloat(n)
+        let p = convert(event.locationInWindow, from: nil)
+        let x = Int(p.x / s), y = Int(p.y / s)
+        if (0..<n).contains(x) && (0..<n).contains(y) { onPaint?(x, y) }
+    }
+}
+
+/// Puts the native grid into SwiftUI, at a fixed square size
+struct PixelEditor: NSViewRepresentable {
     let look: Look
     let onPaint: (Int, Int) -> Void
     private let side: CGFloat = 240 // the same size as the preview, so one square matches the sample
 
-    var body: some View {
-        Canvas { ctx, size in
-            let s = size.width / CGFloat(look.art.count)
-            for (y, row) in look.art.enumerated() {
-                for (x, ch) in row.enumerated() {
-                    let rect = CGRect(x: CGFloat(x) * s, y: CGFloat(y) * s, width: s, height: s)
-                    if let fill = pixelFill(ch, look) {
-                        ctx.fill(Path(rect), with: .color(fill))
-                    } else {
-                        ctx.fill(Path(rect), with: .color(Color.secondary.opacity(0.12)))
-                    }
-                }
-            }
-        }
-        .frame(width: side, height: side)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0).onChanged { value in
-                let n = look.art.count
-                let s = side / CGFloat(n)
-                let x = Int(value.location.x / s), y = Int(value.location.y / s)
-                if (0..<n).contains(x) && (0..<n).contains(y) { onPaint(x, y) }
-            }
-        )
+    func makeNSView(context: Context) -> PixelGridView {
+        let view = PixelGridView(frame: NSRect(x: 0, y: 0, width: side, height: side))
+        view.onPaint = onPaint
+        return view
+    }
+
+    func updateNSView(_ view: PixelGridView, context: Context) {
+        view.look = look
+        view.onPaint = onPaint
+        view.needsDisplay = true
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PixelGridView, context: Context) -> CGSize? {
+        CGSize(width: side, height: side)
     }
 }
 
@@ -190,11 +247,11 @@ struct ContentView: View {
                         }
                     })) {
                         Text("Rough").tag(16)
-                        Text("Medium").tag(24)
                         Text("Fine").tag(32)
                     }
                     .pickerStyle(.segmented)
                     PixelEditor(look: look, onPaint: paintSquare)
+                        .frame(width: 240, height: 240)
                         .frame(maxWidth: .infinity)
                     HStack(spacing: 4) {
                         ForEach(paints, id: \.self) { ch in
