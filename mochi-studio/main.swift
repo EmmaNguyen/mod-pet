@@ -117,7 +117,7 @@ struct Preview: View {
 struct PixelEditor: View {
     let look: Look
     let onPaint: (Int, Int) -> Void
-    private let side: CGFloat = 272
+    private let side: CGFloat = 240 // the same size as the preview, so one square matches the sample
 
     var body: some View {
         Canvas { ctx, size in
