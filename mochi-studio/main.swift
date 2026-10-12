@@ -42,35 +42,10 @@ let mochiGrid = [
     "..KKBBLLLLBBKK..", "..KBBKBLLBKBBK..", "..KBBK.KK.KBBK..", "...KK......KK...",
 ]
 
-/// The same drawing with twice as many squares across. Each square becomes four, with corners and
-/// diagonals smoothed (the Scale2x rule), so the finer grid shows real detail rather than copies of the old squares.
-func scale2x(_ rows: [String]) -> [String] {
-    let m = rows.count
-    let g = rows.map { Array($0) }
-    func at(_ x: Int, _ y: Int, _ p: Character) -> Character {
-        (0..<m).contains(y) && (0..<m).contains(x) ? g[y][x] : p
-    }
-    var out: [String] = []
-    for y in 0..<m {
-        var top: [Character] = [], bottom: [Character] = []
-        for x in 0..<m {
-            let p = g[y][x]
-            let a = at(x, y - 1, p), b = at(x + 1, y, p), c = at(x - 1, y, p), d = at(x, y + 1, p)
-            top.append(c == a && c != d && a != b ? a : p)
-            top.append(a == b && a != c && b != d ? b : p)
-            bottom.append(d == c && d != b && c != a ? c : p)
-            bottom.append(b == d && b != a && d != c ? d : p)
-        }
-        out.append(String(top))
-        out.append(String(bottom))
-    }
-    return out
-}
-
-/// The drawing on a finer or rougher grid. Twice as fine is smoothed; anything else takes the nearest squares.
+/// The drawing on a finer or rougher grid, each square copied from the nearest place in the old one.
+/// Nothing is bent or smoothed, so the shapes keep their true proportions.
 func resample(_ rows: [String], to n: Int) -> [String] {
     let m = rows.count
-    if n == 2 * m { return scale2x(rows) }
     if n == m { return rows }
     let src = rows.map { Array($0) }
     return (0..<n).map { y in String((0..<n).map { x in src[y * m / n][x * m / n] }) }
@@ -166,6 +141,16 @@ final class PixelGridView: NSView {
                 rect.fill()
             }
         }
+        // Thin lines between squares, so a finer grid is easy to see and paint
+        NSColor.black.withAlphaComponent(0.08).setStroke()
+        let lines = NSBezierPath()
+        for i in 0...n {
+            let at = (CGFloat(i) * s).rounded() + 0.5
+            lines.move(to: NSPoint(x: at, y: 0)); lines.line(to: NSPoint(x: at, y: bounds.height))
+            lines.move(to: NSPoint(x: 0, y: at)); lines.line(to: NSPoint(x: bounds.width, y: at))
+        }
+        lines.lineWidth = 0.5
+        lines.stroke()
     }
 
     override func mouseDown(with event: NSEvent) { paint(event) }
