@@ -379,20 +379,30 @@ final class MochiView: NSView {
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
-        for (y, row) in grid.enumerated() {
-            for (x, cell) in row.enumerated() {
-                guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
-                if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
-                color.setFill()
-                // Each square is split into four half-size pixels, a little rounder and overlapping their neighbours,
-                // so the same drawing reads finer and its edges smooth, not stepped
-                let half = scale / 2
-                for sy in 0..<2 {
-                    for sx in 0..<2 {
-                        let cell = NSRect(x: CGFloat(x) * scale + CGFloat(sx) * half, y: CGFloat(y) * scale + CGFloat(sy) * half,
-                                          width: half, height: half)
-                        NSBezierPath(roundedRect: cell.insetBy(dx: -0.2, dy: -0.2), xRadius: 0.6, yRadius: 0.6).fill()
-                    }
+        // Her grid drawn at twice the detail: each pixel becomes four, with the corners and diagonals smoothed
+        // (the Scale2x rule), so the same drawing reads finer and its edges are not stepped
+        let rows = grid.map { Array($0) }
+        let half = scale / 2
+        for y in rows.indices {
+            for x in rows[y].indices {
+                let p = rows[y][x]
+                let a = y > 0 ? rows[y - 1][x] : p
+                let b = x < rows[y].count - 1 ? rows[y][x + 1] : p
+                let c = x > 0 ? rows[y][x - 1] : p
+                let d = y < rows.count - 1 ? rows[y + 1][x] : p
+                let corners: [Character] = [
+                    c == a && c != d && a != b ? a : p,
+                    a == b && a != c && b != d ? b : p,
+                    d == c && d != b && c != a ? c : p,
+                    b == d && b != a && d != c ? d : p,
+                ]
+                for (i, cell) in corners.enumerated() {
+                    guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
+                    if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
+                    color.setFill()
+                    let sx = CGFloat(x * 2 + i % 2) * half
+                    let sy = CGFloat(y * 2 + i / 2) * half
+                    NSRect(x: sx, y: sy, width: half, height: half).insetBy(dx: -0.1, dy: -0.1).fill()
                 }
             }
         }
