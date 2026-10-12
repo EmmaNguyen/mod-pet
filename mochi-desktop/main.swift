@@ -384,9 +384,16 @@ final class MochiView: NSView {
                 guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
                 if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
                 color.setFill()
-                // Each square is a little rounder and overlaps its neighbours, so the edges read smooth, not stepped
-                let cell = NSRect(x: CGFloat(x) * scale, y: CGFloat(y) * scale, width: scale, height: scale)
-                NSBezierPath(roundedRect: cell.insetBy(dx: -0.25, dy: -0.25), xRadius: 1.2, yRadius: 1.2).fill()
+                // Each square is split into four half-size pixels, a little rounder and overlapping their neighbours,
+                // so the same drawing reads finer and its edges smooth, not stepped
+                let half = scale / 2
+                for sy in 0..<2 {
+                    for sx in 0..<2 {
+                        let cell = NSRect(x: CGFloat(x) * scale + CGFloat(sx) * half, y: CGFloat(y) * scale + CGFloat(sy) * half,
+                                          width: half, height: half)
+                        NSBezierPath(roundedRect: cell.insetBy(dx: -0.2, dy: -0.2), xRadius: 0.6, yRadius: 0.6).fill()
+                    }
+                }
             }
         }
         drawAccessory(currentLook.accessory ?? "none")
