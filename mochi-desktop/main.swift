@@ -343,6 +343,9 @@ final class MochiView: NSView {
     var quickRect: NSRect = .zero
     var talkRect: NSRect = .zero
     var recording = false
+    /// The cursor is over her, and whether the note box is open
+    var nearby = false
+    var forceShow = false
     var onQuickNote: (() -> Void)?
     var onTalk: (() -> Void)?
     var tick = 0
@@ -390,7 +393,28 @@ final class MochiView: NSView {
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
-        drawButtons()
+        // The two buttons show only when the cursor is near her, or while the note box is open or listening
+        if nearby || forceShow || recording {
+            drawButtons()
+        } else {
+            quickRect = .zero
+            talkRect = .zero
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackHover(self)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        nearby = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        nearby = false
+        needsDisplay = true
     }
 
     /// Two round buttons under her: a quick note to start a session, and talk to Mochi (red while listening)
@@ -1554,6 +1578,8 @@ final class NotePanel: NSPanel {
         NSApp.activate(ignoringOtherApps: true)
         note.makeKeyAndOrderFront(nil)
         note.makeFirstResponder(noteField)
+        view.forceShow = true
+        view.needsDisplay = true
     }
 
     /// Stops listening and hides the note box; whatever was written stays in it
@@ -1561,6 +1587,8 @@ final class NotePanel: NSPanel {
         dictation.stop()
         setRecording(false)
         note.orderOut(nil)
+        view.forceShow = false
+        view.needsDisplay = true
     }
 
     /// The microphone button: types what you say into the note box, until you press it again or send
