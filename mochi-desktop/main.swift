@@ -304,7 +304,7 @@ struct MochiLook: Decodable {
 
     /// The grid she draws: the painted one when it is the right size, otherwise the default
     var art: [String] {
-        guard let pixels, pixels.count == 16, pixels.allSatisfy({ $0.count == 16 }) else { return grid }
+        guard let pixels, (8...64).contains(pixels.count), pixels.allSatisfy({ $0.count == pixels.count }) else { return grid }
         return pixels
     }
 
@@ -387,33 +387,7 @@ final class MochiView: NSView {
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
-        // Her grid drawn at twice the detail: each pixel becomes four, with the corners and diagonals smoothed
-        // (the Scale2x rule), so the same drawing reads finer and its edges are not stepped
-        let rows = currentLook.art.map { Array($0) } // her painted grid, or the default cat
-        let half = scale / 2
-        for y in rows.indices {
-            for x in rows[y].indices {
-                let p = rows[y][x]
-                let a = y > 0 ? rows[y - 1][x] : p
-                let b = x < rows[y].count - 1 ? rows[y][x + 1] : p
-                let c = x > 0 ? rows[y][x - 1] : p
-                let d = y < rows.count - 1 ? rows[y + 1][x] : p
-                let corners: [Character] = [
-                    c == a && c != d && a != b ? a : p,
-                    a == b && a != c && b != d ? b : p,
-                    d == c && d != b && c != a ? c : p,
-                    b == d && b != a && d != c ? d : p,
-                ]
-                for (i, cell) in corners.enumerated() {
-                    guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
-                    if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
-                    color.setFill()
-                    let sx = CGFloat(x * 2 + i % 2) * half
-                    let sy = CGFloat(y * 2 + i / 2) * half
-                    NSRect(x: sx, y: sy, width: half, height: half).insetBy(dx: -0.1, dy: -0.1).fill()
-                }
-            }
-        }
+        drawPixels(currentLook.art, blinking: blinking)
         drawAccessory(currentLook.accessory ?? "none")
         ctx.restoreGState()
 
@@ -479,6 +453,49 @@ final class MochiView: NSView {
         stem.lineWidth = 1.6
         stem.lineCapStyle = .round
         stem.stroke()
+    }
+
+    /// Her face, pixel by pixel. A 16 by 16 face is drawn with smoothed corners and diagonals (four pixels
+    /// per square); a finer face is drawn as it was painted.
+    private func drawPixels(_ art: [String], blinking: Bool) {
+        let n = art.count
+        if n != 16 {
+            let cell = petSize / CGFloat(n)
+            for (y, row) in art.enumerated() {
+                for (x, ch) in row.enumerated() {
+                    guard var color = pixelColor(ch, status, blinking: blinking) else { continue }
+                    if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
+                    color.setFill()
+                    NSRect(x: CGFloat(x) * cell, y: CGFloat(y) * cell, width: cell, height: cell).insetBy(dx: -0.1, dy: -0.1).fill()
+                }
+            }
+            return
+        }
+        let rows = art.map { Array($0) }
+        let half = scale / 2
+        for y in rows.indices {
+            for x in rows[y].indices {
+                let p = rows[y][x]
+                let a = y > 0 ? rows[y - 1][x] : p
+                let b = x < rows[y].count - 1 ? rows[y][x + 1] : p
+                let c = x > 0 ? rows[y][x - 1] : p
+                let d = y < rows.count - 1 ? rows[y + 1][x] : p
+                let corners: [Character] = [
+                    c == a && c != d && a != b ? a : p,
+                    a == b && a != c && b != d ? b : p,
+                    d == c && d != b && c != a ? c : p,
+                    b == d && b != a && d != c ? d : p,
+                ]
+                for (i, cell) in corners.enumerated() {
+                    guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
+                    if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
+                    color.setFill()
+                    let sx = CGFloat(x * 2 + i % 2) * half
+                    let sy = CGFloat(y * 2 + i / 2) * half
+                    NSRect(x: sx, y: sy, width: half, height: half).insetBy(dx: -0.1, dy: -0.1).fill()
+                }
+            }
+        }
     }
 
     /// The little status dot by her ear: dots, a clock, a check, a cross or a "z"

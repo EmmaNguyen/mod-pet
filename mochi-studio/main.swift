@@ -8,11 +8,14 @@ struct Look: Codable, Equatable {
     var accessory: String = "none"   // none | bow | hat | scarf
     var name: String = "Mochi"
     var speed: Double = 1.0          // 0.5 slow ... 2 fast
-    var pixels: [String]? = nil      // 16 rows of 16 letters when painted by hand; nil means the default cat
+    var pixels: [String]? = nil      // a square of letters, one row per line, when painted by hand
+    var detail: Int = 16             // how many squares across the default cat is drawn with: 16, 24 or 32
 
-    /// The grid Mochi draws: the painted one when it is valid, otherwise the default
+    /// The grid Mochi draws: the painted one when it is valid, otherwise the default at this detail
     var art: [String] {
-        guard let pixels, pixels.count == 16, pixels.allSatisfy({ $0.count == 16 }) else { return mochiGrid }
+        guard let pixels, (8...64).contains(pixels.count), pixels.allSatisfy({ $0.count == pixels.count }) else {
+            return resample(mochiGrid, to: detail)
+        }
         return pixels
     }
 
@@ -37,6 +40,13 @@ let mochiGrid = [
     "KBBeeBBBBBBeeBBK", "KBPBBBBKKBBBBPBK", "KBBBBBBBBBBBBBBK", ".KBBDBBBBBBDBBK.",
     "..KKBBLLLLBBKK..", "..KBBKBLLBKBBK..", "..KBBK.KK.KBBK..", "...KK......KK...",
 ]
+
+/// The same drawing on a finer or rougher grid, squares copied from the nearest place in the old one
+func resample(_ rows: [String], to n: Int) -> [String] {
+    let m = rows.count
+    let src = rows.map { Array($0) }
+    return (0..<n).map { y in String((0..<n).map { x in src[y * m / n][x * m / n] }) }
+}
 
 func color(_ hex: String) -> Color {
     var v: UInt64 = 0
@@ -74,8 +84,9 @@ struct Preview: View {
     let look: Look
     var body: some View {
         Canvas { ctx, size in
-            let s = min(size.width, size.height) / 16
-            let ox = (size.width - 16 * s) / 2, oy = (size.height - 16 * s) / 2
+            let n = CGFloat(look.art.count)
+            let s = min(size.width, size.height) / n
+            let ox = (size.width - n * s) / 2, oy = (size.height - n * s) / 2
             for (y, row) in look.art.enumerated() {
                 for (x, ch) in row.enumerated() {
                     guard let fill = pixelFill(ch, look) else { continue }
@@ -110,7 +121,7 @@ struct PixelEditor: View {
 
     var body: some View {
         Canvas { ctx, size in
-            let s = size.width / 16
+            let s = size.width / CGFloat(look.art.count)
             for (y, row) in look.art.enumerated() {
                 for (x, ch) in row.enumerated() {
                     let rect = CGRect(x: CGFloat(x) * s, y: CGFloat(y) * s, width: s, height: s)
@@ -126,9 +137,10 @@ struct PixelEditor: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0).onChanged { value in
-                let s = side / 16
+                let n = look.art.count
+                let s = side / CGFloat(n)
                 let x = Int(value.location.x / s), y = Int(value.location.y / s)
-                if (0..<16).contains(x) && (0..<16).contains(y) { onPaint(x, y) }
+                if (0..<n).contains(x) && (0..<n).contains(y) { onPaint(x, y) }
             }
         )
     }
@@ -155,7 +167,7 @@ struct ContentView: View {
     /// Puts one letter into one square of the painted grid
     private func paintSquare(_ x: Int, _ y: Int) {
         let letter = model.paint
-        guard model.look.art[y].count == 16, model.look.art[y].count > x else { return }
+        guard model.look.art.indices.contains(y), model.look.art[y].count > x else { return }
         edit {
             var rows = $0.art
             var cells = Array(rows[y])
@@ -170,6 +182,18 @@ struct ContentView: View {
         HStack(spacing: 0) {
             Form {
                 Section("Pixels") {
+                    Picker("Fineness", selection: Binding(get: { look.art.count }, set: { n in
+                        let old = look.art
+                        edit {
+                            $0.detail = n
+                            $0.pixels = resample(old, to: n)
+                        }
+                    })) {
+                        Text("Rough").tag(16)
+                        Text("Medium").tag(24)
+                        Text("Fine").tag(32)
+                    }
+                    .pickerStyle(.segmented)
                     PixelEditor(look: look, onPaint: paintSquare)
                         .frame(maxWidth: .infinity)
                     HStack(spacing: 4) {
