@@ -299,6 +299,14 @@ struct MochiLook: Decodable {
     var accessory: String?
     var name: String?
     var speed: Double?
+    /// Her face, painted in Mochi Studio: 16 rows of 16 letters. Missing or wrong size means the default cat.
+    var pixels: [String]?
+
+    /// The grid she draws: the painted one when it is the right size, otherwise the default
+    var art: [String] {
+        guard let pixels, pixels.count == 16, pixels.allSatisfy({ $0.count == 16 }) else { return grid }
+        return pixels
+    }
 
     var bodyColor: NSColor? {
         guard let body, let v = UInt32(body, radix: 16) else { return nil }
@@ -381,7 +389,7 @@ final class MochiView: NSView {
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
         // Her grid drawn at twice the detail: each pixel becomes four, with the corners and diagonals smoothed
         // (the Scale2x rule), so the same drawing reads finer and its edges are not stepped
-        let rows = grid.map { Array($0) }
+        let rows = currentLook.art.map { Array($0) } // her painted grid, or the default cat
         let half = scale / 2
         for y in rows.indices {
             for x in rows[y].indices {
