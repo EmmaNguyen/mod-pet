@@ -233,38 +233,22 @@ func readChats() -> [Chat] {
 // MARK: - Mochi's pixels (the same 16x16 cat as in the Claude window)
 
 let grid = [
-    "................................",
-    "................................",
-    "......K..................K......",
-    "......KK................KK......",
-    "......KPK..............KPK......",
-    "......KPPKK..........KKPPK......",
-    "......KPPPBK........KBPPPK......",
-    ".....KBPPPPBKKKKKKKKBPPPPBK.....",
-    ".....KBPPPPPBBBBBBBBPPPPPBK.....",
-    ".....KBPPBBBBBBBBBBBBBBPPBK.....",
-    ".....KBBBBBBBBBBBBBBBBBBBBK.....",
-    ".....KBBBBBBBBBBBBBBBBBBBBK.....",
-    ".....KBBBBBBBBBBBBBBBBBBBBK.....",
-    "....KBBBBBBBBBBBBBBBBBBBBBBK....",
-    "....KBBBBBWEEBBBBBWEEBBBBBBK....",
-    "....KBBBBBEEEBBBBBEEEBBBBBBK....",
-    "....KBBBBBEEEBBBBBEEEBBBBBBK....",
-    "....KBBBBBeeeBBBBBeeeBBBBBBK....",
-    "....KBBBBBBBBBBBBBBBBBBBBBBK....",
-    "....KBBPPPBBBBBBBBBBBBPPPBBK....",
-    "....KBBPPPBBBLLLLLLBBBPPPBBK....",
-    ".....KBPPPBBLLLDDLLLBBPPPBK.....",
-    ".....KBBBBBLLLLDDLLLLBBBBBK.....",
-    "......KBBBBBLLKLLKLLBBBBBK......",
-    ".......KKBBBBLLLLLLBBBBKK.......",
-    ".........KBLLBBBBBBLLBK.........",
-    ".........KLLLLLKKLLLLLK.........",
-    ".........KLLLLK..KLLLLK.........",
-    "..........KKKK....KKKK..........",
-    "................................",
-    "................................",
-    "................................",
+    "................",
+    "..K..........K..",
+    ".KBK........KBK.",
+    ".KPBK......KBPK.",
+    ".KBBBKKKKKKBBBK.",
+    ".KBBBBBBBBBBBBK.",
+    "KBBLBBBBBBBBLBBK",
+    "KBBEWBBBBBBEWBBK",
+    "KBBeeBBBBBBeeBBK",
+    "KBPBBBBKKBBBBPBK",
+    "KBBBBBBBBBBBBBBK",
+    ".KBBDBBBBBBDBBK.",
+    "..KKBBLLLLBBKK..",
+    "..KBBKBLLBKBBK..",
+    "..KBBK.KK.KBBK..",
+    "...KK......KK...",
 ]
 /// A look for Mochi: the colours of her body and her eyes. The shape never changes.
 struct Skin {
@@ -395,15 +379,31 @@ final class MochiView: NSView {
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
-        // Her grid: 32 by 32 finer pixels, each a little rounder so the edges read smooth
-        let cell = petSize / CGFloat(grid.count)
-        for (y, row) in grid.enumerated() {
-            for (x, ch) in row.enumerated() {
-                guard var color = pixelColor(ch, status, blinking: blinking) else { continue }
-                if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
-                color.setFill()
-                NSBezierPath(roundedRect: NSRect(x: CGFloat(x) * cell, y: CGFloat(y) * cell, width: cell, height: cell).insetBy(dx: -0.1, dy: -0.1),
-                             xRadius: 0.5, yRadius: 0.5).fill()
+        // Her grid drawn at twice the detail: each pixel becomes four, with the corners and diagonals smoothed
+        // (the Scale2x rule), so the same drawing reads finer and its edges are not stepped
+        let rows = grid.map { Array($0) }
+        let half = scale / 2
+        for y in rows.indices {
+            for x in rows[y].indices {
+                let p = rows[y][x]
+                let a = y > 0 ? rows[y - 1][x] : p
+                let b = x < rows[y].count - 1 ? rows[y][x + 1] : p
+                let c = x > 0 ? rows[y][x - 1] : p
+                let d = y < rows.count - 1 ? rows[y + 1][x] : p
+                let corners: [Character] = [
+                    c == a && c != d && a != b ? a : p,
+                    a == b && a != c && b != d ? b : p,
+                    d == c && d != b && c != a ? c : p,
+                    b == d && b != a && d != c ? d : p,
+                ]
+                for (i, cell) in corners.enumerated() {
+                    guard var color = pixelColor(cell, status, blinking: blinking) else { continue }
+                    if status == .blocked { color = color.blended(withFraction: 0.75, of: .gray) ?? color }
+                    color.setFill()
+                    let sx = CGFloat(x * 2 + i % 2) * half
+                    let sy = CGFloat(y * 2 + i / 2) * half
+                    NSRect(x: sx, y: sy, width: half, height: half).insetBy(dx: -0.1, dy: -0.1).fill()
+                }
             }
         }
         drawAccessory(currentLook.accessory ?? "none")
