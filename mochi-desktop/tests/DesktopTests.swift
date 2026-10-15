@@ -34,4 +34,11 @@ check("usage under 70% is green", Usage.color(69) == NSColor(hex: 0x2F9E44))
 check("70% is orange", Usage.color(70) == NSColor(hex: 0xF08C00))
 check("90% is red", Usage.color(90) == NSColor(hex: 0xE03131))
 
+// The approval card's question, worded like Claude's own dialog
+check("a command asks to run a command", approvalQuestion(chat: "garden", waiting: "Run: npm publish") == "Allow garden to run a command?")
+check("an edit names the file", approvalQuestion(chat: "garden", waiting: "Edit login.ts") == "Allow garden to edit login.ts?")
+check("a web page names the address", approvalQuestion(chat: "garden", waiting: "Open example.com/page") == "Allow garden to open example.com/page?")
+check("a tool names the tool", approvalQuestion(chat: "garden", waiting: "Use create_issue") == "Allow garden to use create_issue?")
+check("no description still asks", approvalQuestion(chat: "garden", waiting: "") == "Allow garden to go ahead?")
+
 print("ALL PASSED")

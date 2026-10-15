@@ -957,8 +957,24 @@ final class CardView: NSView {
 
 /// A chat waiting for your OK, with Allow and Deny under it. It stays until you answer, its time runs out,
 /// or the chat moves on. Clicking the title opens the chat to read it first.
+/// The question on an approval card, the way Claude's own dialog asks it: "Allow garden to run a command?"
+func approvalQuestion(chat: String, waiting: String) -> String {
+    let action: String
+    if waiting.hasPrefix("Run: ") { action = "run a command" }
+    else if waiting.hasPrefix("Edit ") { action = "edit " + waiting.dropFirst(5) }
+    else if waiting.hasPrefix("Open ") { action = "open " + waiting.dropFirst(5) }
+    else if waiting.hasPrefix("Use ") { action = "use " + waiting.dropFirst(4) }
+    else if waiting.isEmpty { action = "go ahead" }
+    else { action = waiting.prefix(1).lowercased() + waiting.dropFirst() }
+    return "Allow \(chat) to \(action)?"
+}
+
+/// A chat waiting for your OK, laid out like Claude's own permission dialog: the question, a line under it,
+/// the whole command in a box, then Deny and Allow once with their keys. It stays until you answer, its time
+/// runs out, or the chat moves on. Clicking anywhere else on it opens the chat to read it first.
 final class ApprovalView: NSView {
     let title: String
+    let subtitle: String
     let body: String
     let accent: NSColor
     var onOpen: (() -> Void)?
@@ -969,14 +985,15 @@ final class ApprovalView: NSView {
     var dot: NSColor?
     override var isFlipped: Bool { true }
 
-    static let size = NSSize(width: 360, height: 106)
+    static let size = NSSize(width: 420, height: 214)
     private static let allowColor = NSColor(hex: 0x2F9E44)
-    private var allowBox: NSRect { NSRect(x: 22, y: 72, width: 160, height: 26) }
-    private var denyBox: NSRect { NSRect(x: 190, y: 72, width: 148, height: 26) }
-    private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 8, width: 18, height: 18) }
+    private var denyBox: NSRect { NSRect(x: 22, y: 172, width: 150, height: 28) }
+    private var allowBox: NSRect { NSRect(x: bounds.width - 22 - 170, y: 172, width: 170, height: 28) }
+    private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 10, width: 18, height: 18) }
 
-    init(title: String, body: String, accent: NSColor) {
+    init(title: String, subtitle: String, body: String, accent: NSColor) {
         self.title = title
+        self.subtitle = subtitle
         self.body = body
         self.accent = accent
         super.init(frame: NSRect(origin: .zero, size: Self.size))
@@ -988,38 +1005,65 @@ final class ApprovalView: NSView {
         accent.setFill()
         NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: bounds.height - 26), xRadius: 2, yRadius: 2).fill()
 
-        let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
-        let titleX: CGFloat = dot == nil ? 22 : 34
-        if let dot { drawDot(dot, at: NSPoint(x: 26, y: 19)) }
+        // The question, in up to two lines, then a line under it
+        let wrap = NSMutableParagraphStyle()
+        wrap.lineBreakMode = .byWordWrapping
+        let titleX: CGFloat = dot == nil ? 22 : 36
+        if let dot { drawDot(dot, at: NSPoint(x: 27, y: 21)) }
         NSAttributedString(string: title, attributes: [
-            .font: CardView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
-        ]).draw(in: NSRect(x: titleX, y: 10, width: bounds.width - 30 - titleX, height: 18))
-        // The whole command or path, in up to two lines, so you can see what you are allowing
-        let detailStyle = NSMutableParagraphStyle()
-        detailStyle.lineBreakMode = .byCharWrapping
-        NSAttributedString(string: body, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: detailStyle,
-        ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 34))
+            .font: NSFont.systemFont(ofSize: 13.5, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: wrap,
+        ]).draw(in: NSRect(x: titleX, y: 12, width: bounds.width - 34 - titleX, height: 36))
+        NSAttributedString(string: subtitle, attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: wrap,
+        ]).draw(in: NSRect(x: 22, y: 50, width: bounds.width - 44, height: 16))
 
-        // Allow in green and Deny in grey, each a pill with its word centred
-        let buttons: [(box: NSRect, word: String, fill: NSColor, ink: NSColor)] = [
-            (allowBox, "Allow", Self.allowColor, .white),
-            (denyBox, "Deny", NSColor.secondaryLabelColor.withAlphaComponent(0.18), .labelColor),
-        ]
-        for button in buttons {
-            button.fill.setFill()
-            NSBezierPath(roundedRect: button.box, xRadius: 13, yRadius: 13).fill()
-            let label = NSAttributedString(string: button.word, attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: button.ink,
-            ])
-            let size = label.size()
-            label.draw(at: NSPoint(x: button.box.midX - size.width / 2, y: button.box.midY - size.height / 2))
-        }
+        // The whole command or path, in a box, as Claude's dialog shows it
+        let code = NSRect(x: 22, y: 74, width: bounds.width - 44, height: 66)
+        NSColor.labelColor.withAlphaComponent(0.07).setFill()
+        NSBezierPath(roundedRect: code, xRadius: 8, yRadius: 8).fill()
+        let charWrap = NSMutableParagraphStyle()
+        charWrap.lineBreakMode = .byCharWrapping
+        NSAttributedString(string: body, attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: charWrap,
+        ]).draw(in: code.insetBy(dx: 10, dy: 8))
+
+        // The other two answers, by key only
+        NSAttributedString(string: "⌃⌥3 allow and accept edits   ·   ⌃⌥4 allow and switch to Auto", attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.tertiaryLabelColor,
+        ]).draw(at: NSPoint(x: 22, y: 148))
+
+        // Deny on the left, Allow once on the right, each with its key in a small chip
+        drawButton(denyBox, "Deny", key: "⌃⌥2", fill: NSColor.labelColor.withAlphaComponent(0.08), outline: nil)
+        drawButton(allowBox, "Allow once", key: "⌃⌥1", fill: Self.allowColor.withAlphaComponent(0.12), outline: Self.allowColor)
+
         NSAttributedString(string: "✕", attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.tertiaryLabelColor,
         ]).draw(at: NSPoint(x: closeBox.minX + 4, y: closeBox.minY + 2))
+    }
+
+    private func drawButton(_ box: NSRect, _ word: String, key: String, fill: NSColor, outline: NSColor?) {
+        let shape = NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8)
+        fill.setFill()
+        shape.fill()
+        if let outline {
+            outline.setStroke()
+            shape.lineWidth = 1.5
+            shape.stroke()
+        }
+        let label = NSAttributedString(string: word, attributes: [
+            .font: NSFont.systemFont(ofSize: 12.5, weight: .medium), .foregroundColor: NSColor.labelColor,
+        ])
+        let size = label.size()
+        label.draw(at: NSPoint(x: box.minX + 12, y: box.midY - size.height / 2))
+        let chipText = NSAttributedString(string: key, attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        let chipSize = chipText.size()
+        let chip = NSRect(x: box.maxX - chipSize.width - 18, y: box.midY - 9, width: chipSize.width + 10, height: 18)
+        NSColor.labelColor.withAlphaComponent(0.08).setFill()
+        NSBezierPath(roundedRect: chip, xRadius: 4, yRadius: 4).fill()
+        chipText.draw(at: NSPoint(x: chip.minX + 5, y: chip.midY - chipSize.height / 2))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1694,7 +1738,9 @@ func playAtTwoThirds(_ sound: NSSound?) {
         panel.hasShadow = false // the glass draws its own soft edge
         // The whole command or path when Claude sent it, else the short line
         let why = !chat.detail.isEmpty ? chat.detail : chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
-        let card = ApprovalView(title: "⏰ \(chat.title) needs you", body: why, accent: Status.needsInput.color)
+        let card = ApprovalView(title: approvalQuestion(chat: chat.title, waiting: chat.waiting),
+                                subtitle: "Answer here within 7 seconds, or Claude asks you itself.",
+                                body: why, accent: Status.needsInput.color)
         card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
         card.onClose = { [weak self] in self?.closeApproval(id) }
