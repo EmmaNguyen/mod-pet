@@ -170,9 +170,13 @@ let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
 let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi")
 
-/// The chat that has waited longest among those whose Allow and Deny card is showing: the one nearest its time limit
-func waitingChat(_ chats: [Chat], pending ids: Set<String>) -> Chat? {
-    chats.filter { !$0.requestId.isEmpty && ids.contains($0.requestId) }.min(by: { $0.askedAt < $1.askedAt })
+/// Which chat a key answers. The menu test's pretend request, when its card shows, so a test never answers a
+/// real chat. Otherwise the one chat whose card shows, and none when several do: a key could then answer a
+/// chat you have not read. `waiting` is how many cards show.
+func keyTarget(_ chats: [Chat], showing ids: Set<String>, testID: String?) -> (chat: Chat?, waiting: Int) {
+    let waiting = chats.filter { !$0.requestId.isEmpty && ids.contains($0.requestId) }
+    if let testID, let test = waiting.first(where: { $0.requestId == testID }) { return (test, 1) }
+    return (waiting.count == 1 ? waiting[0] : nil, waiting.count)
 }
 
 /// Writes a small JSON file in one go, so the plugin never reads half of it
@@ -1692,7 +1696,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
         card.onClose = { [weak self] in self?.closeApproval(id) }
-        card.onAnswer = { [weak self] decision in self?.answerApproval(chat, decision) }
+        card.onAnswer = { [weak self] decision in
+            mochiLog("\(decision): clicked on \(chat.title) (\(chat.requestId))")
+            self?.answerApproval(chat, decision)
+        }
         panel.contentView = glassBackground(for: card, tint: Status.needsInput.color)
         panel.alphaValue = 0
 
@@ -1712,8 +1719,15 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// F7 allows and F8 denies the request of the chat that has waited longest for your OK: the one nearest its time limit
     func answerWaiting(_ decision: String) {
-        guard let chat = waitingChat(chats, pending: Set(approvals.keys)) else {
-            mochiLog("\(decision): no card showing, nothing to answer")
+        let target = keyTarget(chats, showing: Set(approvals.keys), testID: testChat?.requestId)
+        guard let chat = target.chat else {
+            if target.waiting > 1 {
+                mochiLog("\(decision): \(target.waiting) cards showing, not answered")
+                showCard(title: "\(target.waiting) chats are waiting", body: "Click Allow or Deny on the one you mean.",
+                         color: Status.needsInput.color, link: nil)
+            } else {
+                mochiLog("\(decision): no card showing, nothing to answer")
+            }
             return
         }
         mochiLog("\(decision): answering \(chat.title) (\(chat.requestId))")
