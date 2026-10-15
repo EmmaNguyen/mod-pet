@@ -379,7 +379,7 @@ var usageTired = false
 func pixelColor(_ cell: Character, _ status: Status, blinking: Bool) -> NSColor? {
     switch cell {
     case "E": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : eye
-    case "W": return status == .blocked || blinking || currentLook.eyes == "sleepy" || usageTired ? face : status == .ready ? eye : .white
+    case "W": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : status == .ready ? eye : .white
     case "e": return status == .ready ? face : eye
     case ".": return nil
     default: return palette[cell]
@@ -446,6 +446,11 @@ final class MochiView: NSView {
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
         drawPixels(currentLook.art, blinking: blinking)
+        if usageTired {
+            // A lid: the top half of each eye in the body colour, so she looks half-closed
+            face.setFill()
+            for col in [3, 11] { NSRect(x: CGFloat(col) * scale, y: 7 * scale, width: 2 * scale, height: scale / 2).fill() }
+        }
         drawAccessory(currentLook.accessory ?? "none")
         ctx.restoreGState()
 

@@ -11,7 +11,7 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 ## Features
 
 - **Status at a glance.** Working, needs your OK, ready, or blocked, shown by her pose, her badge, and her colours.
-- **Her mood follows your limit.** Past 70% of either limit her eyes look half-closed, so she looks tired.
+- **Her mood follows your limit.** Past 70% of either limit her eyes get a lid, so she looks tired.
 - **Notifications beside her.** Finished work, questions, and tool approvals appear as Liquid Glass cards next to her. A sound plays when a chat needs you.
 - **Allow or deny from her.** When a chat asks for your OK, her card has Allow and Deny buttons, so you can answer without switching to Claude. Claude gives her about 8 seconds to answer before its normal prompt appears, so click quickly. Turn this off in her right-click menu, and the normal prompt shows at once.
 - **Every chat in one list.** Click her to see all your recent chats and their latest news. Click a line to open that chat in Claude.
