@@ -172,6 +172,11 @@ let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
 let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi")
 
+/// Whole seconds left to answer a card: the request was made at askedAt (milliseconds), the window is in milliseconds
+func answerSecondsLeft(askedAt: Double, now: Double, window: Double) -> Int {
+    max(0, Int(ceil((askedAt + window - now) / 1000)))
+}
+
 /// The approval keys to list in the menu for the chat a key would answer: none without a card, the allow and
 /// deny keys for any card, and the mode keys only when that chat can switch modes
 func approvalShortcutLines(_ waiting: Chat?) -> [String] {
@@ -983,7 +988,8 @@ func approvalQuestion(chat: String, waiting: String) -> String {
 /// runs out, or the chat moves on. Clicking anywhere else on it opens the chat to read it first.
 final class ApprovalView: NSView {
     let title: String
-    let subtitle: String
+    /// The line under the question: the countdown while the card can still be answered
+    var subtitle: String
     let body: String
     let accent: NSColor
     var onOpen: (() -> Void)?
@@ -1348,6 +1354,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     /// The Allow and Deny cards by the tool call they answer, and the calls already answered, so none comes back
     var approvals: [String: NSPanel] = [:]
+    /// The card view inside each approval panel, so its countdown can be updated
+    var approvalViews: [String: ApprovalView] = [:]
     /// A pretend chat waiting for your OK, from "Test the approval keys" in her menu. Nothing real is approved.
     var testChat: Chat?
     var answered = Set<String>()
@@ -1736,6 +1744,13 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let ids = Set(asking.map { $0.requestId })
         for id in Array(approvals.keys) where !ids.contains(id) { closeApproval(id) }
         for chat in asking where approvals[chat.requestId] == nil { showApproval(chat) }
+        // The countdown: how long is left to answer each card
+        for chat in asking {
+            let left = answerSecondsLeft(askedAt: chat.askedAt, now: now, window: Self.answerWindow)
+            approvalViews[chat.requestId]?.subtitle = left == 1 ? "Answer in 1 second, or Claude asks you itself."
+                : "Answer in \(left) seconds, or Claude asks you itself."
+            approvalViews[chat.requestId]?.needsDisplay = true
+        }
 
         // The plugin waits for her answer only while she is here and showing the request
         if approveHere {
@@ -1754,7 +1769,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         // The whole command or path when Claude sent it, else the short line
         let why = !chat.detail.isEmpty ? chat.detail : chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
         let card = ApprovalView(title: approvalQuestion(chat: chat.title, waiting: chat.waiting),
-                                subtitle: "Answer here within 7 seconds, or Claude asks you itself.",
+                                subtitle: "Answer in 7 seconds, or Claude asks you itself.",
                                 body: why, accent: Status.needsInput.color, offersModes: chat.canSwitchMode)
         card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
@@ -1767,6 +1782,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         panel.alphaValue = 0
 
         approvals[id] = panel
+        approvalViews[id] = card
         cards.insert(panel, at: 0)
         placeCards()
         panel.orderFrontRegardless()
@@ -1776,6 +1792,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// Takes an Allow and Deny card away, and never offers that tool call again
     func closeApproval(_ id: String) {
         answered.insert(id)
+        approvalViews.removeValue(forKey: id)
         guard let panel = approvals.removeValue(forKey: id) else { return }
         dismiss(panel)
     }

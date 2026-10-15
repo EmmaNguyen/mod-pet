@@ -48,4 +48,10 @@ check("a card from an older chat: only allow and deny",
 check("a card from a newer chat: the mode keys too",
       approvalShortcutLines(chat("new", "r", 0, canSwitch: true)).count == 4)
 
+// The countdown on an approval card
+check("a card just asked has the whole window left", answerSecondsLeft(askedAt: 0, now: 0, window: 7_000) == 7)
+check("2.5 seconds on, 5 seconds are left", answerSecondsLeft(askedAt: 0, now: 2_500, window: 7_000) == 5)
+check("at the end of the window, none are left", answerSecondsLeft(askedAt: 0, now: 7_000, window: 7_000) == 0)
+check("past the window, still none", answerSecondsLeft(askedAt: 0, now: 9_000, window: 7_000) == 0)
+
 print("ALL PASSED")
