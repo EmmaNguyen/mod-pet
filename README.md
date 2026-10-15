@@ -111,6 +111,18 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 - Sign and notarise the desktop app so it opens without warnings
 - Support for Claude chats outside Claude Code
 
+## Development
+
+New work goes on the `dev` branch, with tests for each change. Every three days, `dev` is merged into `main` only if every test passes.
+
+Run all tests with:
+
+```sh
+sh test.sh
+```
+
+It runs the plugin's approval tests (`pet-mod/tests/approval.test.ts`, with Bun), Mochi Desktop's and Mochi Studio's logic tests (`mochi-desktop/tests/`, `mochi-studio/tests/`), and builds both apps. It ends with `ALL TESTS PASSED` when everything passes.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

@@ -1,0 +1,37 @@
+// Mochi Desktop's logic tests. test.sh appends this file to main.swift (without its last lines, which start
+// the app), so these run against the real code.
+
+func check(_ name: String, _ ok: Bool) {
+    print(ok ? "PASS" : "FAIL", name)
+    if !ok { exit(1) }
+}
+
+func chat(_ id: String, _ req: String, _ asked: Double, mode: String = "", canSwitch: Bool = true) -> Chat {
+    Chat(id: id, title: id, status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "", isRecent: true,
+         requestId: req, askedAt: asked, detail: "", mode: mode, canSwitchMode: canSwitch)
+}
+
+// Which chat a key answers
+let real = chat("higgsfield", "toolu_real", 1_000), test = chat("mochi-test", "test-1", 14_000)
+check("during a test, a key answers the test card, not a real chat",
+      keyTarget([real, test], showing: ["toolu_real", "test-1"], testID: "test-1").chat?.id == "mochi-test")
+check("one card showing: a key answers it", keyTarget([real], showing: ["toolu_real"], testID: nil).chat?.id == "higgsfield")
+let two = keyTarget([real, chat("garden", "toolu_other", 2_000)], showing: ["toolu_real", "toolu_other"], testID: nil)
+check("two cards showing: a key answers neither", two.chat == nil && two.waiting == 2)
+check("no card showing: nothing", keyTarget([real], showing: [], testID: nil).chat == nil)
+check("an ended test does not hold the keys", keyTarget([real], showing: ["toolu_real"], testID: "test-gone").chat?.id == "higgsfield")
+check("a chat with no request is never picked", keyTarget([chat("x", "", 0)], showing: [""], testID: nil).chat == nil)
+
+// Reading what a chat reports
+let decoder = JSONDecoder()
+let newer = try! decoder.decode(Report.self, from: #"{"status":"running","mode":"auto","detail":"$ ls"}"#.data(using: .utf8)!)
+let older = try! decoder.decode(Report.self, from: #"{"status":"running"}"#.data(using: .utf8)!)
+check("a report from the new plugin carries its mode", newer.mode == "auto" && newer.detail == "$ ls")
+check("a report from an older plugin has no mode, so it cannot switch modes", older.mode == nil)
+
+// Usage colours, which her tired eyes follow
+check("usage under 70% is green", Usage.color(69) == NSColor(hex: 0x2F9E44))
+check("70% is orange", Usage.color(70) == NSColor(hex: 0xF08C00))
+check("90% is red", Usage.color(90) == NSColor(hex: 0xE03131))
+
+print("ALL PASSED")
