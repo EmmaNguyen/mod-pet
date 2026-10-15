@@ -373,10 +373,13 @@ struct MochiLook: Decodable {
 /// Mochi's look as last read from Mochi Studio, refreshed every second
 var currentLook = MochiLook()
 
+/// Her mood from your plan usage: 0 calm, 1 tired (from 70%), 2 tired and sweating (from 90%)
+var usageMood = 0
+
 func pixelColor(_ cell: Character, _ status: Status, blinking: Bool) -> NSColor? {
     switch cell {
-    case "E": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : eye
-    case "W": return status == .blocked || blinking || currentLook.eyes == "sleepy" ? face : status == .ready ? eye : .white
+    case "E": return status == .blocked || blinking || currentLook.eyes == "sleepy" || usageMood > 0 ? face : eye
+    case "W": return status == .blocked || blinking || currentLook.eyes == "sleepy" || usageMood > 0 ? face : status == .ready ? eye : .white
     case "e": return status == .ready ? face : eye
     case ".": return nil
     default: return palette[cell]
@@ -433,6 +436,10 @@ final class MochiView: NSView {
         case .blocked: break
         }
 
+        // Her mood follows your plan usage: tired from 70%, sweating from 90%, the same colours as the label
+        let worst = usage.map { max($0.fiveHour, $0.week) } ?? 0
+        usageMood = worst >= 90 ? 2 : worst >= 70 ? 1 : 0
+
         let originX = (bounds.width - petSize) / 2
         let originY = 30 - lift // the usage label above her, the two buttons below
         ctx.saveGState()
@@ -442,6 +449,8 @@ final class MochiView: NSView {
         drawPixels(currentLook.art, blinking: blinking)
         drawAccessory(currentLook.accessory ?? "none")
         ctx.restoreGState()
+        // On her left, away from the status badge in the top-right corner
+        if usageMood == 2 { drawSweat(at: NSPoint(x: originX - 8, y: originY + 3 * scale)) }
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
@@ -572,6 +581,17 @@ final class MochiView: NSView {
             NSBezierPath(rect: box(10, 12.2, 2, 2.2)).fill()
         default: break
         }
+    }
+
+    /// A drop of sweat beside her ear, when you are close to the limit. (x, y) is the drop's top point.
+    private func drawSweat(at point: NSPoint) {
+        NSColor(hex: 0x74C0FC).setFill()
+        let drop = NSBezierPath()
+        drop.move(to: NSPoint(x: point.x, y: point.y))
+        drop.line(to: NSPoint(x: point.x - 4, y: point.y + 7))
+        drop.line(to: NSPoint(x: point.x + 4, y: point.y + 7))
+        drop.fill()
+        NSBezierPath(ovalIn: NSRect(x: point.x - 4, y: point.y + 5, width: 8, height: 8)).fill()
     }
 
     private func drawBadge(at center: NSPoint) {
