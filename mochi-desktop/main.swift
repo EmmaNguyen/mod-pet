@@ -166,6 +166,11 @@ let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
 let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi")
 
+/// The chat that has waited longest among those whose Allow and Deny card is showing: the one nearest its time limit
+func waitingChat(_ chats: [Chat], pending ids: Set<String>) -> Chat? {
+    chats.filter { !$0.requestId.isEmpty && ids.contains($0.requestId) }.min(by: { $0.askedAt < $1.askedAt })
+}
+
 /// Writes a small JSON file in one go, so the plugin never reads half of it
 func writeJSON(_ object: [String: Any], to url: URL) {
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1182,6 +1187,8 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
 /// Control-Option-M to talk. They are registered with the system, so they need no extra permission.
 enum Shortcuts {
     static var actions: [UInt32: () -> Void] = [:]
+    /// What macOS said for each shortcut when Mochi registered it, by shortcut id
+    static var results: [String: Int] = [:]
     private static var installed = false
 
     static func add(_ id: UInt32, key: Int, modifiers: Int = optionKey, _ action: @escaping () -> Void) {
@@ -1200,7 +1207,8 @@ enum Shortcuts {
         actions[id] = action
         var ref: EventHotKeyRef?
         let hotKey = EventHotKeyID(signature: 0x4D4F4348, id: id) // 'MOCH'
-        _ = RegisterEventHotKey(UInt32(key), UInt32(modifiers), hotKey, GetApplicationEventTarget(), 0, &ref)
+        // 0 means macOS accepted the shortcut; anything else is an error code, written to shortcuts.json
+        results["\(id)"] = Int(RegisterEventHotKey(UInt32(key), UInt32(modifiers), hotKey, GetApplicationEventTarget(), 0, &ref))
     }
 }
 
@@ -1328,6 +1336,18 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Shortcuts.add(5, key: kVK_F8, modifiers: 0) { [weak self] in self?.answerWaiting("deny") }
         Shortcuts.add(6, key: kVK_F9, modifiers: 0) { [weak self] in self?.answerWaiting("acceptEdits") }
         Shortcuts.add(7, key: kVK_F10, modifiers: 0) { [weak self] in self?.answerWaiting("auto") }
+        // The same four answers on Control-Option 1 to 4, which work without holding Fn (the F-keys above
+        // are media keys on a Mac unless Fn is held)
+        Shortcuts.add(8, key: kVK_ANSI_1, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("allow") }
+        Shortcuts.add(9, key: kVK_ANSI_2, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("deny") }
+        Shortcuts.add(10, key: kVK_ANSI_3, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("acceptEdits") }
+        Shortcuts.add(11, key: kVK_ANSI_4, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("auto") }
+        // Which shortcuts macOS accepted, in shortcuts.json: 0 is accepted, anything else is an error code
+        let names = ["1": "quick note F5", "2": "talk F6", "3": "jump Option-J", "4": "allow F7",
+                     "5": "deny F8", "6": "accept edits F9", "7": "auto F10", "8": "allow Control-Option-1",
+                     "9": "deny Control-Option-2", "10": "accept edits Control-Option-3", "11": "auto Control-Option-4"]
+        writeJSON(Dictionary(uniqueKeysWithValues: Shortcuts.results.map { (names[$0.key] ?? $0.key, $0.value as Any) }),
+                  to: mochiFolder.appendingPathComponent("shortcuts.json"))
         view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
         // Old reports pile up otherwise, and she reads every one each second
         DispatchQueue.global(qos: .utility).async { pruneOldSessions() }
@@ -1640,8 +1660,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// F7 allows and F8 denies the request of the chat that has waited longest for your OK: the one nearest its time limit
     func answerWaiting(_ decision: String) {
-        guard let chat = chats.filter({ approvals[$0.requestId] != nil })
-            .min(by: { $0.askedAt < $1.askedAt }) else { return }
+        guard let chat = waitingChat(chats, pending: Set(approvals.keys)) else { return }
         answerApproval(chat, decision)
     }
 
@@ -1979,7 +1998,7 @@ final class NotePanel: NSPanel {
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Quick note F5 · Talk F6 · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Allow F7 · Deny F8 · Accept edits F9 · Auto F10 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Allow ⌃⌥1 · Deny ⌃⌥2 · Accept edits ⌃⌥3 · Auto ⌃⌥4 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false
