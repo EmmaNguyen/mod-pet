@@ -12,6 +12,22 @@ struct Look: Codable, Equatable {
     var pixels: [String]? = nil      // a square of letters, one row per line, when painted by hand
     var detail: Int = 16             // how many squares across the default cat is drawn with: 16 or 32
 
+    init() {}
+
+    /// Reads a saved look. Anything missing (an older Studio saved fewer things) keeps its default,
+    /// so a look saved before a new setting existed still opens as you left it
+    init(from decoder: Decoder) throws {
+        let saved = try decoder.container(keyedBy: CodingKeys.self)
+        let start = Look()
+        body = try saved.decodeIfPresent(String.self, forKey: .body) ?? start.body
+        eyes = try saved.decodeIfPresent(String.self, forKey: .eyes) ?? start.eyes
+        accessory = try saved.decodeIfPresent(String.self, forKey: .accessory) ?? start.accessory
+        name = try saved.decodeIfPresent(String.self, forKey: .name) ?? start.name
+        speed = try saved.decodeIfPresent(Double.self, forKey: .speed) ?? start.speed
+        pixels = try saved.decodeIfPresent([String].self, forKey: .pixels)
+        detail = try saved.decodeIfPresent(Int.self, forKey: .detail) ?? (pixels?.count == 32 ? 32 : start.detail)
+    }
+
     /// The grid Mochi draws: the painted one when it is valid, otherwise the default at this detail
     var art: [String] {
         guard let pixels, (8...64).contains(pixels.count), pixels.allSatisfy({ $0.count == pixels.count }) else {
@@ -66,23 +82,46 @@ let paintNames: [Character: String] = [
     "E": "Eyes", "W": "Eye shine", "e": "Closed eyes", ".": "Erase",
 ]
 
+/// One of Mochi's skins, the same colours Mochi Desktop draws: outline (K), belly and paws (L),
+/// ears and cheeks (P), nose and stripes (D), and eyes. The body colour chosen here goes over the skin's.
+struct Skin {
+    let name: String
+    let colors: [Character: String]
+    let eye: String
+}
+
+let skins: [Skin] = [
+    Skin(name: "Classic orange", colors: ["K": "3B2A20", "L": "FFE0B5", "P": "FF8FAB", "D": "D9822B"], eye: "2B2118"),
+    Skin(name: "Midnight black", colors: ["K": "101014", "L": "5B5B6E", "P": "8A5A7A", "D": "2A2A36"], eye: "F5D547"),
+    Skin(name: "Snow white", colors: ["K": "6B6B78", "L": "FFFFFF", "P": "FFB3C6", "D": "DFE4EA"], eye: "3B82F6"),
+    Skin(name: "Tuxedo", colors: ["K": "1A1A1A", "L": "FFFFFF", "P": "FFB3C6", "D": "2B2B2B"], eye: "2B2B2B"),
+    Skin(name: "Mint", colors: ["K": "2B4A44", "L": "D4F5E4", "P": "FFA8C5", "D": "5FBF96"], eye: "1F3D37"),
+    Skin(name: "Lavender galaxy", colors: ["K": "2A1B4A", "L": "E5DBFF", "P": "FF8FD8", "D": "7950F2"], eye: "2A1B4A"),
+]
+
+/// The skin chosen in Mochi's own right-click menu, read from her settings
+func chosenSkin() -> Skin {
+    let index = UserDefaults(suiteName: "local.claude-mods.mochi")?.integer(forKey: "skinIndex") ?? 0
+    return skins[min(max(index, 0), skins.count - 1)]
+}
+
+/// The skin the preview and the editor draw with; read again whenever Studio comes to the front
+var activeSkin = chosenSkin()
+
 /// The colour a letter is drawn in, or nil for an empty square
 func pixelFill(_ ch: Character, _ look: Look) -> Color? {
     switch ch {
-    case "K": return color("3B2A20")
     case "B": return color(look.body)
-    case "L": return color("FFE0B5")
-    case "P": return color("FF8FAB")
-    case "D": return color("D9822B")
-    case "E": return look.eyes == "sleepy" ? color(look.body) : color("2B2118")
+    case "K", "L", "P", "D": return color(activeSkin.colors[ch] ?? "000000")
+    case "E": return look.eyes == "sleepy" ? color(look.body) : color(activeSkin.eye)
     case "W": return look.eyes == "sleepy" ? color(look.body) : .white
-    case "e": return color("2B2118")
+    case "e": return color(activeSkin.eye)
     case ".": return nil
     default: return .black
     }
 }
 
-/// The pixel cat, drawn the same way Mochi draws it: 16 by 16 squares, with accessories on top
+/// The pixel cat, drawn the same way Mochi draws it, with accessories on top
 struct Preview: View {
     let look: Look
     var body: some View {
@@ -90,15 +129,44 @@ struct Preview: View {
             let n = CGFloat(look.art.count)
             let s = min(size.width, size.height) / n
             let ox = (size.width - n * s) / 2, oy = (size.height - n * s) / 2
-            for (y, row) in look.art.enumerated() {
-                for (x, ch) in row.enumerated() {
-                    guard let fill = pixelFill(ch, look) else { continue }
-                    ctx.fill(Path(CGRect(x: ox + CGFloat(x) * s, y: oy + CGFloat(y) * s, width: s, height: s)), with: .color(fill))
+            if look.art.count == 16 {
+                // Mochi smooths a 16-square face: each square is four quarters, and a quarter on a
+                // diagonal edge takes its neighbours' colour, so the preview does the same
+                let rows = look.art.map { Array($0) }
+                let h = s / 2
+                for y in rows.indices {
+                    for x in rows[y].indices {
+                        let p = rows[y][x]
+                        let a = y > 0 ? rows[y - 1][x] : p
+                        let b = x < rows[y].count - 1 ? rows[y][x + 1] : p
+                        let c = x > 0 ? rows[y][x - 1] : p
+                        let d = y < rows.count - 1 ? rows[y + 1][x] : p
+                        let corners: [Character] = [
+                            c == a && c != d && a != b ? a : p,
+                            a == b && a != c && b != d ? b : p,
+                            d == c && d != b && c != a ? c : p,
+                            b == d && b != a && d != c ? d : p,
+                        ]
+                        for (i, cell) in corners.enumerated() {
+                            guard let fill = pixelFill(cell, look) else { continue }
+                            let quarter = CGRect(x: ox + CGFloat(x * 2 + i % 2) * h, y: oy + CGFloat(y * 2 + i / 2) * h, width: h, height: h)
+                            ctx.fill(Path(quarter), with: .color(fill))
+                        }
+                    }
+                }
+            } else {
+                for (y, row) in look.art.enumerated() {
+                    for (x, ch) in row.enumerated() {
+                        guard let fill = pixelFill(ch, look) else { continue }
+                        ctx.fill(Path(CGRect(x: ox + CGFloat(x) * s, y: oy + CGFloat(y) * s, width: s, height: s)), with: .color(fill))
+                    }
                 }
             }
-            // Accessories sit on the cat's head or neck
+            // Accessories sit on the cat's head or neck. They are placed on the 16-square cat, as Mochi
+            // places them, so they keep their size and place on a finer grid
+            let u = n * s / 16
             func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect {
-                CGRect(x: ox + x * s, y: oy + y * s, width: w * s, height: h * s)
+                CGRect(x: ox + x * u, y: oy + y * u, width: w * u, height: h * u)
             }
             switch look.accessory {
             case "bow":
@@ -210,6 +278,17 @@ final class Model: ObservableObject {
     @Published private(set) var redoSteps: [Look] = []
     /// The look when the paint stroke in progress began, so the whole stroke is one step
     private var strokeStart: Look?
+    /// The skin chosen in Mochi's menu, by name
+    @Published var skinName = activeSkin.name
+
+    init() {
+        // A skin picked in Mochi's menu shows here the next time Studio comes to the front
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            activeSkin = chosenSkin()
+            self?.skinName = activeSkin.name
+            self?.objectWillChange.send()
+        }
+    }
 
     var canUndo: Bool { !undoSteps.isEmpty }
     var canRedo: Bool { !redoSteps.isEmpty }
@@ -221,6 +300,16 @@ final class Model: ObservableObject {
         guard copy != look else { return }
         record(look)
         look = copy
+    }
+
+    /// True while you are typing a name, so a run of typing is one step
+    private var naming = false
+
+    func rename(_ name: String) {
+        guard name != look.name else { return }
+        if !naming { record(look) }
+        naming = true
+        look.name = name
     }
 
     func beginStroke() {
@@ -237,6 +326,7 @@ final class Model: ObservableObject {
     func undo() {
         guard let previous = undoSteps.last else { return }
         undoSteps.removeLast()
+        naming = false
         redoSteps.append(look)
         look = previous
     }
@@ -244,11 +334,13 @@ final class Model: ObservableObject {
     func redo() {
         guard let next = redoSteps.last else { return }
         redoSteps.removeLast()
+        naming = false
         undoSteps.append(look)
         look = next
     }
 
     private func record(_ before: Look) {
+        naming = false
         undoSteps.append(before)
         if undoSteps.count > 100 { undoSteps.removeFirst() }
         redoSteps.removeAll()
@@ -283,7 +375,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             Form {
                 Section("Pixels") {
-                    Picker("Fineness", selection: Binding(get: { look.art.count }, set: { n in
+                    Picker("Fineness", selection: Binding(get: { look.art.count == 32 ? 32 : 16 }, set: { n in
                         let old = look.art
                         model.change {
                             $0.detail = n
@@ -334,18 +426,20 @@ struct ContentView: View {
                         ForEach(swatches, id: \.self) { hex in
                             Circle().fill(color(hex)).frame(width: 30, height: 30)
                                 .overlay(Circle().stroke(Color.primary, lineWidth: look.body == hex ? 2.5 : 0).padding(-4))
-                                .onTapGesture { edit { $0.body = hex } }
+                                .onTapGesture { model.change { $0.body = hex } }
                         }
                     }
+                    Text("Skin: \(model.skinName). Change it in Mochi's right-click menu.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Eyes") {
-                    Picker("Style", selection: Binding(get: { look.eyes }, set: { v in edit { $0.eyes = v } })) {
+                    Picker("Style", selection: Binding(get: { look.eyes }, set: { v in model.change { $0.eyes = v } })) {
                         Text("Round").tag("round")
                         Text("Sleepy").tag("sleepy")
                     }.pickerStyle(.segmented)
                 }
                 Section("Accessory") {
-                    Picker("Wear", selection: Binding(get: { look.accessory }, set: { v in edit { $0.accessory = v } })) {
+                    Picker("Wear", selection: Binding(get: { look.accessory }, set: { v in model.change { $0.accessory = v } })) {
                         Text("None").tag("none")
                         Text("Bow").tag("bow")
                         Text("Hat").tag("hat")
@@ -353,10 +447,10 @@ struct ContentView: View {
                     }.pickerStyle(.segmented)
                 }
                 Section("Name") {
-                    TextField("Name", text: Binding(get: { look.name }, set: { v in edit { $0.name = v } }))
+                    TextField("Name", text: Binding(get: { look.name }, set: { v in model.rename(v) }))
                 }
                 Section("Walking speed") {
-                    Slider(value: Binding(get: { look.speed }, set: { v in edit { $0.speed = v } }), in: 0.5...2, step: 0.25)
+                    Slider(value: Binding(get: { look.speed }, set: { v in model.change { $0.speed = v } }), in: 0.5...2, step: 0.25)
                     Text(String(format: "%.2f×", look.speed)).font(.caption).foregroundStyle(.secondary)
                 }
             }

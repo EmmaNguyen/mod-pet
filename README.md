@@ -19,7 +19,7 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Talk.** A microphone button under her types what you say into the same box, using your Mac's speech recognition. Nothing is sent until you press Enter.
 - **Shortcuts from any app.** Control-Option-N opens a quick note, and Control-Option-M starts talking, even when Mochi is not in front.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
-- **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads. Undo and redo (⌘Z and ⇧⌘Z) step back through your painting.
+- **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads, opens with the look you saved, and previews her in the skin chosen in Mochi's menu, drawn the way Mochi draws it. Undo and redo (⌘Z and ⇧⌘Z) step back through every change.
 
 <p align="center">
   <img src="docs/mochi-card-mockup.png" alt="Mock-up: a notification card above Mochi" width="640">
