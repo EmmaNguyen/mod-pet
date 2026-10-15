@@ -1177,7 +1177,7 @@ enum Shortcuts {
     static var actions: [UInt32: () -> Void] = [:]
     private static var installed = false
 
-    static func add(_ id: UInt32, key: Int, _ action: @escaping () -> Void) {
+    static func add(_ id: UInt32, key: Int, modifiers: Int = optionKey, _ action: @escaping () -> Void) {
         if !installed {
             installed = true
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -1193,7 +1193,7 @@ enum Shortcuts {
         actions[id] = action
         var ref: EventHotKeyRef?
         let hotKey = EventHotKeyID(signature: 0x4D4F4348, id: id) // 'MOCH'
-        _ = RegisterEventHotKey(UInt32(key), UInt32(controlKey | optionKey), hotKey, GetApplicationEventTarget(), 0, &ref)
+        _ = RegisterEventHotKey(UInt32(key), UInt32(modifiers), hotKey, GetApplicationEventTarget(), 0, &ref)
     }
 }
 
@@ -1314,8 +1314,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         view.onQuickNote = { [weak self] in self?.toggleNote() }
         view.onTalk = { [weak self] in self?.toggleTalk() }
         view.onMenu = { [weak self] event in self?.showMenu(event) }
-        Shortcuts.add(1, key: kVK_ANSI_N) { [weak self] in self?.toggleNote() }
-        Shortcuts.add(2, key: kVK_ANSI_M) { [weak self] in self?.toggleTalk() }
+        Shortcuts.add(1, key: kVK_Space) { [weak self] in self?.toggleNote() }
+        Shortcuts.add(2, key: kVK_Space, modifiers: shiftKey | optionKey) { [weak self] in self?.toggleTalk() }
         Shortcuts.add(3, key: kVK_ANSI_J) { [weak self] in self?.jumpToWaiting() }
         view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
         // Old reports pile up otherwise, and she reads every one each second
@@ -1959,7 +1959,7 @@ final class NotePanel: NSPanel {
 
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Quick note ⌃⌥N · Talk ⌃⌥M", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Quick note ⌥Space · Talk ⇧⌥Space · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false

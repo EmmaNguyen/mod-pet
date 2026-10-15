@@ -18,8 +18,8 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Plan usage.** A label above her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
 - **Quick note.** A pencil button under her opens a small box. Press Enter to start a new Claude Code session with your note.
 - **Talk.** A microphone button under her types what you say into the same box, using your Mac's speech recognition. Nothing is sent until you press Enter.
-- **Shortcuts from any app.** Control-Option-N opens a quick note, and Control-Option-M starts talking, even when Mochi is not in front.
-- **Jump to the chat that needs you.** Control-Option-J, or a click on her red badge, opens the chat that has waited longest for your OK.
+- **Shortcuts from any app.** Option-Space opens a quick note, and Shift-Option-Space starts talking, even when Mochi is not in front.
+- **Jump to the chat that needs you.** Option-J, or a click on her red badge, opens the chat that has waited longest for your OK.
 - **A colour for each chat.** Every chat has its own coloured dot on its cards and its line in the list, so you can tell chats apart at a glance.
 - **Tidy by herself.** Status files from chats untouched for a week are deleted at launch and every hour, so she stays quick.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
