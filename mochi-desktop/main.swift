@@ -1657,7 +1657,9 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
         // The plugin waits for her answer only while she is here and showing the request
         if approveHere {
-            writeJSON(["at": now, "pending": asking.map { $0.requestId }], to: mochiFolder.appendingPathComponent("presence.json"))
+            // "auto" says whether she is showing the Auto sparkles, so a test can check what she shows
+            writeJSON(["at": now, "pending": asking.map { $0.requestId }, "auto": view.autoMode],
+                      to: mochiFolder.appendingPathComponent("presence.json"))
         }
     }
 
