@@ -991,11 +991,15 @@ final class ApprovalView: NSView {
     private var allowBox: NSRect { NSRect(x: bounds.width - 22 - 170, y: 172, width: 170, height: 28) }
     private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 10, width: 18, height: 18) }
 
-    init(title: String, subtitle: String, body: String, accent: NSColor) {
+    /// Whether this chat can switch modes; only then does the card list the mode keys
+    let offersModes: Bool
+
+    init(title: String, subtitle: String, body: String, accent: NSColor, offersModes: Bool = true) {
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.accent = accent
+        self.offersModes = offersModes
         super.init(frame: NSRect(origin: .zero, size: Self.size))
     }
 
@@ -1028,10 +1032,12 @@ final class ApprovalView: NSView {
             .paragraphStyle: charWrap,
         ]).draw(in: code.insetBy(dx: 10, dy: 8))
 
-        // The other two answers, by key only
-        NSAttributedString(string: "⌃⌥3 allow and accept edits   ·   ⌃⌥4 allow and switch to Auto", attributes: [
-            .font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.tertiaryLabelColor,
-        ]).draw(at: NSPoint(x: 22, y: 148))
+        // The two mode answers, only in a chat whose plugin can switch modes: otherwise they would do nothing
+        if offersModes {
+            NSAttributedString(string: "⌃⌥3 allow and accept edits   ·   ⌃⌥4 allow and switch to Auto", attributes: [
+                .font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.tertiaryLabelColor,
+            ]).draw(at: NSPoint(x: 22, y: 148))
+        }
 
         // Deny on the left, Allow once on the right, each with its key in a small chip
         drawButton(denyBox, "Deny", key: "⌃⌥2", fill: NSColor.labelColor.withAlphaComponent(0.08), outline: nil)
@@ -1740,7 +1746,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let why = !chat.detail.isEmpty ? chat.detail : chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
         let card = ApprovalView(title: approvalQuestion(chat: chat.title, waiting: chat.waiting),
                                 subtitle: "Answer here within 7 seconds, or Claude asks you itself.",
-                                body: why, accent: Status.needsInput.color)
+                                body: why, accent: Status.needsInput.color, offersModes: chat.canSwitchMode)
         card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
         card.onClose = { [weak self] in self?.closeApproval(id) }
