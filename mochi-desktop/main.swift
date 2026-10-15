@@ -110,6 +110,8 @@ struct Chat {
     var detail = ""
     /// The session's permission mode: 'auto' when Auto is on
     var mode = ""
+    /// The chat's plugin can switch modes (Accept edits, Auto); a chat started before that plugin cannot
+    var canSwitchMode = false
     var isOpen: Bool { status != .ended }
 }
 
@@ -270,7 +272,7 @@ func readChats() -> [Chat] {
                         updatedAt: report.updatedAt ?? 0, link: report.link, waiting: report.waiting ?? "",
                         isRecent: now - (report.updatedAt ?? 0) < recent,
                         requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0, detail: report.detail ?? "",
-                        mode: report.mode ?? "")
+                        mode: report.mode ?? "", canSwitchMode: report.mode != nil)
     }
 
     var chats: [Chat] = []
@@ -285,7 +287,7 @@ func readChats() -> [Chat] {
             chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
                               waiting: mine.waiting, isRecent: mine.isRecent,
-                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail, mode: mine.mode))
+                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail, mode: mine.mode, canSwitchMode: mine.canSwitchMode))
             continue
         }
 
@@ -1728,6 +1730,13 @@ func playAtTwoThirds(_ sound: NSSound?) {
             } else {
                 mochiLog("\(decision): no card showing, nothing to answer")
             }
+            return
+        }
+        // A chat started before the plugin could switch modes would ignore Accept edits and Auto: say so instead
+        if decision == "acceptEdits" || decision == "auto", !chat.canSwitchMode, chat.id != "mochi-test" {
+            mochiLog("\(decision): \(chat.title) runs an older plugin that cannot switch modes, not answered")
+            showCard(title: "\(chat.title) can't switch modes", body: "Start a new chat to load the latest plugin. Allow and Deny still work.",
+                     color: Status.blocked.color, link: chat.link)
             return
         }
         mochiLog("\(decision): answering \(chat.title) (\(chat.requestId))")
