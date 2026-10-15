@@ -1317,6 +1317,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Shortcuts.add(1, key: kVK_F5, modifiers: 0) { [weak self] in self?.toggleNote() }
         Shortcuts.add(2, key: kVK_F6, modifiers: 0) { [weak self] in self?.toggleTalk() }
         Shortcuts.add(3, key: kVK_ANSI_J) { [weak self] in self?.jumpToWaiting() }
+        Shortcuts.add(4, key: kVK_F7, modifiers: 0) { [weak self] in self?.answerWaiting("allow") }
+        Shortcuts.add(5, key: kVK_F8, modifiers: 0) { [weak self] in self?.answerWaiting("deny") }
         view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
         // Old reports pile up otherwise, and she reads every one each second
         DispatchQueue.global(qos: .utility).async { pruneOldSessions() }
@@ -1624,6 +1626,13 @@ func playAtTwoThirds(_ sound: NSSound?) {
         answered.insert(id)
         guard let panel = approvals.removeValue(forKey: id) else { return }
         dismiss(panel)
+    }
+
+    /// F7 allows and F8 denies the request of the chat that has waited longest for your OK: the one nearest its time limit
+    func answerWaiting(_ decision: String) {
+        guard let chat = chats.filter({ approvals[$0.requestId] != nil })
+            .min(by: { $0.askedAt < $1.askedAt }) else { return }
+        answerApproval(chat, decision)
     }
 
     /// Writes your answer for the chat's waiting tool call; the plugin picks it up and carries on
@@ -1960,6 +1969,7 @@ final class NotePanel: NSPanel {
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Quick note F5 · Talk F6 · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Allow F7 · Deny F8 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false
