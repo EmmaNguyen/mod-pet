@@ -138,11 +138,14 @@ async function publish($: Dollar, isEnding = false) {
   await $.fs.write(file, JSON.stringify(report))
 }
 
+/** What you answered on Mochi's card: Allow, Deny, or Allow and switch this session to Accept edits */
+type Answer = 'allow' | 'deny' | 'acceptEdits'
+
 /**
  * Lets you answer a tool's ask with Mochi's Allow or Deny. Only when she is running and shows this
  * request; otherwise, or when she does not answer in time, the normal dialog in Claude takes over.
  */
-async function askMochi($: Dollar, requestId: string, signal: AbortSignal): Promise<'allow' | 'deny' | undefined> {
+async function askMochi($: Dollar, requestId: string, signal: AbortSignal): Promise<Answer | undefined> {
   const home = await $.env.get('HOME')
   if (home === undefined || answers === undefined || requestId === '') return undefined
   const presenceFile = `${home}/.claude/mochi/presence.json`
@@ -160,8 +163,9 @@ async function askMochi($: Dollar, requestId: string, signal: AbortSignal): Prom
   while (!signal.aborted) {
     const now = await $.clock.now()
     const answer = await read<{ requestId: string; decision: string }>(answers)
-    if (answer?.requestId === requestId && (answer.decision === 'allow' || answer.decision === 'deny')) {
-      return answer.decision
+    const decision = answer?.decision
+    if (answer?.requestId === requestId && (decision === 'allow' || decision === 'deny' || decision === 'acceptEdits')) {
+      return decision
     }
     const presence = await read<{ at: number; pending?: string[] }>(presenceFile)
     if (presence === undefined || now - presence.at >= PRESENCE_MS) return undefined // Mochi is not running
@@ -286,19 +290,41 @@ export const register: Register = on => {
     if (verdict.decision === 'ask' && e.agentId === undefined) {
       await $.state.set(waiting, describeAsk(e.tool, e.input))
       await $.state.set(status, 'needs-input')
-      await $.state.set(request, { id: e.tool_use_id ?? '', at: await $.clock.now(), detail: describeDetail(e.tool, e.input) })
-      await publish($).catch(() => undefined)
-
-      // Allow or Deny in Mochi, when the engine would not decide this itself; questions and plans need you in Claude
+      // Mochi's Allow and Deny are offered when Claude's own dialog is about to show (below). Questions and
+      // plans need you in Claude, and a ceiling the organisation set decides for itself, so those are not offered
       const answerable = verdict.ceiling === undefined && !['AskUserQuestion', 'ExitPlanMode'].includes(e.tool)
-      const mochi = answerable ? await askMochi($, e.tool_use_id ?? '', next.signal).catch(() => undefined) : undefined
-      if (mochi !== undefined) {
-        return { decision: mochi, reason: mochi === 'allow' ? 'You allowed this in Mochi' : 'You declined this in Mochi' }
-      }
+      await $.state.set(request, {
+        id: answerable ? (e.tool_use_id ?? '') : '',
+        at: await $.clock.now(),
+        detail: describeDetail(e.tool, e.input),
+      })
+      await publish($).catch(() => undefined)
     }
 
     return verdict
   }).catch(($, e, next) => next(e)) // the pet never gets in the way: on any error, carry on as normal
+
+  // Claude is about to show its own dialog: Mochi's Allow, Deny or Allow-and-accept-edits answers it first.
+  // With no answer in time, or no request for Mochi to answer, the dialog shows as it always does.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const { value: asked = { id: '', at: 0, detail: '' } } = await $.state.get(request)
+    if (e.agent_id !== undefined || asked.id === '') return next(e)
+
+    const mochi = await askMochi($, asked.id, next.signal).catch(() => undefined)
+    if (mochi === 'deny') return { decision: { behavior: 'deny', message: 'You declined this in Mochi' } }
+    if (mochi === 'allow') return { decision: { behavior: 'allow' } }
+    if (mochi === 'acceptEdits') {
+      // Switch this session to Accept edits, only from Manual, and only for this session
+      const switchMode = e.permission_mode === 'default'
+      return {
+        decision: {
+          behavior: 'allow',
+          updatedPermissions: switchMode ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] : undefined,
+        },
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // A question for you, or a tool you just answered: back to work afterwards
   on('tool.call', async ($, e, next) => {
