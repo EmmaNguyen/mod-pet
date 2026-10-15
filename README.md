@@ -18,6 +18,9 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Quick note.** A pencil button under her opens a small box. Press Enter to start a new Claude Code session with your note.
 - **Talk.** A microphone button under her types what you say into the same box, using your Mac's speech recognition. Nothing is sent until you press Enter.
 - **Shortcuts from any app.** Control-Option-N opens a quick note, and Control-Option-M starts talking, even when Mochi is not in front.
+- **Jump to the chat that needs you.** Control-Option-J, or a click on her red badge, opens the chat that has waited longest for your OK.
+- **A colour for each chat.** Every chat has its own coloured dot on its cards and its line in the list, so you can tell chats apart at a glance.
+- **Tidy by herself.** Status files from chats untouched for a week are deleted at launch and every hour, so she stays quick.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 - **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads, opens with the look you saved, and previews her in the skin chosen in Mochi's menu, drawn the way Mochi draws it. Undo and redo (⌘Z and ⇧⌘Z) step back through every change.
 
@@ -99,6 +102,7 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 9. **Mochi Studio.** A preview app for designing Mochi's look.
 10. **Quick note and talk.** Two buttons under Mochi: type a note or speak it, and start a session with it.
 11. **Allow or deny from Mochi, shortcuts, and undo.** Answer a chat's request from her card, open the note or talk from any app, and undo your painting in Mochi Studio.
+12. **Jump, colours, and tidying.** A shortcut and badge click to reach the chat waiting for you, a colour dot for each chat, and old status files cleaned up.
 
 ## Roadmap
 

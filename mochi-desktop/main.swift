@@ -106,6 +106,12 @@ struct Chat {
     var isOpen: Bool { status != .ended }
 }
 
+/// Of the chats waiting for your OK, the one that has waited longest
+func oldestWaiting(_ chats: [Chat]) -> Chat? {
+    func since(_ chat: Chat) -> Double { chat.askedAt > 0 ? chat.askedAt : chat.updatedAt }
+    return chats.filter { $0.status == .needsInput && $0.isOpen && $0.isRecent }.min { since($0) < since($1) }
+}
+
 /// Brings Claude to the front on that chat
 func openChat(_ link: String?) {
     guard let link, let url = URL(string: link), url.scheme == "claude" else { return }
@@ -123,6 +129,31 @@ func ago(_ ms: Double?) -> String {
 /// Cuts text to a length, ending with "…"
 func clip(_ text: String, _ max: Int) -> String {
     text.count > max ? String(text.prefix(max - 1)).trimmingCharacters(in: .whitespaces) + "…" : text
+}
+
+/// Each chat's own colour, the same on every launch: a dot on its cards and its line in the list
+func chatColor(_ id: String) -> NSColor {
+    var hash: UInt32 = 2166136261 // FNV-1a, steady across launches (Swift's hashValue is not)
+    for byte in id.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+    return NSColor(hue: CGFloat(hash % 360) / 360, saturation: 0.65, brightness: 0.9, alpha: 1)
+}
+
+/// Draws a chat's colour dot, 8 points wide, centred on a point
+func drawDot(_ color: NSColor, at center: NSPoint) {
+    color.setFill()
+    NSBezierPath(ovalIn: NSRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)).fill()
+}
+
+/// The plugin's reports never delete themselves: files untouched for a week are thrown away
+func pruneOldSessions(olderThan days: Double = 7) {
+    let fm = FileManager.default
+    let cutoff = Date().addingTimeInterval(-days * 24 * 3600)
+    let files = (try? fm.contentsOfDirectory(at: sessionsFolder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    for url in files where url.pathExtension == "json" {
+        guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+              modified < cutoff else { continue }
+        try? fm.removeItem(at: url)
+    }
 }
 
 let icons = ["turn": "✓", "helper": "•", "task": "⚙", "routine": "⏰", "message": "✉"]
@@ -379,6 +410,9 @@ final class MochiView: NSView {
     var onMenu: ((NSEvent) -> Void)?
     private var grab: NSPoint?
     private var dragged = false
+    /// Her status badge: clicking it while a chat needs you opens that chat
+    private var badgeRect = NSRect.zero
+    var onBadgeClick: (() -> Void)?
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -410,6 +444,7 @@ final class MochiView: NSView {
         ctx.restoreGState()
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening
@@ -614,6 +649,7 @@ final class MochiView: NSView {
             if quickRect.insetBy(dx: -4, dy: -4).contains(point) { onQuickNote?() }
             else if talkRect.insetBy(dx: -4, dy: -4).contains(point) { onTalk?() }
             else if usagePill.insetBy(dx: -4, dy: -4).contains(point) { onUsageClick?() }
+            else if status == .needsInput, badgeRect.insetBy(dx: -3, dy: -3).contains(point), let onBadgeClick { onBadgeClick() }
             else { onClick?() }
         }
         if dragged, let origin = window?.frame.origin {
@@ -640,6 +676,8 @@ struct Line {
     var dim = false
     /// Clicking this line opens that chat in Claude
     var link: String? = nil
+    /// The chat's own colour, as a dot before the line
+    var dot: NSColor? = nil
 }
 
 /// Lets a view know when the pointer moves over it, even when its window is not in front
@@ -673,12 +711,16 @@ final class BubbleView: NSView {
     func fittingSize(maxWidth: CGFloat) -> NSSize {
         let widest = lines.map { line in
             NSAttributedString(string: line.text, attributes: [.font: line.bold ? Self.bold : Self.font]).size().width + line.indent
+                + (line.dot == nil ? 0 : 12)
         }.max() ?? 0
         return NSSize(width: min(maxWidth, widest + 24), height: CGFloat(lines.count) * 18 + 16)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         for (i, line) in lines.enumerated() {
+            if let dot = line.dot { drawDot(dot, at: NSPoint(x: 12 + line.indent + 4, y: 8 + CGFloat(i) * 18 + 9)) }
+            let line = line.dot == nil ? line
+                : Line(text: line.text, bold: line.bold, color: line.color, indent: line.indent + 12, dim: line.dim, link: line.link)
             let style = NSMutableParagraphStyle()
             style.lineBreakMode = .byTruncatingTail
             let color = line.color ?? (line.dim ? NSColor.secondaryLabelColor : NSColor.labelColor)
@@ -777,6 +819,8 @@ final class CardView: NSView {
     var onClose: (() -> Void)?
     /// Whether the pointer is over the card, so its title shows it can be opened
     var hovering = false
+    /// The chat's own colour, as a dot before the title; usage cards have none
+    var dot: NSColor?
     override var isFlipped: Bool { true }
 
     static let size = NSSize(width: 300, height: 56)
@@ -801,12 +845,14 @@ final class CardView: NSView {
 
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
+        let titleX: CGFloat = dot == nil ? 22 : 34
+        if let dot { drawDot(dot, at: NSPoint(x: 26, y: 19)) }
         NSAttributedString(string: title, attributes: [
             .font: Self.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
-        ]).draw(in: NSRect(x: 22, y: 10, width: bounds.width - 52, height: 18))
+        ]).draw(in: NSRect(x: titleX, y: 10, width: bounds.width - 30 - titleX, height: 18))
         if hovering {
-            let width = min(NSAttributedString(string: title, attributes: [.font: Self.titleFont]).size().width, bounds.width - 52)
-            underline(from: 22, width: width, y: 27, color: NSColor.labelColor)
+            let width = min(NSAttributedString(string: title, attributes: [.font: Self.titleFont]).size().width, bounds.width - 30 - titleX)
+            underline(from: titleX, width: width, y: 27, color: NSColor.labelColor)
         }
         NSAttributedString(string: body, attributes: [
             .font: Self.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
@@ -850,6 +896,8 @@ final class ApprovalView: NSView {
     var onClose: (() -> Void)?
     /// "allow" or "deny"
     var onAnswer: ((String) -> Void)?
+    /// The chat's own colour, as a dot before the title
+    var dot: NSColor?
     override var isFlipped: Bool { true }
 
     static let size = NSSize(width: 300, height: 92)
@@ -873,9 +921,11 @@ final class ApprovalView: NSView {
 
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
+        let titleX: CGFloat = dot == nil ? 22 : 34
+        if let dot { drawDot(dot, at: NSPoint(x: 26, y: 19)) }
         NSAttributedString(string: title, attributes: [
             .font: CardView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
-        ]).draw(in: NSRect(x: 22, y: 10, width: bounds.width - 52, height: 18))
+        ]).draw(in: NSRect(x: titleX, y: 10, width: bounds.width - 30 - titleX, height: 18))
         NSAttributedString(string: body, attributes: [
             .font: CardView.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
         ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 17))
@@ -1255,6 +1305,13 @@ func playAtTwoThirds(_ sound: NSSound?) {
         view.onMenu = { [weak self] event in self?.showMenu(event) }
         Shortcuts.add(1, key: kVK_ANSI_N) { [weak self] in self?.toggleNote() }
         Shortcuts.add(2, key: kVK_ANSI_M) { [weak self] in self?.toggleTalk() }
+        Shortcuts.add(3, key: kVK_ANSI_J) { [weak self] in self?.jumpToWaiting() }
+        view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
+        // Old reports pile up otherwise, and she reads every one each second
+        DispatchQueue.global(qos: .utility).async { pruneOldSessions() }
+        Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+            DispatchQueue.global(qos: .utility).async { pruneOldSessions() }
+        }
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
             self?.placeCards()
@@ -1291,7 +1348,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 // With Allow and Deny to answer on, their card carries the question instead
                 if !approveHere || chat.requestId.isEmpty {
                     showCard(title: "⏰ \(chat.title) needs you", body: why, color: Status.needsInput.color,
-                             link: chat.link)
+                             link: chat.link, dot: chatColor(chat.id))
                 }
                 notify(title: "⏰ \(chat.title) needs you", body: why, link: chat.link, silent: true)
                 playNeedsSound()
@@ -1305,7 +1362,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
             // A card beside Mochi for every new thing, oldest first so the newest lands on top
             for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) {
                 let color = event.text == "Stopped" ? Status.blocked.color : chat.status.color
-                showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link)
+                showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link,
+                         dot: chatColor(chat.id))
             }
             playAtTwoThirds(NSSound(named: "Pop"))
         }
@@ -1314,6 +1372,19 @@ func playAtTwoThirds(_ sound: NSSound?) {
             notify(title: event.headline(chat.title), body: event.summary, link: chat.link)
         }
         syncApprovals()
+    }
+
+    /// Opens the chat that has waited longest for your OK; says so when none is waiting
+    func jumpToWaiting() {
+        guard let chat = oldestWaiting(chats) else {
+            say("No chat needs you right now", color: Status.ready.color)
+            return
+        }
+        if chat.link == nil {
+            say("⏰ \(chat.title) needs you in its terminal", color: Status.needsInput.color)
+        } else {
+            openChat(chat.link)
+        }
     }
 
     /// A card when usage passes 80% or reaches 100% of the 5-hour window or the week
@@ -1418,11 +1489,12 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// A notification card beside Mochi; it fades out on its own after a while
-    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5) {
+    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5, dot: NSColor? = nil) {
         let panel = floatingPanel(size: CardView.size)
         panel.acceptsMouseMovedEvents = true // so the title underlines under the pointer
         panel.hasShadow = false // the glass draws its own soft edge
         let card = CardView(title: title, body: body, accent: color)
+        card.dot = dot
         let glass = glassBackground(for: card, tint: color)
         card.onOpen = { [weak self, weak panel] in
             openChat(link)
@@ -1522,6 +1594,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         panel.hasShadow = false // the glass draws its own soft edge
         let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
         let card = ApprovalView(title: "⏰ \(chat.title) needs you", body: why, accent: Status.needsInput.color)
+        card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
         card.onClose = { [weak self] in self?.closeApproval(id) }
         card.onAnswer = { [weak self] decision in self?.answerApproval(chat, decision) }
@@ -1732,7 +1805,7 @@ final class NotePanel: NSPanel {
             let state = chat.isOpen ? chat.status.label : "Closed"
             lines.append(Line(text: "● \(clip(chat.title, 32)) · \(state) · \(ago(chat.updatedAt))\(chat.link == nil ? "" : "  ↗")",
                               bold: true, color: chat.isOpen ? chat.status.color : .secondaryLabelColor,
-                              link: chat.link))
+                              link: chat.link, dot: chatColor(chat.id)))
             if chat.status == .needsInput, !chat.waiting.isEmpty {
                 lines.append(Line(text: "⏰ \(clip(chat.waiting, 52))", color: Status.needsInput.color, indent: 14, link: chat.link))
             }
