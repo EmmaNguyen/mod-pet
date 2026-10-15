@@ -172,6 +172,15 @@ let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
 let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi")
 
+/// The approval keys to list in the menu for the chat a key would answer: none without a card, the allow and
+/// deny keys for any card, and the mode keys only when that chat can switch modes
+func approvalShortcutLines(_ waiting: Chat?) -> [String] {
+    guard let waiting else { return [] }
+    var lines = ["Allow    ⌃⌥1", "Deny    ⌃⌥2"]
+    if waiting.canSwitchMode { lines += ["Accept edits    ⌃⌥3", "Auto    ⌃⌥4"] }
+    return lines
+}
+
 /// Which chat a key answers. The menu test's pretend request, when its card shows, so a test never answers a
 /// real chat. Otherwise the one chat whose card shows, and none when several do: a key could then answer a
 /// chat you have not read. `waiting` is how many cards show.
@@ -1813,7 +1822,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         // askedAt is in the future, so the card lasts 20 seconds instead of 7
         testChat = Chat(id: "mochi-test", title: "Mochi test", status: .needsInput, log: [], updatedAt: now, link: nil,
                         waiting: "Test", isRecent: true, requestId: id, askedAt: now + 13_000,
-                        detail: "$ echo hello (a test: nothing runs)", mode: "")
+                        detail: "$ echo hello (a test: nothing runs)", mode: "", canSwitchMode: true)
         look()
         DispatchQueue.main.asyncAfter(deadline: .now() + 21) { [weak self] in
             if self?.testChat?.requestId == id { self?.testChat = nil }
@@ -2162,9 +2171,20 @@ final class NotePanel: NSPanel {
 
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Quick note F5 · Talk F6 · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Allow ⌃⌥1 · Deny ⌃⌥2 · Accept edits ⌃⌥3 · Auto ⌃⌥4 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Test the approval keys", action: #selector(menuTestApproval), keyEquivalent: "").target = self
+        // The shortcuts in one submenu, so the top of the menu stays clean
+        let shortcuts = NSMenu()
+        for line in ["Quick note    F5", "Talk    F6", "Jump to the chat that needs you    ⌥J"] {
+            shortcuts.addItem(withTitle: line, action: nil, keyEquivalent: "").isEnabled = false
+        }
+        let approvalLines = approvalShortcutLines(keyTarget(chats, showing: Set(approvals.keys), testID: testChat?.requestId).chat)
+        if !approvalLines.isEmpty {
+            shortcuts.addItem(.separator())
+            for line in approvalLines { shortcuts.addItem(withTitle: line, action: nil, keyEquivalent: "").isEnabled = false }
+        }
+        shortcuts.addItem(.separator())
+        shortcuts.addItem(withTitle: "Test the approval keys", action: #selector(menuTestApproval), keyEquivalent: "").target = self
+        let shortcutsItem = menu.addItem(withTitle: "Shortcuts", action: nil, keyEquivalent: "")
+        shortcutsItem.submenu = shortcuts
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false

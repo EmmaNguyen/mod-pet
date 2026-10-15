@@ -41,4 +41,11 @@ check("a web page names the address", approvalQuestion(chat: "garden", waiting: 
 check("a tool names the tool", approvalQuestion(chat: "garden", waiting: "Use create_issue") == "Allow garden to use create_issue?")
 check("no description still asks", approvalQuestion(chat: "garden", waiting: "") == "Allow garden to go ahead?")
 
+// The approval keys listed in the menu
+check("no card: no approval keys listed", approvalShortcutLines(nil).isEmpty)
+check("a card from an older chat: only allow and deny",
+      approvalShortcutLines(chat("old", "r", 0, canSwitch: false)) == ["Allow    ⌃⌥1", "Deny    ⌃⌥2"])
+check("a card from a newer chat: the mode keys too",
+      approvalShortcutLines(chat("new", "r", 0, canSwitch: true)).count == 4)
+
 print("ALL PASSED")
