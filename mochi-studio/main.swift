@@ -153,8 +153,13 @@ final class PixelGridView: NSView {
         lines.stroke()
     }
 
-    override func mouseDown(with event: NSEvent) { paint(event) }
+    /// A drag from press to release is one stroke, so one Undo takes back the whole stroke
+    var onStrokeBegin: (() -> Void)?
+    var onStrokeEnd: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) { onStrokeBegin?(); paint(event) }
     override func mouseDragged(with event: NSEvent) { paint(event) }
+    override func mouseUp(with event: NSEvent) { onStrokeEnd?() }
 
     private func paint(_ event: NSEvent) {
         let n = look.art.count
@@ -169,17 +174,23 @@ final class PixelGridView: NSView {
 struct PixelEditor: NSViewRepresentable {
     let look: Look
     let onPaint: (Int, Int) -> Void
+    let onStrokeBegin: () -> Void
+    let onStrokeEnd: () -> Void
     private let side: CGFloat = 240 // the same size as the preview, so one square matches the sample
 
     func makeNSView(context: Context) -> PixelGridView {
         let view = PixelGridView(frame: NSRect(x: 0, y: 0, width: side, height: side))
         view.onPaint = onPaint
+        view.onStrokeBegin = onStrokeBegin
+        view.onStrokeEnd = onStrokeEnd
         return view
     }
 
     func updateNSView(_ view: PixelGridView, context: Context) {
         view.look = look
         view.onPaint = onPaint
+        view.onStrokeBegin = onStrokeBegin
+        view.onStrokeEnd = onStrokeEnd
         view.needsDisplay = true
     }
 
@@ -194,6 +205,54 @@ final class Model: ObservableObject {
     @Published var saved = Look.load()
     /// The letter the pixel editor paints with
     @Published var paint: Character = "B"
+    /// The looks before each change, so Undo can go back, and the ones Undo took back, so Redo can return
+    @Published private(set) var undoSteps: [Look] = []
+    @Published private(set) var redoSteps: [Look] = []
+    /// The look when the paint stroke in progress began, so the whole stroke is one step
+    private var strokeStart: Look?
+
+    var canUndo: Bool { !undoSteps.isEmpty }
+    var canRedo: Bool { !redoSteps.isEmpty }
+
+    /// One change made in one go, such as a new fineness or a reset: one step
+    func change(_ edit: (inout Look) -> Void) {
+        var copy = look
+        edit(&copy)
+        guard copy != look else { return }
+        record(look)
+        look = copy
+    }
+
+    func beginStroke() {
+        if strokeStart == nil { strokeStart = look }
+    }
+
+    /// Ends the stroke; it counts as a step only if something changed
+    func endStroke() {
+        guard let before = strokeStart else { return }
+        strokeStart = nil
+        if before != look { record(before) }
+    }
+
+    func undo() {
+        guard let previous = undoSteps.last else { return }
+        undoSteps.removeLast()
+        redoSteps.append(look)
+        look = previous
+    }
+
+    func redo() {
+        guard let next = redoSteps.last else { return }
+        redoSteps.removeLast()
+        undoSteps.append(look)
+        look = next
+    }
+
+    private func record(_ before: Look) {
+        undoSteps.append(before)
+        if undoSteps.count > 100 { undoSteps.removeFirst() }
+        redoSteps.removeAll()
+    }
 }
 
 struct ContentView: View {
@@ -226,7 +285,7 @@ struct ContentView: View {
                 Section("Pixels") {
                     Picker("Fineness", selection: Binding(get: { look.art.count }, set: { n in
                         let old = look.art
-                        edit {
+                        model.change {
                             $0.detail = n
                             $0.pixels = resample(old, to: n)
                         }
@@ -235,7 +294,8 @@ struct ContentView: View {
                         Text("Fine").tag(32)
                     }
                     .pickerStyle(.segmented)
-                    PixelEditor(look: look, onPaint: paintSquare)
+                    PixelEditor(look: look, onPaint: paintSquare,
+                                onStrokeBegin: model.beginStroke, onStrokeEnd: model.endStroke)
                         .frame(width: 240, height: 240)
                         .frame(maxWidth: .infinity)
                     HStack(spacing: 4) {
@@ -257,8 +317,17 @@ struct ContentView: View {
                         }
                     }
                     Text(paintNames[model.paint] ?? "").font(.caption).foregroundStyle(.secondary)
-                    Button("Reset pixels") { edit { $0.pixels = nil } }
-                        .disabled(look.pixels == nil)
+                    HStack {
+                        Button("Undo") { model.undo() }
+                            .keyboardShortcut("z", modifiers: .command)
+                            .disabled(!model.canUndo)
+                        Button("Redo") { model.redo() }
+                            .keyboardShortcut("z", modifiers: [.command, .shift])
+                            .disabled(!model.canRedo)
+                        Spacer()
+                        Button("Reset pixels") { model.change { $0.pixels = nil } }
+                            .disabled(look.pixels == nil)
+                    }
                 }
                 Section("Body colour") {
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(36)), count: 4), spacing: 10) {
@@ -302,7 +371,7 @@ struct ContentView: View {
                 Text(look.name).font(.title3.bold())
                 Spacer()
                 HStack {
-                    Button("Reset") { model.look = Look() }
+                    Button("Reset") { model.change { $0 = Look() } }
                     Spacer()
                     Button("Save") {
                         model.look.save()

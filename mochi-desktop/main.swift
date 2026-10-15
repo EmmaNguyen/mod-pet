@@ -10,6 +10,7 @@
 
 import AppKit
 import AVFoundation
+import Carbon
 import ServiceManagement
 import Speech
 import UserNotifications
@@ -82,6 +83,9 @@ struct Report: Decodable {
     let status: String
     let log: [Event]?
     let updatedAt: Double?
+    /// The tool call waiting for your OK, and when it started waiting: what Allow and Deny answer
+    let requestId: String?
+    let askedAt: Double?
 }
 
 struct Chat {
@@ -96,6 +100,9 @@ struct Chat {
     let waiting: String
     /// Active in the last few hours: only these set Mochi's mood
     var isRecent = true
+    /// The tool call waiting for your OK, and when it started waiting, for Allow and Deny here
+    var requestId = ""
+    var askedAt: Double = 0
     var isOpen: Bool { status != .ended }
 }
 
@@ -121,6 +128,15 @@ func clip(_ text: String, _ max: Int) -> String {
 let icons = ["turn": "✓", "helper": "•", "task": "⚙", "routine": "⏰", "message": "✉"]
 let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi/sessions")
+/// The plugin's side of Allow and Deny: Mochi's presence, and the answers she writes for a chat
+let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".claude/mochi")
+
+/// Writes a small JSON file in one go, so the plugin never reads half of it
+func writeJSON(_ object: [String: Any], to url: URL) {
+    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let data = try? JSONSerialization.data(withJSONObject: object) { try? data.write(to: url, options: .atomic) }
+}
 
 /// The Claude app's own record of one chat: its title, and its summary of the last turn
 struct AppSession: Decodable {
@@ -188,7 +204,8 @@ func readChats() -> [Chat] {
         let id = url.deletingPathExtension().lastPathComponent
         live[id] = Chat(id: id, title: report.title ?? "Claude", status: status, log: report.log ?? [],
                         updatedAt: report.updatedAt ?? 0, link: report.link, waiting: report.waiting ?? "",
-                        isRecent: now - (report.updatedAt ?? 0) < recent)
+                        isRecent: now - (report.updatedAt ?? 0) < recent,
+                        requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0)
     }
 
     var chats: [Chat] = []
@@ -202,7 +219,8 @@ func readChats() -> [Chat] {
         if let cli = session.cliSessionId, let mine = live.removeValue(forKey: cli) {
             chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
-                              waiting: mine.waiting, isRecent: mine.isRecent))
+                              waiting: mine.waiting, isRecent: mine.isRecent,
+                              requestId: mine.requestId, askedAt: mine.askedAt))
             continue
         }
 
@@ -822,6 +840,77 @@ final class CardView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// A chat waiting for your OK, with Allow and Deny under it. It stays until you answer, its time runs out,
+/// or the chat moves on. Clicking the title opens the chat to read it first.
+final class ApprovalView: NSView {
+    let title: String
+    let body: String
+    let accent: NSColor
+    var onOpen: (() -> Void)?
+    var onClose: (() -> Void)?
+    /// "allow" or "deny"
+    var onAnswer: ((String) -> Void)?
+    override var isFlipped: Bool { true }
+
+    static let size = NSSize(width: 300, height: 92)
+    private static let allowColor = NSColor(hex: 0x2F9E44)
+    private var allowBox: NSRect { NSRect(x: 22, y: 56, width: 124, height: 26) }
+    private var denyBox: NSRect { NSRect(x: 154, y: 56, width: 124, height: 26) }
+    private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 8, width: 18, height: 18) }
+
+    init(title: String, body: String, accent: NSColor) {
+        self.title = title
+        self.body = body
+        self.accent = accent
+        super.init(frame: NSRect(origin: .zero, size: Self.size))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        accent.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: 66), xRadius: 2, yRadius: 2).fill()
+
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        NSAttributedString(string: title, attributes: [
+            .font: CardView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
+        ]).draw(in: NSRect(x: 22, y: 10, width: bounds.width - 52, height: 18))
+        NSAttributedString(string: body, attributes: [
+            .font: CardView.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
+        ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 17))
+
+        // Allow in green and Deny in grey, each a pill with its word centred
+        let buttons: [(box: NSRect, word: String, fill: NSColor, ink: NSColor)] = [
+            (allowBox, "Allow", Self.allowColor, .white),
+            (denyBox, "Deny", NSColor.secondaryLabelColor.withAlphaComponent(0.18), .labelColor),
+        ]
+        for button in buttons {
+            button.fill.setFill()
+            NSBezierPath(roundedRect: button.box, xRadius: 13, yRadius: 13).fill()
+            let label = NSAttributedString(string: button.word, attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: button.ink,
+            ])
+            let size = label.size()
+            label.draw(at: NSPoint(x: button.box.midX - size.width / 2, y: button.box.midY - size.height / 2))
+        }
+        NSAttributedString(string: "✕", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.tertiaryLabelColor,
+        ]).draw(at: NSPoint(x: closeBox.minX + 4, y: closeBox.minY + 2))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if closeBox.contains(point) { onClose?() }
+        else if allowBox.contains(point) { onAnswer?("allow") }
+        else if denyBox.contains(point) { onAnswer?("deny") }
+        else { onOpen?() }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 // MARK: - Plan usage, as the Claude app last saw it
 
 struct UsageFile: Decodable {
@@ -1021,6 +1110,32 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
 
 // MARK: - The app
 
+/// Keys that work from any app, even when Mochi is not in front: Control-Option-N for a quick note,
+/// Control-Option-M to talk. They are registered with the system, so they need no extra permission.
+enum Shortcuts {
+    static var actions: [UInt32: () -> Void] = [:]
+    private static var installed = false
+
+    static func add(_ id: UInt32, key: Int, _ action: @escaping () -> Void) {
+        if !installed {
+            installed = true
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            _ = InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+                guard let event else { return OSStatus(eventNotHandledErr) }
+                var pressed = EventHotKeyID()
+                GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                  nil, MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+                DispatchQueue.main.async { Shortcuts.actions[pressed.id]?() }
+                return noErr
+            }, 1, &spec, nil, nil)
+        }
+        actions[id] = action
+        var ref: EventHotKeyRef?
+        let hotKey = EventHotKeyID(signature: 0x4D4F4348, id: id) // 'MOCH'
+        _ = RegisterEventHotKey(UInt32(key), UInt32(controlKey | optionKey), hotKey, GetApplicationEventTarget(), 0, &ref)
+    }
+}
+
 final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let window = floatingPanel(size: NSSize(width: 130, height: 146))
     let view = MochiView()
@@ -1045,6 +1160,18 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var warnedFiveHour = 0
     var warnedWeek = 0
     var usage: Usage?
+
+    /// The Allow and Deny cards by the tool call they answer, and the calls already answered, so none comes back
+    var approvals: [String: NSPanel] = [:]
+    var answered = Set<String>()
+    /// How long after a chat asks she may still answer for it. The plugin waits 8 seconds in all, so
+    /// this ends a second sooner, and her buttons go before the plugin stops waiting for them
+    static let answerWindow: Double = 7_000
+    /// Whether she shows Allow and Deny for a chat that waits for your OK; on by default, switched off in her menu
+    var approveHere: Bool {
+        get { UserDefaults.standard.object(forKey: "approveHere") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "approveHere") }
+    }
 
     /// The notification cards beside Mochi, newest first
     var cards: [NSPanel] = []
@@ -1126,6 +1253,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         view.onQuickNote = { [weak self] in self?.toggleNote() }
         view.onTalk = { [weak self] in self?.toggleTalk() }
         view.onMenu = { [weak self] event in self?.showMenu(event) }
+        Shortcuts.add(1, key: kVK_ANSI_N) { [weak self] in self?.toggleNote() }
+        Shortcuts.add(2, key: kVK_ANSI_M) { [weak self] in self?.toggleTalk() }
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
             self?.placeCards()
@@ -1159,8 +1288,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
             // A chat that just started waiting for you
             if chat.status == .needsInput, needed.insert(chat.id).inserted, !firstLook {
                 let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
-                showCard(title: "⏰ \(chat.title) needs you", body: why, color: Status.needsInput.color,
-                         link: chat.link)
+                // With Allow and Deny to answer on, their card carries the question instead
+                if !approveHere || chat.requestId.isEmpty {
+                    showCard(title: "⏰ \(chat.title) needs you", body: why, color: Status.needsInput.color,
+                             link: chat.link)
+                }
                 notify(title: "⏰ \(chat.title) needs you", body: why, link: chat.link, silent: true)
                 playNeedsSound()
             }
@@ -1181,6 +1313,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) {
             notify(title: event.headline(chat.title), body: event.summary, link: chat.link)
         }
+        syncApprovals()
     }
 
     /// A card when usage passes 80% or reaches 100% of the 5-hour window or the week
@@ -1300,7 +1433,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         panel.alphaValue = 0
 
         cards.insert(panel, at: 0)
-        while cards.count > Self.maxCards { dismiss(cards[cards.count - 1]) }
+        // The cap never pushes out an Allow and Deny card: a chat waiting for you stays put
+        while cards.count > Self.maxCards, let oldest = cards.last(where: { panel in !approvals.values.contains(panel) }) {
+            dismiss(oldest)
+        }
         placeCards()
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.2; panel.animator().alphaValue = 1 }
@@ -1312,8 +1448,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// macOS Liquid Glass behind a card, the same glass the system's own notifications use,
     /// lightly tinted by the card's colour
-    func glassBackground(for card: CardView, tint: NSColor) -> NSView {
-        let glass = makeGlass(size: CardView.size, content: card, radius: 18)
+    func glassBackground(for card: NSView, tint: NSColor) -> NSView {
+        let glass = makeGlass(size: card.frame.size, content: card, radius: 18)
         tintGlass(glass, tint)
         return glass
     }
@@ -1356,6 +1492,63 @@ func playAtTwoThirds(_ sound: NSSound?) {
             panel.orderOut(nil)
         }
         placeCards()
+    }
+
+    // MARK: - Allow and Deny from Mochi
+
+    /// Each chat waiting for your OK gets an Allow and Deny card while its tool call can still be answered.
+    /// A card goes once you answer, the chat moves on, or the time runs out. Also tells the plugin she is here.
+    func syncApprovals() {
+        let now = Date().timeIntervalSince1970 * 1000
+        let asking = approveHere ? chats.filter {
+            $0.status == .needsInput && !$0.requestId.isEmpty && now - $0.askedAt < Self.answerWindow
+                && !answered.contains($0.requestId)
+        } : []
+        answered = answered.filter { id in chats.contains { $0.requestId == id } }
+        let ids = Set(asking.map { $0.requestId })
+        for id in Array(approvals.keys) where !ids.contains(id) { closeApproval(id) }
+        for chat in asking where approvals[chat.requestId] == nil { showApproval(chat) }
+
+        // The plugin waits for her answer only while she is here and showing the request
+        if approveHere {
+            writeJSON(["at": now, "pending": asking.map { $0.requestId }], to: mochiFolder.appendingPathComponent("presence.json"))
+        }
+    }
+
+    func showApproval(_ chat: Chat) {
+        let id = chat.requestId
+        let panel = floatingPanel(size: ApprovalView.size)
+        panel.acceptsMouseMovedEvents = true
+        panel.hasShadow = false // the glass draws its own soft edge
+        let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
+        let card = ApprovalView(title: "⏰ \(chat.title) needs you", body: why, accent: Status.needsInput.color)
+        card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
+        card.onClose = { [weak self] in self?.closeApproval(id) }
+        card.onAnswer = { [weak self] decision in self?.answerApproval(chat, decision) }
+        panel.contentView = glassBackground(for: card, tint: Status.needsInput.color)
+        panel.alphaValue = 0
+
+        approvals[id] = panel
+        cards.insert(panel, at: 0)
+        placeCards()
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.2; panel.animator().alphaValue = 1 }
+    }
+
+    /// Takes an Allow and Deny card away, and never offers that tool call again
+    func closeApproval(_ id: String) {
+        answered.insert(id)
+        guard let panel = approvals.removeValue(forKey: id) else { return }
+        dismiss(panel)
+    }
+
+    /// Writes your answer for the chat's waiting tool call; the plugin picks it up and carries on
+    func answerApproval(_ chat: Chat, _ decision: String) {
+        let answer: [String: Any] = [
+            "requestId": chat.requestId, "decision": decision, "at": Date().timeIntervalSince1970 * 1000,
+        ]
+        writeJSON(answer, to: mochiFolder.appendingPathComponent("answers/\(chat.id).json"))
+        closeApproval(chat.requestId)
     }
 
     /// The chat list (when open) and the cards stack beside Mochi as one block, the list nearest her,
@@ -1682,6 +1875,8 @@ final class NotePanel: NSPanel {
 
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
+        menu.addItem(withTitle: "Quick note ⌃⌥N · Talk ⌃⌥M", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false
             if let back = usage.backText { menu.addItem(withTitle: "⏳ \(back)", action: nil, keyEquivalent: "").isEnabled = false }
@@ -1701,6 +1896,9 @@ final class NotePanel: NSPanel {
         let toggle = menu.addItem(withTitle: "Also show Mac notifications (top-right corner)", action: #selector(menuToggleNotifications), keyEquivalent: "")
         toggle.target = self
         toggle.state = macNotifications ? .on : .off
+        let approve = menu.addItem(withTitle: "Allow or deny from Mochi", action: #selector(menuToggleApprove), keyEquivalent: "")
+        approve.target = self
+        approve.state = approveHere ? .on : .off
         let soundItem = menu.addItem(withTitle: "Sound when a chat needs you", action: nil, keyEquivalent: "")
         let soundMenu = NSMenu()
         for name in Self.sounds + ["None"] {
@@ -1718,6 +1916,9 @@ final class NotePanel: NSPanel {
     }
 
     @objc func menuToggleNotifications() { macNotifications.toggle() }
+
+    /// Turns Allow and Deny on or off; with it off, the plugin never waits for her
+    @objc func menuToggleApprove() { approveHere.toggle(); syncApprovals() }
 
     @objc func menuToggleLogin() { setOpensAtLogin(!opensAtLogin) }
 

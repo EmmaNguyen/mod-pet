@@ -9,10 +9,20 @@ import type { PetEvent } from '../types'
 
 const LOG_SIZE = 50 // how many past notifications each chat keeps for Mochi
 
+// How long Mochi may take to show Allow and Deny for a tool that waits for you, and how long she
+// gets to answer once she has shown them; past either, the normal dialog in Claude takes over.
+// The engine gives a hook 10 seconds of its own time, and a wait counts, so both stay inside that.
+const MOCHI_SHOWS_MS = 2_000
+const MOCHI_ANSWER_MS = 8_000
+// Mochi writes that she is still there every second; older than this, she is not running
+const PRESENCE_MS = 3_000
+
 // What this chat is doing, kept in $.state so it survives a hot reload
 const status = { plugin: 'pet-mod', key: 'status' } as const
 const log = { plugin: 'pet-mod', key: 'log' } as const
 const waiting = { plugin: 'pet-mod', key: 'waiting' } as const
+// The tool call waiting for your OK, and when it started waiting
+const request = { plugin: 'pet-mod', key: 'request' } as const
 
 /** The engine interface a hook receives, for the helper that reports to the floating Mochi */
 type Dollar = Parameters<Hook<'turn.complete'>>[0]
@@ -70,6 +80,8 @@ export const describeTask = (text: string): string => {
 
 // Where this chat reports to the floating Mochi app, worked out on first use
 let file: string | undefined
+// Where Mochi writes your Allow or Deny for this chat's tool call
+let answers: string | undefined
 let title = 'Claude'
 // The link that opens this chat in the Claude app; a terminal chat has none
 let link: string | undefined
@@ -82,7 +94,9 @@ async function locate($: Dollar): Promise<boolean> {
   if (file !== undefined) return true
   const home = await $.env.get('HOME')
   if (home === undefined) return false
-  file = `${home}/.claude/mochi/sessions/${await $.session.id()}.json`
+  const id = await $.session.id()
+  file = `${home}/.claude/mochi/sessions/${id}.json`
+  answers = `${home}/.claude/mochi/answers/${id}.json`
   const cwd = await $.session.cwd()
   isNoFolder = cwd.includes('/scratch-workspaces/')
   title = isNoFolder ? 'Chat with no folder' : (cwd.split('/').filter(Boolean).at(-1) ?? 'Claude')
@@ -100,9 +114,51 @@ async function publish($: Dollar, isEnding = false) {
   const { value: current = 'idle' } = await $.state.get(status)
   const { value: events = [] } = await $.state.get(log)
   const { value: asking = '' } = await $.state.get(waiting)
+  const { value: asked = { id: '', at: 0 } } = await $.state.get(request)
   const updatedAt = await $.clock.now()
-  const report = { title, link, status: isEnding ? 'ended' : current, waiting: asking, log: events, updatedAt }
+  // The tool call Mochi may answer for, while the chat waits for your OK
+  const pending = asking === '' ? { requestId: '', askedAt: 0 } : { requestId: asked.id, askedAt: asked.at }
+  const report = { title, link, status: isEnding ? 'ended' : current, waiting: asking, log: events, updatedAt, ...pending }
   await $.fs.write(file, JSON.stringify(report))
+}
+
+/**
+ * Lets you answer a tool's ask with Mochi's Allow or Deny. Only when she is running and shows this
+ * request; otherwise, or when she does not answer in time, the normal dialog in Claude takes over.
+ */
+async function askMochi($: Dollar, requestId: string, signal: AbortSignal): Promise<'allow' | 'deny' | undefined> {
+  const home = await $.env.get('HOME')
+  if (home === undefined || answers === undefined || requestId === '') return undefined
+  const presenceFile = `${home}/.claude/mochi/presence.json`
+  const read = async <T>(path: string): Promise<T | undefined> => {
+    try {
+      return JSON.parse(await $.fs.read(path)) as T
+    } catch {
+      return undefined
+    }
+  }
+
+  const started = await $.clock.now()
+  let shown = false
+  // The engine aborts this signal when the hook must stop: then the normal dialog takes over at once
+  while (!signal.aborted) {
+    const now = await $.clock.now()
+    const answer = await read<{ requestId: string; decision: string }>(answers)
+    if (answer?.requestId === requestId && (answer.decision === 'allow' || answer.decision === 'deny')) {
+      return answer.decision
+    }
+    const presence = await read<{ at: number; pending?: string[] }>(presenceFile)
+    if (presence === undefined || now - presence.at >= PRESENCE_MS) return undefined // Mochi is not running
+    if (presence.pending?.includes(requestId)) shown = true
+    if (!shown && now - started > MOCHI_SHOWS_MS) return undefined
+    if (now - started > MOCHI_ANSWER_MS) return undefined
+    try {
+      await $.clock.sleep(250, { signal })
+    } catch {
+      return undefined // aborted during the wait
+    }
+  }
+  return undefined
 }
 
 /**
@@ -214,7 +270,15 @@ export const register: Register = on => {
     if (verdict.decision === 'ask' && e.agentId === undefined) {
       await $.state.set(waiting, describeAsk(e.tool, e.input))
       await $.state.set(status, 'needs-input')
+      await $.state.set(request, { id: e.tool_use_id ?? '', at: await $.clock.now() })
       await publish($).catch(() => undefined)
+
+      // Allow or Deny in Mochi, when the engine would not decide this itself; questions and plans need you in Claude
+      const answerable = verdict.ceiling === undefined && !['AskUserQuestion', 'ExitPlanMode'].includes(e.tool)
+      const mochi = answerable ? await askMochi($, e.tool_use_id ?? '', next.signal).catch(() => undefined) : undefined
+      if (mochi !== undefined) {
+        return { decision: mochi, reason: mochi === 'allow' ? 'You allowed this in Mochi' : 'You declined this in Mochi' }
+      }
     }
 
     return verdict
@@ -225,6 +289,7 @@ export const register: Register = on => {
     if (e.tool === 'AskUserQuestion' && e.agentId === undefined) {
       await $.state.set(waiting, `Asks: ${shorten(e.questions[0]?.question ?? 'a question', 50)}`)
       await $.state.set(status, 'needs-input')
+      await $.state.set(request, { id: '', at: 0 })
       await publish($).catch(() => undefined)
     }
 
@@ -233,6 +298,7 @@ export const register: Register = on => {
     const { value: current = 'idle' } = await $.state.get(status)
     if (current === 'needs-input') {
       await $.state.set(waiting, '')
+      await $.state.set(request, { id: '', at: 0 })
       await $.state.set(status, 'running')
       await publish($).catch(() => undefined)
     }

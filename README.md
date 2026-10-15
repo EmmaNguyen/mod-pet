@@ -12,12 +12,14 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 
 - **Status at a glance.** Working, needs your OK, ready, or blocked, shown by her pose, her badge, and her colours.
 - **Notifications beside her.** Finished work, questions, and tool approvals appear as Liquid Glass cards next to her. A sound plays when a chat needs you.
+- **Allow or deny from her.** When a chat asks for your OK, her card has Allow and Deny buttons, so you can answer without switching to Claude. Claude gives her about 8 seconds to answer before its normal prompt appears, so click quickly. Turn this off in her right-click menu, and the normal prompt shows at once.
 - **Every chat in one list.** Click her to see all your recent chats and their latest news. Click a line to open that chat in Claude.
 - **Plan usage.** A label above her shows your 5-hour and weekly limits. Clicking it asks Claude for the exact numbers, the same as `/usage`, and shows when you can continue after you run out.
 - **Quick note.** A pencil button under her opens a small box. Press Enter to start a new Claude Code session with your note.
 - **Talk.** A microphone button under her types what you say into the same box, using your Mac's speech recognition. Nothing is sent until you press Enter.
+- **Shortcuts from any app.** Control-Option-N opens a quick note, and Control-Option-M starts talking, even when Mochi is not in front.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
-- **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads.
+- **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads. Undo and redo (⌘Z and ⇧⌘Z) step back through your painting.
 
 <p align="center">
   <img src="docs/mochi-card-mockup.png" alt="Mock-up: a notification card above Mochi" width="640">
@@ -96,6 +98,7 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 8. **Skins.** Six looks to choose from.
 9. **Mochi Studio.** A preview app for designing Mochi's look.
 10. **Quick note and talk.** Two buttons under Mochi: type a note or speak it, and start a session with it.
+11. **Allow or deny from Mochi, shortcuts, and undo.** Answer a chat's request from her card, open the note or talk from any app, and undo your painting in Mochi Studio.
 
 ## Roadmap
 
