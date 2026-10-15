@@ -190,3 +190,32 @@ test('Auto from Plan allows the call and leaves the mode alone', async () => {
   await h['tool.check']($, ask, next(asks))
   expect((await dialog($, 'plan')).decision).toEqual({ behavior: 'allow', updatedPermissions: undefined })
 })
+
+test('Auto shows in the report only once Mochi has switched the session to it', async () => {
+  const { w, $ } = world(mochi({ requestId: 'tu-1', decision: 'auto' }))
+  await h['tool.check']($, ask, next(asks))
+  await dialog($, 'default')
+  const report = JSON.parse(w.files.get(`${HOME}/.claude/mochi/sessions/chat-1.json`) ?? '{}')
+  expect(report.mode).toBe('auto')
+})
+
+test('the report shows the mode the session is in, so Auto goes away when it is left', async () => {
+  const { w, $ } = world(mochi({ requestId: 'tu-1', decision: 'auto' }))
+  await h['tool.check']($, ask, next(asks))
+  await dialog($, 'default')
+  // Later the user returns to Manual: a new request, with a new id and no old answer, shows that
+  w.files.delete(answerPath)
+  const later = { ...ask, tool_use_id: 'tu-2' }
+  await h['tool.check']($, later, next(asks))
+  await h['classic.PermissionRequest']($, { permission_mode: 'default', tool_name: later.tool, tool_input: later.input }, next({}))
+  const report = JSON.parse(w.files.get(`${HOME}/.claude/mochi/sessions/chat-1.json`) ?? '{}')
+  expect(report.mode).toBe('default')
+})
+
+test('a plain Allow does not show Auto', async () => {
+  const { w, $ } = world(mochi({ requestId: 'tu-1', decision: 'allow' }))
+  await h['tool.check']($, ask, next(asks))
+  await dialog($, 'default')
+  const report = JSON.parse(w.files.get(`${HOME}/.claude/mochi/sessions/chat-1.json`) ?? '{}')
+  expect(report.mode).toBe('default')
+})

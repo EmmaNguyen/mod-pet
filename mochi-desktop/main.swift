@@ -88,6 +88,8 @@ struct Report: Decodable {
     let askedAt: Double?
     /// The whole of what the tool call does, in a line: the full command or path
     let detail: String?
+    /// The session's permission mode as the plugin last saw it: 'auto' when Auto is on
+    let mode: String?
 }
 
 struct Chat {
@@ -106,6 +108,8 @@ struct Chat {
     var requestId = ""
     var askedAt: Double = 0
     var detail = ""
+    /// The session's permission mode: 'auto' when Auto is on
+    var mode = ""
     var isOpen: Bool { status != .ended }
 }
 
@@ -244,7 +248,8 @@ func readChats() -> [Chat] {
         live[id] = Chat(id: id, title: report.title ?? "Claude", status: status, log: report.log ?? [],
                         updatedAt: report.updatedAt ?? 0, link: report.link, waiting: report.waiting ?? "",
                         isRecent: now - (report.updatedAt ?? 0) < recent,
-                        requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0, detail: report.detail ?? "")
+                        requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0, detail: report.detail ?? "",
+                        mode: report.mode ?? "")
     }
 
     var chats: [Chat] = []
@@ -259,7 +264,7 @@ func readChats() -> [Chat] {
             chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
                               waiting: mine.waiting, isRecent: mine.isRecent,
-                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail))
+                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail, mode: mine.mode))
             continue
         }
 
@@ -402,6 +407,8 @@ let petSize = CGFloat(16) * scale
 final class MochiView: NSView {
     var status: Status = .idle
     var unread = 0
+    /// Auto is on in a live chat: she shows gold sparkles around her, and nothing changes in the other modes
+    var autoMode = false
     /// Plan usage, shown as a small label under her
     var usage: Usage?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
@@ -461,6 +468,7 @@ final class MochiView: NSView {
         }
         drawAccessory(currentLook.accessory ?? "none")
         ctx.restoreGState()
+        if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
@@ -590,6 +598,25 @@ final class MochiView: NSView {
             NSBezierPath(rect: box(3, 11, 10, 1.6)).fill()
             NSBezierPath(rect: box(10, 12.2, 2, 2.2)).fill()
         default: break
+        }
+    }
+
+    /// Gold sparkles around her, drawn only while Auto is on. (x, y) is her centre.
+    private func drawSparkles(around center: NSPoint) {
+        NSColor(hex: 0xFFC43D).setFill()
+        for (dx, dy, size) in [(-58.0, -45.0, 7.0), (50.0, -38.0, 5.0), (-50.0, 20.0, 4.5), (48.0, 30.0, 6.5)] {
+            let x = center.x + CGFloat(dx), y = center.y + CGFloat(dy), s = CGFloat(size)
+            let star = NSBezierPath()
+            star.move(to: NSPoint(x: x, y: y - s))
+            star.line(to: NSPoint(x: x + s / 3, y: y - s / 3))
+            star.line(to: NSPoint(x: x + s, y: y))
+            star.line(to: NSPoint(x: x + s / 3, y: y + s / 3))
+            star.line(to: NSPoint(x: x, y: y + s))
+            star.line(to: NSPoint(x: x - s / 3, y: y + s / 3))
+            star.line(to: NSPoint(x: x - s, y: y))
+            star.line(to: NSPoint(x: x - s / 3, y: y - s / 3))
+            star.close()
+            star.fill()
         }
     }
 
@@ -1377,6 +1404,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         chats = readChats()
         checkUsage()
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
+        // Sparkles only while a live chat is in Auto
+        view.autoMode = chats.contains { $0.isOpen && $0.isRecent && $0.mode == "auto" }
 
         var fresh: [(Event, Chat)] = []
         for chat in chats {

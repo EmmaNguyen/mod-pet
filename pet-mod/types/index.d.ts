@@ -22,6 +22,8 @@ declare module 'claude-code' {
       waiting: string
       /** The tool call waiting for your OK: its id, when it started waiting in milliseconds since 1970, and the whole of what it does */
       request: { id: string; at: number; detail: string }
+      /** The permission mode the session is in, as the plugin has seen it: 'auto' once Mochi switches it */
+      mode: string
     }
   }
 }

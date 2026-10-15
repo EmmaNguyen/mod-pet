@@ -23,6 +23,8 @@ const log = { plugin: 'pet-mod', key: 'log' } as const
 const waiting = { plugin: 'pet-mod', key: 'waiting' } as const
 // The tool call waiting for your OK, and when it started waiting
 const request = { plugin: 'pet-mod', key: 'request' } as const
+// The permission mode the session is in, as far as the plugin has seen it ('auto' when Mochi switched it)
+const mode = { plugin: 'pet-mod', key: 'mode' } as const
 
 /** The engine interface a hook receives, for the helper that reports to the floating Mochi */
 type Dollar = Parameters<Hook<'turn.complete'>>[0]
@@ -134,7 +136,8 @@ async function publish($: Dollar, isEnding = false) {
   // The tool call Mochi may answer for, while the chat waits for your OK, and what it is
   const pending =
     asking === '' ? { requestId: '', askedAt: 0, detail: '' } : { requestId: asked.id, askedAt: asked.at, detail: asked.detail }
-  const report = { title, link, status: isEnding ? 'ended' : current, waiting: asking, log: events, updatedAt, ...pending }
+  const { value: permissionMode = '' } = await $.state.get(mode)
+  const report = { title, link, status: isEnding ? 'ended' : current, waiting: asking, log: events, updatedAt, mode: permissionMode, ...pending }
   await $.fs.write(file, JSON.stringify(report))
 }
 
@@ -307,6 +310,11 @@ export const register: Register = on => {
   // Claude is about to show its own dialog: Mochi's Allow, Deny or Allow-and-accept-edits answers it first.
   // With no answer in time, or no request for Mochi to answer, the dialog shows as it always does.
   on('classic.PermissionRequest', async ($, e, next) => {
+    // The mode the session is in now, so Mochi can show Auto when it is on
+    if (e.agent_id === undefined) {
+      await $.state.set(mode, e.permission_mode ?? '')
+      await publish($).catch(() => undefined)
+    }
     const { value: asked = { id: '', at: 0, detail: '' } } = await $.state.get(request)
     if (e.agent_id !== undefined || asked.id === '') return next(e)
 
@@ -317,11 +325,15 @@ export const register: Register = on => {
       // Switch this session to Accept edits or Auto, only from Manual or Accept edits (never down from Auto),
       // and only for this session. From any other mode the request is allowed and the mode stays as it is
       const from = e.permission_mode === 'default' || e.permission_mode === 'acceptEdits'
-      const mode = mochi === 'auto' ? 'auto' : 'acceptEdits'
+      const target = mochi === 'auto' ? 'auto' : 'acceptEdits'
+      if (from) {
+        await $.state.set(mode, target) // Mochi shows Auto only while it is on
+        await publish($).catch(() => undefined)
+      }
       return {
         decision: {
           behavior: 'allow',
-          updatedPermissions: from ? [{ type: 'setMode', mode, destination: 'session' }] : undefined,
+          updatedPermissions: from ? [{ type: 'setMode', mode: target, destination: 'session' }] : undefined,
         },
       }
     }
