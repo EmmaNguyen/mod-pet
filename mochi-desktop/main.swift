@@ -1266,6 +1266,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     /// The Allow and Deny cards by the tool call they answer, and the calls already answered, so none comes back
     var approvals: [String: NSPanel] = [:]
+    /// A pretend chat waiting for your OK, from "Test the approval keys" in her menu. Nothing real is approved.
+    var testChat: Chat?
     var answered = Set<String>()
     /// How long after a chat asks she may still answer for it. The plugin waits 8 seconds in all, so
     /// this ends a second sooner, and her buttons go before the plugin stops waiting for them
@@ -1402,6 +1404,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     func look() {
         currentLook = MochiLook.read()
         chats = readChats()
+        if let testChat { chats.append(testChat) }
         checkUsage()
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
         // Sparkles only while a live chat is in Auto
@@ -1695,11 +1698,43 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// Writes your answer for the chat's waiting tool call; the plugin picks it up and carries on
     func answerApproval(_ chat: Chat, _ decision: String) {
+        if chat.id == "mochi-test" { finishTest(chat, decision); return }
         let answer: [String: Any] = [
             "requestId": chat.requestId, "decision": decision, "at": Date().timeIntervalSince1970 * 1000,
         ]
         writeJSON(answer, to: mochiFolder.appendingPathComponent("answers/\(chat.id).json"))
         closeApproval(chat.requestId)
+    }
+
+    /// Starts the pretend request: her real Allow and Deny card appears for 20 seconds, and the keys answer it
+    @objc func menuTestApproval() {
+        let now = Date().timeIntervalSince1970 * 1000
+        let id = "test-\(Int(now))"
+        // askedAt is in the future, so the card lasts 20 seconds instead of 7
+        testChat = Chat(id: "mochi-test", title: "Mochi test", status: .needsInput, log: [], updatedAt: now, link: nil,
+                        waiting: "Test", isRecent: true, requestId: id, askedAt: now + 13_000,
+                        detail: "$ echo hello (a test: nothing runs)", mode: "")
+        look()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 21) { [weak self] in
+            if self?.testChat?.requestId == id { self?.testChat = nil }
+        }
+    }
+
+    /// The key or button you pressed on the pretend request: shows what you chose, approves nothing,
+    /// and for Auto shows the sparkles for 10 seconds
+    func finishTest(_ chat: Chat, _ decision: String) {
+        let names = ["allow": "Allow", "deny": "Deny", "acceptEdits": "Accept edits", "auto": "Auto"]
+        closeApproval(chat.requestId)
+        showCard(title: "Test: you chose \(names[decision] ?? decision)", body: "The keys work. Nothing was approved.",
+                 color: Status.ready.color, link: nil)
+        if decision == "auto" {
+            testChat = Chat(id: "mochi-test", title: "Mochi test", status: .idle, log: [], updatedAt: Date().timeIntervalSince1970 * 1000,
+                            link: nil, waiting: "", isRecent: true, mode: "auto")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.testChat = nil }
+        } else {
+            testChat = nil
+        }
+        look()
     }
 
     /// The chat list (when open) and the cards stack beside Mochi as one block, the list nearest her,
@@ -2028,6 +2063,7 @@ final class NotePanel: NSPanel {
         let menu = NSMenu()
         menu.addItem(withTitle: "Quick note F5 · Talk F6 · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(withTitle: "Allow ⌃⌥1 · Deny ⌃⌥2 · Accept edits ⌃⌥3 · Auto ⌃⌥4 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Test the approval keys", action: #selector(menuTestApproval), keyEquivalent: "").target = self
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false
