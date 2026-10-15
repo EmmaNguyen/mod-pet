@@ -176,6 +176,23 @@ func waitingChat(_ chats: [Chat], pending ids: Set<String>) -> Chat? {
 }
 
 /// Writes a small JSON file in one go, so the plugin never reads half of it
+/// A line in ~/.claude/mochi/mochi.log, with the time, so a failed step can be found afterwards.
+/// The log is started afresh when it passes 200 KB.
+func mochiLog(_ text: String) {
+    let url = mochiFolder.appendingPathComponent("mochi.log")
+    let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+    if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 200_000 {
+        try? FileManager.default.removeItem(at: url)
+    }
+    if let handle = try? FileHandle(forWritingTo: url) {
+        handle.seekToEndOfFile()
+        handle.write(Data(line.utf8))
+        try? handle.close()
+    } else {
+        try? Data(line.utf8).write(to: url)
+    }
+}
+
 func writeJSON(_ object: [String: Any], to url: URL) {
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     if let data = try? JSONSerialization.data(withJSONObject: object) { try? data.write(to: url, options: .atomic) }
@@ -1227,7 +1244,7 @@ enum Shortcuts {
                 var pressed = EventHotKeyID()
                 GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                   nil, MemoryLayout<EventHotKeyID>.size, nil, &pressed)
-                DispatchQueue.main.async { Shortcuts.actions[pressed.id]?() }
+                DispatchQueue.main.async { mochiLog("shortcut \(pressed.id) pressed"); Shortcuts.actions[pressed.id]?() }
                 return noErr
             }, 1, &spec, nil, nil)
         }
@@ -1664,6 +1681,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     func showApproval(_ chat: Chat) {
+        mochiLog("card shown for \(chat.title) (\(chat.requestId))")
         let id = chat.requestId
         let panel = floatingPanel(size: ApprovalView.size)
         panel.acceptsMouseMovedEvents = true
@@ -1694,7 +1712,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// F7 allows and F8 denies the request of the chat that has waited longest for your OK: the one nearest its time limit
     func answerWaiting(_ decision: String) {
-        guard let chat = waitingChat(chats, pending: Set(approvals.keys)) else { return }
+        guard let chat = waitingChat(chats, pending: Set(approvals.keys)) else {
+            mochiLog("\(decision): no card showing, nothing to answer")
+            return
+        }
+        mochiLog("\(decision): answering \(chat.title) (\(chat.requestId))")
         answerApproval(chat, decision)
     }
 
@@ -1710,6 +1732,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// Starts the pretend request: her real Allow and Deny card appears for 20 seconds, and the keys answer it
     @objc func menuTestApproval() {
+        mochiLog("test request started from the menu")
         let now = Date().timeIntervalSince1970 * 1000
         let id = "test-\(Int(now))"
         // askedAt is in the future, so the card lasts 20 seconds instead of 7
@@ -1725,6 +1748,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// The key or button you pressed on the pretend request: shows what you chose, approves nothing,
     /// and for Auto shows the sparkles for 10 seconds
     func finishTest(_ chat: Chat, _ decision: String) {
+        mochiLog("test answered: \(decision)")
         let names = ["allow": "Allow", "deny": "Deny", "acceptEdits": "Accept edits", "auto": "Auto"]
         closeApproval(chat.requestId)
         showCard(title: "Test: you chose \(names[decision] ?? decision)", body: "The keys work. Nothing was approved.",
