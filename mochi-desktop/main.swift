@@ -1327,6 +1327,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Shortcuts.add(4, key: kVK_F7, modifiers: 0) { [weak self] in self?.answerWaiting("allow") }
         Shortcuts.add(5, key: kVK_F8, modifiers: 0) { [weak self] in self?.answerWaiting("deny") }
         Shortcuts.add(6, key: kVK_F9, modifiers: 0) { [weak self] in self?.answerWaiting("acceptEdits") }
+        Shortcuts.add(7, key: kVK_F10, modifiers: 0) { [weak self] in self?.answerWaiting("auto") }
         view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
         // Old reports pile up otherwise, and she reads every one each second
         DispatchQueue.global(qos: .utility).async { pruneOldSessions() }
@@ -1978,7 +1979,7 @@ final class NotePanel: NSPanel {
     func showMenu(_ event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Quick note F5 · Talk F6 · Jump ⌥J", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Allow F7 · Deny F8 · Allow, accept edits F9 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Allow F7 · Deny F8 · Accept edits F9 · Auto F10 (waiting chat)", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         if let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false

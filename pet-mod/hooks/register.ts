@@ -138,8 +138,8 @@ async function publish($: Dollar, isEnding = false) {
   await $.fs.write(file, JSON.stringify(report))
 }
 
-/** What you answered on Mochi's card: Allow, Deny, or Allow and switch this session to Accept edits */
-type Answer = 'allow' | 'deny' | 'acceptEdits'
+/** What you answered on Mochi's card: Allow, Deny, or Allow and switch this session to Accept edits or Auto */
+type Answer = 'allow' | 'deny' | 'acceptEdits' | 'auto'
 
 /**
  * Lets you answer a tool's ask with Mochi's Allow or Deny. Only when she is running and shows this
@@ -164,7 +164,7 @@ async function askMochi($: Dollar, requestId: string, signal: AbortSignal): Prom
     const now = await $.clock.now()
     const answer = await read<{ requestId: string; decision: string }>(answers)
     const decision = answer?.decision
-    if (answer?.requestId === requestId && (decision === 'allow' || decision === 'deny' || decision === 'acceptEdits')) {
+    if (answer?.requestId === requestId && (decision === 'allow' || decision === 'deny' || decision === 'acceptEdits' || decision === 'auto')) {
       return decision
     }
     const presence = await read<{ at: number; pending?: string[] }>(presenceFile)
@@ -313,13 +313,15 @@ export const register: Register = on => {
     const mochi = await askMochi($, asked.id, next.signal).catch(() => undefined)
     if (mochi === 'deny') return { decision: { behavior: 'deny', message: 'You declined this in Mochi' } }
     if (mochi === 'allow') return { decision: { behavior: 'allow' } }
-    if (mochi === 'acceptEdits') {
-      // Switch this session to Accept edits, only from Manual, and only for this session
-      const switchMode = e.permission_mode === 'default'
+    if (mochi === 'acceptEdits' || mochi === 'auto') {
+      // Switch this session to Accept edits or Auto, only from Manual or Accept edits (never down from Auto),
+      // and only for this session. From any other mode the request is allowed and the mode stays as it is
+      const from = e.permission_mode === 'default' || e.permission_mode === 'acceptEdits'
+      const mode = mochi === 'auto' ? 'auto' : 'acceptEdits'
       return {
         decision: {
           behavior: 'allow',
-          updatedPermissions: switchMode ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] : undefined,
+          updatedPermissions: from ? [{ type: 'setMode', mode, destination: 'session' }] : undefined,
         },
       }
     }
