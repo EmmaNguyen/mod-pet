@@ -68,6 +68,21 @@ export const describeAsk = (tool: string, input: unknown): string => {
   return `Use ${tool.replace(/^mcp__[^_]+__/, '')}`
 }
 
+/**
+ * The whole of what Claude wants to do, as one line of up to about 110 characters, for Mochi's Allow
+ * and Deny card: the full command, the full path, or the full address
+ */
+export const describeDetail = (tool: string, input: unknown): string => {
+  const fields = (input ?? {}) as Record<string, unknown>
+  const text = (key: string) => (typeof fields[key] === 'string' ? (fields[key] as string) : undefined)
+  const line = (value: string) => shorten(value.replace(/\s+/g, ' ').trim(), 110)
+  if (tool === 'Bash' && text('command')) return `$ ${line(text('command')!)}`
+  const path = text('file_path') ?? text('notebook_path')
+  if ((tool === 'Edit' || tool === 'Write' || tool === 'NotebookEdit') && path) return line(path)
+  if (tool === 'WebFetch' && text('url')) return line(text('url')!)
+  return line(JSON.stringify(input ?? {}))
+}
+
 /** Pulls a one-line summary out of a background-task notification */
 export const describeTask = (text: string): string => {
   const state = /<status>([^<]*)<\/status>/.exec(text)?.[1]?.trim()
@@ -114,10 +129,11 @@ async function publish($: Dollar, isEnding = false) {
   const { value: current = 'idle' } = await $.state.get(status)
   const { value: events = [] } = await $.state.get(log)
   const { value: asking = '' } = await $.state.get(waiting)
-  const { value: asked = { id: '', at: 0 } } = await $.state.get(request)
+  const { value: asked = { id: '', at: 0, detail: '' } } = await $.state.get(request)
   const updatedAt = await $.clock.now()
-  // The tool call Mochi may answer for, while the chat waits for your OK
-  const pending = asking === '' ? { requestId: '', askedAt: 0 } : { requestId: asked.id, askedAt: asked.at }
+  // The tool call Mochi may answer for, while the chat waits for your OK, and what it is
+  const pending =
+    asking === '' ? { requestId: '', askedAt: 0, detail: '' } : { requestId: asked.id, askedAt: asked.at, detail: asked.detail }
   const report = { title, link, status: isEnding ? 'ended' : current, waiting: asking, log: events, updatedAt, ...pending }
   await $.fs.write(file, JSON.stringify(report))
 }
@@ -270,7 +286,7 @@ export const register: Register = on => {
     if (verdict.decision === 'ask' && e.agentId === undefined) {
       await $.state.set(waiting, describeAsk(e.tool, e.input))
       await $.state.set(status, 'needs-input')
-      await $.state.set(request, { id: e.tool_use_id ?? '', at: await $.clock.now() })
+      await $.state.set(request, { id: e.tool_use_id ?? '', at: await $.clock.now(), detail: describeDetail(e.tool, e.input) })
       await publish($).catch(() => undefined)
 
       // Allow or Deny in Mochi, when the engine would not decide this itself; questions and plans need you in Claude
@@ -289,7 +305,7 @@ export const register: Register = on => {
     if (e.tool === 'AskUserQuestion' && e.agentId === undefined) {
       await $.state.set(waiting, `Asks: ${shorten(e.questions[0]?.question ?? 'a question', 50)}`)
       await $.state.set(status, 'needs-input')
-      await $.state.set(request, { id: '', at: 0 })
+      await $.state.set(request, { id: '', at: 0, detail: '' })
       await publish($).catch(() => undefined)
     }
 
@@ -298,7 +314,7 @@ export const register: Register = on => {
     const { value: current = 'idle' } = await $.state.get(status)
     if (current === 'needs-input') {
       await $.state.set(waiting, '')
-      await $.state.set(request, { id: '', at: 0 })
+      await $.state.set(request, { id: '', at: 0, detail: '' })
       await $.state.set(status, 'running')
       await publish($).catch(() => undefined)
     }

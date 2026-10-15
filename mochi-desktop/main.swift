@@ -86,6 +86,8 @@ struct Report: Decodable {
     /// The tool call waiting for your OK, and when it started waiting: what Allow and Deny answer
     let requestId: String?
     let askedAt: Double?
+    /// The whole of what the tool call does, in a line: the full command or path
+    let detail: String?
 }
 
 struct Chat {
@@ -103,6 +105,7 @@ struct Chat {
     /// The tool call waiting for your OK, and when it started waiting, for Allow and Deny here
     var requestId = ""
     var askedAt: Double = 0
+    var detail = ""
     var isOpen: Bool { status != .ended }
 }
 
@@ -236,7 +239,7 @@ func readChats() -> [Chat] {
         live[id] = Chat(id: id, title: report.title ?? "Claude", status: status, log: report.log ?? [],
                         updatedAt: report.updatedAt ?? 0, link: report.link, waiting: report.waiting ?? "",
                         isRecent: now - (report.updatedAt ?? 0) < recent,
-                        requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0)
+                        requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0, detail: report.detail ?? "")
     }
 
     var chats: [Chat] = []
@@ -251,7 +254,7 @@ func readChats() -> [Chat] {
             chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
                               waiting: mine.waiting, isRecent: mine.isRecent,
-                              requestId: mine.requestId, askedAt: mine.askedAt))
+                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail))
             continue
         }
 
@@ -911,10 +914,10 @@ final class ApprovalView: NSView {
     var dot: NSColor?
     override var isFlipped: Bool { true }
 
-    static let size = NSSize(width: 300, height: 92)
+    static let size = NSSize(width: 360, height: 106)
     private static let allowColor = NSColor(hex: 0x2F9E44)
-    private var allowBox: NSRect { NSRect(x: 22, y: 56, width: 124, height: 26) }
-    private var denyBox: NSRect { NSRect(x: 154, y: 56, width: 124, height: 26) }
+    private var allowBox: NSRect { NSRect(x: 22, y: 72, width: 160, height: 26) }
+    private var denyBox: NSRect { NSRect(x: 190, y: 72, width: 148, height: 26) }
     private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 8, width: 18, height: 18) }
 
     init(title: String, body: String, accent: NSColor) {
@@ -928,7 +931,7 @@ final class ApprovalView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         accent.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: 66), xRadius: 2, yRadius: 2).fill()
+        NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: bounds.height - 26), xRadius: 2, yRadius: 2).fill()
 
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
@@ -937,9 +940,13 @@ final class ApprovalView: NSView {
         NSAttributedString(string: title, attributes: [
             .font: CardView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ]).draw(in: NSRect(x: titleX, y: 10, width: bounds.width - 30 - titleX, height: 18))
+        // The whole command or path, in up to two lines, so you can see what you are allowing
+        let detailStyle = NSMutableParagraphStyle()
+        detailStyle.lineBreakMode = .byCharWrapping
         NSAttributedString(string: body, attributes: [
-            .font: CardView.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
-        ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 17))
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: detailStyle,
+        ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 34))
 
         // Allow in green and Deny in grey, each a pill with its word centred
         let buttons: [(box: NSRect, word: String, fill: NSColor, ink: NSColor)] = [
@@ -1605,7 +1612,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let panel = floatingPanel(size: ApprovalView.size)
         panel.acceptsMouseMovedEvents = true
         panel.hasShadow = false // the glass draws its own soft edge
-        let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
+        // The whole command or path when Claude sent it, else the short line
+        let why = !chat.detail.isEmpty ? chat.detail : chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
         let card = ApprovalView(title: "⏰ \(chat.title) needs you", body: why, accent: Status.needsInput.color)
         card.dot = chatColor(chat.id)
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer

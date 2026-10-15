@@ -20,8 +20,8 @@ declare module 'claude-code' {
       log: PetEvent[]
       /** What Claude wants your OK for, while the status is needs-input */
       waiting: string
-      /** The tool call waiting for your OK (its id), and when it started waiting in milliseconds since 1970 */
-      request: { id: string; at: number }
+      /** The tool call waiting for your OK: its id, when it started waiting in milliseconds since 1970, and the whole of what it does */
+      request: { id: string; at: number; detail: string }
     }
   }
 }
