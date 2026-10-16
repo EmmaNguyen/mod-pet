@@ -453,6 +453,9 @@ final class MochiView: NSView {
     var onUsageClick: (() -> Void)?
     /// The two buttons under her, and whether Mochi is listening
     var quickRect: NSRect = .zero
+    var scrollRect: NSRect = .zero
+    /// The diary button: opens "This week"
+    var onScroll: (() -> Void)?
     var talkRect: NSRect = .zero
     var recording = false
     /// The cursor is over her, and whether the note box is open
@@ -517,6 +520,7 @@ final class MochiView: NSView {
         } else {
             quickRect = .zero
             talkRect = .zero
+            scrollRect = .zero
         }
     }
 
@@ -539,8 +543,10 @@ final class MochiView: NSView {
     private func drawButtons() {
         let y: CGFloat = 126
         let center = bounds.width / 2
-        quickRect = NSRect(x: center - 18 - 13, y: y - 13, width: 26, height: 26)
-        talkRect = NSRect(x: center + 18 - 13, y: y - 13, width: 26, height: 26)
+        let spread: CGFloat = 36
+        quickRect = NSRect(x: center - spread - 13, y: y - 13, width: 26, height: 26)
+        talkRect = NSRect(x: center - 13, y: y - 13, width: 26, height: 26)
+        scrollRect = NSRect(x: center + spread - 13, y: y - 13, width: 26, height: 26)
         let ink = NSColor(white: 0.25, alpha: 1)
         NSColor.white.withAlphaComponent(0.92).setFill()
         NSBezierPath(ovalIn: quickRect).fill()
@@ -570,6 +576,23 @@ final class MochiView: NSView {
         stem.lineWidth = 1.6
         stem.lineCapStyle = .round
         stem.stroke()
+
+        // The diary: a sheet with a rolled top, in the same ink
+        NSColor.white.withAlphaComponent(0.92).setFill()
+        NSBezierPath(ovalIn: scrollRect).fill()
+        ink.setStroke()
+        let sx = scrollRect.midX, sy = scrollRect.midY
+        let sheet = NSBezierPath(roundedRect: NSRect(x: sx - 6, y: sy - 4, width: 12, height: 13), xRadius: 2, yRadius: 2)
+        sheet.lineWidth = 1.5
+        sheet.stroke()
+        let roll = NSBezierPath(roundedRect: NSRect(x: sx - 8, y: sy - 8, width: 16, height: 6), xRadius: 3, yRadius: 3)
+        roll.lineWidth = 1.5
+        roll.stroke()
+        let lines = NSBezierPath()
+        lines.move(to: NSPoint(x: sx - 3, y: sy + 1)); lines.line(to: NSPoint(x: sx + 3, y: sy + 1))
+        lines.move(to: NSPoint(x: sx - 3, y: sy + 5)); lines.line(to: NSPoint(x: sx + 3, y: sy + 5))
+        lines.lineWidth = 1.2
+        lines.stroke()
     }
 
     /// Her face, pixel by pixel. A 16 by 16 face is drawn with smoothed corners and diagonals (four pixels
@@ -731,6 +754,7 @@ final class MochiView: NSView {
             let point = convert(event.locationInWindow, from: nil)
             if quickRect.insetBy(dx: -4, dy: -4).contains(point) { onQuickNote?() }
             else if talkRect.insetBy(dx: -4, dy: -4).contains(point) { onTalk?() }
+            else if scrollRect.insetBy(dx: -4, dy: -4).contains(point) { onScroll?() }
             else if usagePill.insetBy(dx: -4, dy: -4).contains(point) { onUsageClick?() }
             else if status == .needsInput, badgeRect.insetBy(dx: -3, dy: -3).contains(point), let onBadgeClick { onBadgeClick() }
             else { onClick?() }
@@ -1099,6 +1123,284 @@ final class ApprovalView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+// MARK: - This week: what happened each day, kept in ~/.claude/mochi/days.json
+
+/// One chat's turns on one day
+struct ChatDay: Codable {
+    var title: String
+    var turns: Int
+}
+
+/// What happened on one day: turns finished, approvals you gave, the highest 5-hour usage, and each chat's turns
+struct DayRecord: Codable {
+    var turns = 0
+    var allowed = 0
+    var declined = 0
+    var peak = 0
+    var chats: [String: ChatDay] = [:]
+
+    init() {}
+
+    /// Tolerant of missing keys, so a record written by an older Mochi still reads
+    init(from decoder: Decoder) throws {
+        let saved = try decoder.container(keyedBy: CodingKeys.self)
+        turns = try saved.decodeIfPresent(Int.self, forKey: .turns) ?? 0
+        allowed = try saved.decodeIfPresent(Int.self, forKey: .allowed) ?? 0
+        declined = try saved.decodeIfPresent(Int.self, forKey: .declined) ?? 0
+        peak = try saved.decodeIfPresent(Int.self, forKey: .peak) ?? 0
+        chats = try saved.decodeIfPresent([String: ChatDay].self, forKey: .chats) ?? [:]
+    }
+}
+
+/// Every recorded day, by its date ("2026-10-16")
+typealias DayLog = [String: DayRecord]
+
+let dayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter
+}()
+
+/// The day a date falls on, in your time zone
+func dayKey(_ date: Date) -> String { dayFormatter.string(from: date) }
+
+/// The seven dates, Monday to Sunday, of the week that contains `date`
+func weekDates(containing date: Date) -> [Date] {
+    var calendar = Calendar.current
+    calendar.firstWeekday = 2 // weeks start on Monday
+    let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+    return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+}
+
+/// Counts one finished turn for a chat on a day
+func recordTurn(_ log: inout DayLog, day: String, chatID: String, title: String) {
+    var record = log[day] ?? DayRecord()
+    record.turns += 1
+    var chat = record.chats[chatID] ?? ChatDay(title: title, turns: 0)
+    chat.title = title
+    chat.turns += 1
+    record.chats[chatID] = chat
+    log[day] = record
+}
+
+/// Counts one answer you gave: allowed, or declined
+func recordAnswer(_ log: inout DayLog, day: String, allowed: Bool) {
+    var record = log[day] ?? DayRecord()
+    if allowed { record.allowed += 1 } else { record.declined += 1 }
+    log[day] = record
+}
+
+/// Keeps the highest 5-hour usage seen on a day. Returns true when that changed the record.
+@discardableResult
+func recordPeak(_ log: inout DayLog, day: String, percent: Int) -> Bool {
+    var record = log[day] ?? DayRecord()
+    guard percent > record.peak else { return false }
+    record.peak = percent
+    log[day] = record
+    return true
+}
+
+/// The totals over some days, with the chats ordered by their turns
+struct WeekTotals {
+    var turns = 0
+    var allowed = 0
+    var declined = 0
+    var chats: [(id: String, title: String, turns: Int)] = []
+}
+
+func weekTotals(_ log: DayLog, days: [String]) -> WeekTotals {
+    var totals = WeekTotals()
+    var perChat: [String: (title: String, turns: Int)] = [:]
+    for key in days {
+        guard let record = log[key] else { continue }
+        totals.turns += record.turns
+        totals.allowed += record.allowed
+        totals.declined += record.declined
+        for (id, chat) in record.chats {
+            perChat[id] = (chat.title, (perChat[id]?.turns ?? 0) + chat.turns)
+        }
+    }
+    totals.chats = perChat.map { (id: $0.key, title: $0.value.title, turns: $0.value.turns) }
+        .sorted { $0.turns > $1.turns }
+    return totals
+}
+
+let daysFile = mochiFolder.appendingPathComponent("days.json")
+
+func readDayLog() -> DayLog {
+    guard let data = try? Data(contentsOf: daysFile),
+          let log = try? JSONDecoder().decode(DayLog.self, from: data) else { return [:] }
+    return log
+}
+
+/// Writes the log, keeping the last 120 days so the file stays small
+func writeDayLog(_ log: DayLog) {
+    let cutoff = dayKey(Date().addingTimeInterval(-120 * 86_400))
+    let kept = log.filter { $0.key >= cutoff }
+    try? FileManager.default.createDirectory(at: mochiFolder, withIntermediateDirectories: true)
+    if let data = try? JSONEncoder().encode(kept) { try? data.write(to: daysFile, options: .atomic) }
+}
+
+/// "This week": the week's counts, a bar for each day, that day's peak 5-hour usage, and the busiest chats
+final class WeekView: NSView {
+    static let size = NSSize(width: 380, height: 500)
+    private let log: DayLog
+    private let usage: Usage?
+    private let now: Date
+    private let colorFor: (String) -> NSColor
+    var onClose: (() -> Void)?
+    override var isFlipped: Bool { true }
+
+    init(log: DayLog, usage: Usage?, now: Date, colorFor: @escaping (String) -> NSColor) {
+        self.log = log
+        self.usage = usage
+        self.now = now
+        self.colorFor = colorFor
+        super.init(frame: NSRect(origin: .zero, size: Self.size))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    private var closeBox: NSRect { NSRect(x: bounds.width - 30, y: 14, width: 16, height: 16) }
+    private static let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    private static let turnColor = NSColor(hex: 0xF4A259)
+    private static let allowedColor = NSColor(hex: 0x2F9E44)
+    private static let ink = NSColor(hex: 0x3B2A20)
+    private static let muted = NSColor(hex: 0x7A8192)
+
+    override func draw(_ dirtyRect: NSRect) {
+        let days = weekDates(containing: now)
+        let keys = days.map { dayKey($0) }
+        let today = dayKey(now)
+        let totals = weekTotals(log, days: keys)
+
+        // Header: the week, what it adds up to, and a close cross
+        let range = "\(Self.dayOfMonth(days[0])) to \(Self.dayOfMonth(days[6])) \(Self.monthName(days[6]))"
+        draw("Week of \(range)", at: NSPoint(x: 22, y: 16), font: .systemFont(ofSize: 16, weight: .semibold), color: Self.ink)
+        draw("\(totals.turns) turns across \(totals.chats.count) chats", at: NSPoint(x: 22, y: 38),
+             font: .systemFont(ofSize: 12), color: Self.muted)
+        let cross = closeBox.insetBy(dx: 3, dy: 3)
+        let crossPath = NSBezierPath()
+        crossPath.move(to: NSPoint(x: cross.minX, y: cross.minY)); crossPath.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
+        crossPath.move(to: NSPoint(x: cross.maxX, y: cross.minY)); crossPath.line(to: NSPoint(x: cross.minX, y: cross.maxY))
+        crossPath.lineWidth = 1.6
+        Self.muted.setStroke()
+        crossPath.stroke()
+
+        // Three counts, as tiles
+        let tiles = [("Turns", totals.turns), ("Allowed", totals.allowed), ("Declined", totals.declined)]
+        for (i, tile) in tiles.enumerated() {
+            let box = NSRect(x: 22 + CGFloat(i) * 116, y: 66, width: 106, height: 52)
+            NSColor(hex: 0xEEF1F6).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
+            centered("\(tile.1)", in: NSRect(x: box.minX, y: box.minY + 7, width: box.width, height: 22),
+                     font: .systemFont(ofSize: 18, weight: .semibold), color: Self.ink)
+            centered(tile.0, in: NSRect(x: box.minX, y: box.minY + 31, width: box.width, height: 16),
+                     font: .systemFont(ofSize: 11), color: Self.muted)
+        }
+
+        // Each day: turns and approvals allowed as bars, and that day's peak 5-hour usage as a pill
+        draw("Each day", at: NSPoint(x: 22, y: 132), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
+        let base: CGFloat = 288
+        let slot = (bounds.width - 44) / 7
+        let tallest = CGFloat(max(1, keys.compactMap { log[$0]?.turns }.max() ?? 1))
+        let scale = 100 / tallest
+        for (i, key) in keys.enumerated() {
+            let cx = 22 + slot * (CGFloat(i) + 0.5)
+            if key > today {
+                centered("·", in: NSRect(x: cx - 10, y: base - 20, width: 20, height: 16), font: .systemFont(ofSize: 14), color: Self.muted)
+            } else if let record = log[key] {
+                let turnsBar = NSRect(x: cx - 13, y: base - CGFloat(record.turns) * scale, width: 12, height: CGFloat(record.turns) * scale)
+                let allowedBar = NSRect(x: cx + 1, y: base - CGFloat(record.allowed) * scale, width: 12, height: CGFloat(record.allowed) * scale)
+                Self.turnColor.setFill()
+                NSBezierPath(roundedRect: turnsBar, xRadius: 4, yRadius: 4).fill()
+                Self.allowedColor.setFill()
+                NSBezierPath(roundedRect: allowedBar, xRadius: 4, yRadius: 4).fill()
+                if record.turns > 0 {
+                    centered("\(record.turns)", in: NSRect(x: cx - 15, y: turnsBar.minY - 15, width: 16, height: 13),
+                             font: .systemFont(ofSize: 10, weight: .semibold), color: Self.ink)
+                }
+                if record.allowed > 0 {
+                    centered("\(record.allowed)", in: NSRect(x: cx + 1, y: allowedBar.minY - 15, width: 14, height: 13),
+                             font: .systemFont(ofSize: 10, weight: .semibold), color: Self.ink)
+                }
+                if record.peak > 0 {
+                    let pill = NSRect(x: cx - 18, y: base + 22, width: 36, height: 16)
+                    Usage.color(record.peak).setFill()
+                    NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+                    centered("\(record.peak)%", in: pill, font: .systemFont(ofSize: 9, weight: .bold), color: .white)
+                }
+            }
+            centered(Self.dayNames[i], in: NSRect(x: cx - 18, y: base + 4, width: 36, height: 14),
+                     font: .systemFont(ofSize: 11, weight: .semibold), color: Self.ink)
+        }
+        NSColor(hex: 0xDDE2EA).setFill()
+        NSRect(x: 22, y: base, width: bounds.width - 44, height: 1).fill()
+
+        // The busiest chats, each in its own colour
+        draw("Most active chats", at: NSPoint(x: 22, y: 330), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
+        let rows = Array(totals.chats.prefix(4))
+        if rows.isEmpty {
+            draw("Nothing recorded this week yet.", at: NSPoint(x: 22, y: 356), font: .systemFont(ofSize: 12), color: Self.muted)
+        }
+        let most = CGFloat(max(1, rows.first?.turns ?? 1))
+        for (i, chat) in rows.enumerated() {
+            let y = 354 + CGFloat(i) * 26
+            colorFor(chat.id).setFill()
+            NSBezierPath(ovalIn: NSRect(x: 22, y: y + 4, width: 10, height: 10)).fill()
+            draw(clip(chat.title, 20), at: NSPoint(x: 40, y: y), font: .systemFont(ofSize: 12, weight: .medium), color: Self.ink)
+            let track = NSRect(x: 180, y: y + 7, width: 150, height: 6)
+            NSColor(hex: 0xE4E8EE).setFill()
+            NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+            var fill = track
+            fill.size.width = track.width * CGFloat(chat.turns) / most
+            colorFor(chat.id).setFill()
+            NSBezierPath(roundedRect: fill, xRadius: 3, yRadius: 3).fill()
+            centered("\(chat.turns)", in: NSRect(x: 336, y: y, width: 30, height: 16),
+                     font: .systemFont(ofSize: 11), color: Self.muted)
+        }
+
+        // Her limit, from the same usage she shows above her
+        if let usage {
+            let resets = usage.weekResets.map { Self.resetText($0) } ?? "soon"
+            draw("Week limit: \(usage.week)% used, resets \(resets)", at: NSPoint(x: 22, y: 462),
+                 font: .systemFont(ofSize: 11), color: Self.muted)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if closeBox.insetBy(dx: -6, dy: -6).contains(point) { onClose?() }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    private func draw(_ text: String, at point: NSPoint, font: NSFont, color: NSColor) {
+        NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]).draw(at: point)
+    }
+
+    private func centered(_ text: String, in rect: NSRect, font: NSFont, color: NSColor) {
+        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+        let size = string.size()
+        string.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+    }
+
+    private static func dayOfMonth(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "d"; f.locale = Locale(identifier: "en_US_POSIX"); return f.string(from: date)
+    }
+
+    private static func monthName(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "MMMM"; f.locale = Locale(identifier: "en_US_POSIX"); return f.string(from: date)
+    }
+
+    private static func resetText(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "EEEE HH:mm"; f.locale = Locale(identifier: "en_US_POSIX"); return f.string(from: date)
+    }
+}
+
 // MARK: - Plan usage, as the Claude app last saw it
 
 struct UsageFile: Decodable {
@@ -1353,6 +1655,12 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var usage: Usage?
 
     /// The Allow and Deny cards by the tool call they answer, and the calls already answered, so none comes back
+    /// Each day's turns, approvals and peak usage, for "This week"; saved a few seconds after a change
+    var dayLog: DayLog = readDayLog()
+    var dayLogDirty = false
+    var dayLogSavedAt = Date.distantPast
+    /// The open "This week" panel, if any
+    var weekPanel: NSPanel?
     var approvals: [String: NSPanel] = [:]
     /// The card view inside each approval panel, so its countdown can be updated
     var approvalViews: [String: ApprovalView] = [:]
@@ -1447,6 +1755,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         view.onUsageClick = { [weak self] in self?.showUsageDetails() }
         view.onQuickNote = { [weak self] in self?.toggleNote() }
         view.onTalk = { [weak self] in self?.toggleTalk() }
+        view.onScroll = { [weak self] in self?.toggleWeek() }
         view.onMenu = { [weak self] event in self?.showMenu(event) }
         Shortcuts.add(1, key: kVK_F5, modifiers: 0) { [weak self] in self?.toggleNote() }
         Shortcuts.add(2, key: kVK_F6, modifiers: 0) { [weak self] in self?.toggleTalk() }
@@ -1521,6 +1830,18 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         firstLook = false
 
+        // Each new finished turn counts toward its day, for "This week"
+        for (event, chat) in fresh where event.kind == "turn" {
+            let when = Date(timeIntervalSince1970: (event.at ?? Date().timeIntervalSince1970 * 1000) / 1000)
+            recordTurn(&dayLog, day: dayKey(when), chatID: chat.id, title: chat.title)
+            dayLogDirty = true
+        }
+        if dayLogDirty, Date().timeIntervalSince(dayLogSavedAt) > 5 {
+            writeDayLog(dayLog)
+            dayLogDirty = false
+            dayLogSavedAt = Date()
+        }
+
         if !fresh.isEmpty {
             view.unread += fresh.count
             // A card beside Mochi for every new thing, oldest first so the newest lands on top
@@ -1557,6 +1878,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let isFirst = usage == nil
         usage = now
         view.usage = now
+        if recordPeak(&dayLog, day: dayKey(Date()), percent: now.fiveHour) { dayLogDirty = true }
         func level(_ percent: Int) -> Int { percent >= 100 ? 100 : percent >= 80 ? 80 : 0 }
         let five = level(now.fiveHour), week = level(now.week)
         if isFirst { warnedFiveHour = five; warnedWeek = week; wasBlocked = now.blocked != nil; return } // no warning for what was already so at launch
@@ -1824,6 +2146,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// Writes your answer for the chat's waiting tool call; the plugin picks it up and carries on
     func answerApproval(_ chat: Chat, _ decision: String) {
         if chat.id == "mochi-test" { finishTest(chat, decision); return }
+        recordAnswer(&dayLog, day: dayKey(Date()), allowed: decision != "deny")
+        dayLogDirty = true
         let answer: [String: Any] = [
             "requestId": chat.requestId, "decision": decision, "at": Date().timeIntervalSince1970 * 1000,
         ]
@@ -1862,6 +2186,37 @@ func playAtTwoThirds(_ sound: NSSound?) {
             testChat = nil
         }
         look()
+    }
+
+    /// The scroll beside her: opens "This week", or closes it when it is open
+    func toggleWeek() {
+        if let weekPanel, weekPanel.isVisible {
+            weekPanel.orderOut(nil)
+            self.weekPanel = nil
+            return
+        }
+        let content = WeekView(log: dayLog, usage: usage, now: Date(), colorFor: { chatColor($0) })
+        content.onClose = { [weak self] in
+            self?.weekPanel?.orderOut(nil)
+            self?.weekPanel = nil
+        }
+        let panel = floatingPanel(size: WeekView.size)
+        panel.contentView = makeGlass(size: WeekView.size, content: content, radius: 18)
+        placeWeek(panel)
+        panel.orderFrontRegardless()
+        weekPanel = panel
+    }
+
+    /// Above her when there is room, otherwise below, and always on the screen
+    func placeWeek(_ panel: NSPanel) {
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let size = panel.frame.size
+        var x = window.frame.midX - size.width / 2
+        var y = window.frame.maxY + 8
+        if y + size.height > screen.maxY { y = window.frame.minY - size.height - 8 }
+        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
+        y = min(max(y, screen.minY + 4), screen.maxY - size.height - 4)
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     /// The chat list (when open) and the cards stack beside Mochi as one block, the list nearest her,

@@ -54,4 +54,30 @@ check("2.5 seconds on, 5 seconds are left", answerSecondsLeft(askedAt: 0, now: 2
 check("at the end of the window, none are left", answerSecondsLeft(askedAt: 0, now: 7_000, window: 7_000) == 0)
 check("past the window, still none", answerSecondsLeft(askedAt: 0, now: 9_000, window: 7_000) == 0)
 
+// This week: the days, the counts, and the storage
+var friday = DateComponents()
+friday.year = 2026; friday.month = 10; friday.day = 16; friday.hour = 12
+let weekDay = Calendar.current.date(from: friday)!
+let weekKeys = weekDates(containing: weekDay).map { dayKey($0) }
+check("the week runs Monday to Sunday", weekKeys.count == 7 && weekKeys.first == "2026-10-12" && weekKeys.last == "2026-10-18")
+var weekLog: DayLog = [:]
+recordTurn(&weekLog, day: "2026-10-12", chatID: "garden", title: "Garden")
+recordTurn(&weekLog, day: "2026-10-12", chatID: "garden", title: "Garden")
+recordTurn(&weekLog, day: "2026-10-12", chatID: "mochi", title: "Mochi")
+check("turns count per day and per chat", weekLog["2026-10-12"]?.turns == 3 && weekLog["2026-10-12"]?.chats["garden"]?.turns == 2)
+recordAnswer(&weekLog, day: "2026-10-12", allowed: true)
+recordAnswer(&weekLog, day: "2026-10-12", allowed: true)
+recordAnswer(&weekLog, day: "2026-10-12", allowed: false)
+check("answers count as allowed or declined", weekLog["2026-10-12"]?.allowed == 2 && weekLog["2026-10-12"]?.declined == 1)
+check("the peak keeps the highest value", recordPeak(&weekLog, day: "2026-10-12", percent: 61) && !recordPeak(&weekLog, day: "2026-10-12", percent: 40) && weekLog["2026-10-12"]?.peak == 61)
+recordTurn(&weekLog, day: "2026-10-13", chatID: "garden", title: "Garden")
+let weekSum = weekTotals(weekLog, days: weekKeys)
+check("totals add up over the week", weekSum.turns == 4 && weekSum.allowed == 2 && weekSum.declined == 1)
+check("the busiest chat comes first", weekSum.chats.first?.id == "garden" && weekSum.chats.first?.turns == 3)
+check("a day outside the week is not counted", weekTotals(weekLog, days: ["2026-10-19"]).turns == 0)
+let savedLog = try! JSONEncoder().encode(weekLog)
+check("a saved log reads back the same", (try? JSONDecoder().decode(DayLog.self, from: savedLog))?["2026-10-12"]?.turns == 3)
+let olderRecord = try! JSONDecoder().decode(DayRecord.self, from: #"{"turns":4}"#.data(using: .utf8)!)
+check("an older record with missing keys still reads", olderRecord.turns == 4 && olderRecord.allowed == 0 && olderRecord.chats.isEmpty)
+
 print("ALL PASSED")

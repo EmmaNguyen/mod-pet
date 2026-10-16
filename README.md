@@ -22,6 +22,7 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Jump to the chat that needs you.** Option-J, or a click on her red badge, opens the chat that has waited longest for your OK.
 - **A colour for each chat.** Every chat has its own coloured dot on its cards and its line in the list, so you can tell chats apart at a glance.
 - **Tidy by herself.** Status files from chats untouched for a week are deleted at launch and every hour, so she stays quick.
+- **This week.** A round scroll button beside her opens a summary of the week: turns and approvals each day, that day's peak 5-hour usage, the most active chats, and her week limit. Mochi keeps a small daily count in `~/.claude/mochi/days.json`, with no chat content.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 - **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads, opens with the look you saved, and previews her in the skin chosen in Mochi's menu, drawn the way Mochi draws it. Undo and redo (⌘Z and ⇧⌘Z) step back through every change.
 
