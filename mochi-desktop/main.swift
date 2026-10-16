@@ -1260,13 +1260,59 @@ func writeDayLog(_ log: DayLog) {
     if let data = try? JSONEncoder().encode(kept) { try? data.write(to: daysFile, options: .atomic) }
 }
 
-/// "This week": the week's counts, a bar for each day, that day's peak 5-hour usage, and the busiest chats
+/// Twelve weeks of days, oldest first, each a Monday to Sunday. The last week is the one containing `now`.
+func diaryWeeks(now: Date, weeks: Int = 12) -> [[Date]] {
+    guard let monday = weekDates(containing: now).first else { return [] }
+    var calendar = Calendar.current
+    calendar.firstWeekday = 2
+    return (0..<weeks).map { w in
+        let start = calendar.date(byAdding: .day, value: -7 * (weeks - 1 - w), to: monday) ?? monday
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+}
+
+/// What the diary says: days with turns out of the days so far, the busiest day, and the streak up to today
+struct DiaryStats {
+    var active = 0
+    var total = 0
+    var busiestKey: String?
+    var busiestTurns = 0
+    var streak = 0
+}
+
+func diaryStats(_ log: DayLog, now: Date) -> DiaryStats {
+    var stats = DiaryStats()
+    let today = dayKey(now)
+    let keys = diaryWeeks(now: now).flatMap { $0 }.map { dayKey($0) }.filter { $0 <= today }
+    stats.total = keys.count
+    for key in keys {
+        let turns = log[key]?.turns ?? 0
+        if turns > 0 { stats.active += 1 }
+        if turns > stats.busiestTurns {
+            stats.busiestTurns = turns
+            stats.busiestKey = key
+        }
+    }
+    // The streak counts back from today; today may have no turns yet, so an empty today does not break it
+    for key in keys.reversed() {
+        if (log[key]?.turns ?? 0) > 0 {
+            stats.streak += 1
+        } else if key != today {
+            break
+        }
+    }
+    return stats
+}
+
+/// The week panel, with two tabs. "This week": the week's counts, a bar for each day, that day's peak 5-hour
+/// usage, and the busiest chats. "Diary": twelve weeks as squares, the darker the busier.
 final class WeekView: NSView {
-    static let size = NSSize(width: 380, height: 500)
+    static let size = NSSize(width: 380, height: 540)
     private let log: DayLog
     private let usage: Usage?
     private let now: Date
     private let colorFor: (String) -> NSColor
+    var tab = 0 // 0 is "This week", 1 is "Diary"
     var onClose: (() -> Void)?
     override var isFlipped: Bool { true }
 
@@ -1280,36 +1326,74 @@ final class WeekView: NSView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    private var closeBox: NSRect { NSRect(x: bounds.width - 30, y: 14, width: 16, height: 16) }
+    private var closeBox: NSRect { NSRect(x: bounds.width - 30, y: 12, width: 16, height: 16) }
+    private var tabBoxes: [NSRect] {
+        [NSRect(x: 22, y: 10, width: 150, height: 28), NSRect(x: 180, y: 10, width: 150, height: 28)]
+    }
+    /// The tabs take the top of the panel; the content is drawn below them
+    private static let contentTop: CGFloat = 40
     private static let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     private static let turnColor = NSColor(hex: 0xF4A259)
     private static let allowedColor = NSColor(hex: 0x2F9E44)
     private static let ink = NSColor(hex: 0x3B2A20)
     private static let muted = NSColor(hex: 0x7A8192)
+    /// Her own colours, from no turns to the busiest: belly cream, then her body orange, then her darker stripes
+    private static let peach = ["EEE9E2", "FFE0B5", "F9B57A", "F4A259", "D9822B"]
+
+    private static func peachColor(_ level: Int) -> NSColor {
+        NSColor(hex: Int(peach[level], radix: 16) ?? 0)
+    }
+
+    private static func level(_ turns: Int) -> Int {
+        turns == 0 ? 0 : turns <= 5 ? 1 : turns <= 10 ? 2 : turns <= 15 ? 3 : 4
+    }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawTabs()
+        drawCross()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.translateBy(x: 0, y: Self.contentTop)
+        if tab == 0 { drawThisWeek() } else { drawDiary() }
+        context.restoreGState()
+    }
+
+    private func drawTabs() {
+        let names = ["This week", "Diary"]
+        for (i, box) in tabBoxes.enumerated() {
+            let selected = i == tab
+            (selected ? Self.turnColor : NSColor(hex: 0xE9ECF1)).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
+            centered(names[i], in: box, font: .systemFont(ofSize: 13, weight: .semibold),
+                     color: selected ? .white : Self.muted)
+        }
+    }
+
+    private func drawCross() {
+        let cross = closeBox.insetBy(dx: 3, dy: 3)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
+        path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
+        path.lineWidth = 1.6
+        Self.muted.setStroke()
+        path.stroke()
+    }
+
+    private func drawThisWeek() {
         let days = weekDates(containing: now)
         let keys = days.map { dayKey($0) }
         let today = dayKey(now)
         let totals = weekTotals(log, days: keys)
 
-        // Header: the week, what it adds up to, and a close cross
         let range = "\(Self.dayOfMonth(days[0])) to \(Self.dayOfMonth(days[6])) \(Self.monthName(days[6]))"
-        draw("Week of \(range)", at: NSPoint(x: 22, y: 16), font: .systemFont(ofSize: 16, weight: .semibold), color: Self.ink)
-        draw("\(totals.turns) turns across \(totals.chats.count) chats", at: NSPoint(x: 22, y: 38),
+        draw("Week of \(range)", at: NSPoint(x: 22, y: 6), font: .systemFont(ofSize: 16, weight: .semibold), color: Self.ink)
+        draw("\(totals.turns) turns across \(totals.chats.count) chats", at: NSPoint(x: 22, y: 28),
              font: .systemFont(ofSize: 12), color: Self.muted)
-        let cross = closeBox.insetBy(dx: 3, dy: 3)
-        let crossPath = NSBezierPath()
-        crossPath.move(to: NSPoint(x: cross.minX, y: cross.minY)); crossPath.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
-        crossPath.move(to: NSPoint(x: cross.maxX, y: cross.minY)); crossPath.line(to: NSPoint(x: cross.minX, y: cross.maxY))
-        crossPath.lineWidth = 1.6
-        Self.muted.setStroke()
-        crossPath.stroke()
 
         // Three counts, as tiles
         let tiles = [("Turns", totals.turns), ("Allowed", totals.allowed), ("Declined", totals.declined)]
         for (i, tile) in tiles.enumerated() {
-            let box = NSRect(x: 22 + CGFloat(i) * 116, y: 66, width: 106, height: 52)
+            let box = NSRect(x: 22 + CGFloat(i) * 116, y: 56, width: 106, height: 52)
             NSColor(hex: 0xEEF1F6).setFill()
             NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
             centered("\(tile.1)", in: NSRect(x: box.minX, y: box.minY + 7, width: box.width, height: 22),
@@ -1319,8 +1403,8 @@ final class WeekView: NSView {
         }
 
         // Each day: turns and approvals allowed as bars, and that day's peak 5-hour usage as a pill
-        draw("Each day", at: NSPoint(x: 22, y: 132), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
-        let base: CGFloat = 288
+        draw("Each day", at: NSPoint(x: 22, y: 122), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
+        let base: CGFloat = 278
         let slot = (bounds.width - 44) / 7
         let tallest = CGFloat(max(1, keys.compactMap { log[$0]?.turns }.max() ?? 1))
         let scale = 100 / tallest
@@ -1357,14 +1441,14 @@ final class WeekView: NSView {
         NSRect(x: 22, y: base, width: bounds.width - 44, height: 1).fill()
 
         // The busiest chats, each in its own colour
-        draw("Most active chats", at: NSPoint(x: 22, y: 330), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
+        draw("Most active chats", at: NSPoint(x: 22, y: 320), font: .systemFont(ofSize: 13, weight: .semibold), color: Self.ink)
         let rows = Array(totals.chats.prefix(4))
         if rows.isEmpty {
-            draw("Nothing recorded this week yet.", at: NSPoint(x: 22, y: 356), font: .systemFont(ofSize: 12), color: Self.muted)
+            draw("Nothing recorded this week yet.", at: NSPoint(x: 22, y: 346), font: .systemFont(ofSize: 12), color: Self.muted)
         }
         let most = CGFloat(max(1, rows.first?.turns ?? 1))
         for (i, chat) in rows.enumerated() {
-            let y = 354 + CGFloat(i) * 26
+            let y = 344 + CGFloat(i) * 26
             colorFor(chat.id).setFill()
             NSBezierPath(ovalIn: NSRect(x: 22, y: y + 4, width: 10, height: 10)).fill()
             draw(clip(chat.title, 20), at: NSPoint(x: 40, y: y), font: .systemFont(ofSize: 12, weight: .medium), color: Self.ink)
@@ -1375,21 +1459,114 @@ final class WeekView: NSView {
             fill.size.width = track.width * CGFloat(chat.turns) / most
             colorFor(chat.id).setFill()
             NSBezierPath(roundedRect: fill, xRadius: 3, yRadius: 3).fill()
-            centered("\(chat.turns)", in: NSRect(x: 336, y: y, width: 30, height: 16),
-                     font: .systemFont(ofSize: 11), color: Self.muted)
+            centered("\(chat.turns)", in: NSRect(x: 336, y: y, width: 30, height: 16), font: .systemFont(ofSize: 11), color: Self.muted)
         }
 
         // Her limit, from the same usage she shows above her
         if let usage {
             let resets = usage.weekResets.map { Self.resetText($0) } ?? "soon"
-            draw("Week limit: \(usage.week)% used, resets \(resets)", at: NSPoint(x: 22, y: 462),
+            draw("Week limit: \(usage.week)% used, resets \(resets)", at: NSPoint(x: 22, y: 452),
                  font: .systemFont(ofSize: 11), color: Self.muted)
+        }
+    }
+
+    private func drawDiary() {
+        let today = dayKey(now)
+        let weeks = diaryWeeks(now: now)
+        let stats = diaryStats(log, now: now)
+
+        draw("Mochi's diary", at: NSPoint(x: 22, y: 6), font: .systemFont(ofSize: 16, weight: .semibold), color: Self.ink)
+        draw("Every square is a day. The darker, the busier.", at: NSPoint(x: 22, y: 28),
+             font: .systemFont(ofSize: 12), color: Self.muted)
+
+        let cell: CGFloat = 21, gap: CGFloat = 5
+        let gx: CGFloat = 46, gy: CGFloat = 80
+        // Month names, above the first week of each month
+        var lastMonth = ""
+        for (w, week) in weeks.enumerated() {
+            let month = Self.monthName(week[0])
+            if Calendar.current.component(.day, from: week[0]) <= 7 && month != lastMonth {
+                lastMonth = month
+                draw(String(month.prefix(3)), at: NSPoint(x: gx + CGFloat(w) * (cell + gap), y: gy - 18),
+                     font: .systemFont(ofSize: 11, weight: .semibold), color: Self.ink)
+            }
+        }
+        // Weekday names, down the left
+        for (i, name) in ["Mon", "Wed", "Fri", "Sun"].enumerated() {
+            let row = [0, 2, 4, 6][i]
+            centered(name, in: NSRect(x: 18, y: gy + CGFloat(row) * (cell + gap), width: 26, height: cell),
+                     font: .systemFont(ofSize: 10), color: Self.muted)
+        }
+        // The squares
+        for (w, week) in weeks.enumerated() {
+            for (i, date) in week.enumerated() {
+                let key = dayKey(date)
+                let rect = NSRect(x: gx + CGFloat(w) * (cell + gap), y: gy + CGFloat(i) * (cell + gap), width: cell, height: cell)
+                if key > today {
+                    NSColor(hex: 0xC9D0DA).setStroke()
+                    let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+                    outline.lineWidth = 1.5
+                    outline.stroke()
+                    continue
+                }
+                let turns = log[key]?.turns ?? 0
+                Self.peachColor(Self.level(turns)).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+                if let busiest = stats.busiestKey, busiest == key {
+                    // The busiest day gets her outline and a little face
+                    Self.ink.setStroke()
+                    let frame = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+                    frame.lineWidth = 2
+                    frame.stroke()
+                    Self.ink.setFill()
+                    NSRect(x: rect.minX + 6, y: rect.minY + 7, width: 3, height: 3).fill()
+                    NSRect(x: rect.maxX - 9, y: rect.minY + 7, width: 3, height: 3).fill()
+                    NSRect(x: rect.minX + 7, y: rect.minY + 13, width: 7, height: 2).fill()
+                }
+            }
+        }
+
+        // Legend, then the stats as tiles
+        let legendY = gy + 7 * (cell + gap) + 10
+        draw("less", at: NSPoint(x: 22, y: legendY), font: .systemFont(ofSize: 11), color: Self.muted)
+        for i in 0..<5 {
+            Self.peachColor(i).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 58 + CGFloat(i) * 20, y: legendY + 2, width: 14, height: 14), xRadius: 4, yRadius: 4).fill()
+        }
+        draw("more", at: NSPoint(x: 164, y: legendY), font: .systemFont(ofSize: 11), color: Self.muted)
+
+        let busiestText: String
+        if let key = stats.busiestKey, let date = dayFormatter.date(from: key) {
+            busiestText = "\(Self.shortDay(date))"
+        } else {
+            busiestText = "none yet"
+        }
+        let tiles = [("Active days", "\(stats.active) of \(stats.total)"), ("Busiest", busiestText), ("Streak", "\(stats.streak) days")]
+        for (i, tile) in tiles.enumerated() {
+            let box = NSRect(x: 22 + CGFloat(i) * 116, y: 330, width: 106, height: 52)
+            NSColor(hex: 0xEEF1F6).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
+            centered(tile.1, in: NSRect(x: box.minX, y: box.minY + 7, width: box.width, height: 22),
+                     font: .systemFont(ofSize: 15, weight: .semibold), color: Self.ink)
+            centered(tile.0, in: NSRect(x: box.minX, y: box.minY + 31, width: box.width, height: 16),
+                     font: .systemFont(ofSize: 11), color: Self.muted)
+        }
+        if let key = stats.busiestKey, let date = dayFormatter.date(from: key) {
+            draw("Busiest day: \(Self.shortDay(date)) with \(stats.busiestTurns) turns.", at: NSPoint(x: 22, y: 400),
+                 font: .systemFont(ofSize: 12), color: Self.muted)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if closeBox.insetBy(dx: -6, dy: -6).contains(point) { onClose?() }
+        if closeBox.insetBy(dx: -6, dy: -6).contains(point) {
+            onClose?()
+            return
+        }
+        for (i, box) in tabBoxes.enumerated() where box.contains(point) {
+            tab = i
+            needsDisplay = true
+        }
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -1410,6 +1587,10 @@ final class WeekView: NSView {
 
     private static func monthName(_ date: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "MMMM"; f.locale = Locale(identifier: "en_US_POSIX"); return f.string(from: date)
+    }
+
+    private static func shortDay(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "EEE d MMM"; f.locale = Locale(identifier: "en_US_POSIX"); return f.string(from: date)
     }
 
     private static func resetText(_ date: Date) -> String {

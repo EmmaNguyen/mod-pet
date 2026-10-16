@@ -100,4 +100,26 @@ check("a file untouched for 10 days stays at 14 days", FileManager.default.fileE
 check("a file that is not .json is never deleted", FileManager.default.fileExists(atPath: oldText.path))
 try? FileManager.default.removeItem(at: tidy)
 
+// The diary: twelve weeks, the stats, and the streak
+var diaryParts = DateComponents()
+diaryParts.year = 2026; diaryParts.month = 10; diaryParts.day = 16; diaryParts.hour = 12
+let diaryNow = Calendar.current.date(from: diaryParts)!
+let diaryGrid = diaryWeeks(now: diaryNow)
+check("the diary has twelve weeks, Monday to Sunday", diaryGrid.count == 12 && diaryGrid.allSatisfy { $0.count == 7 })
+check("it starts on 27 July and ends on 18 October", dayKey(diaryGrid[0][0]) == "2026-07-27" && dayKey(diaryGrid[11][6]) == "2026-10-18")
+var diaryLog: DayLog = [:]
+for (day, turns) in [("2026-10-12", 9), ("2026-10-13", 12), ("2026-10-14", 8), ("2026-10-15", 19), ("2026-10-16", 15)] {
+    for _ in 0..<turns { recordTurn(&diaryLog, day: day, chatID: "garden", title: "Garden") }
+}
+let diarySum = diaryStats(diaryLog, now: diaryNow)
+check("active days count the days with turns", diarySum.active == 5 && diarySum.total == 82)
+check("the busiest day is the one with the most turns", diarySum.busiestKey == "2026-10-15" && diarySum.busiestTurns == 19)
+check("the streak runs back from today", diarySum.streak == 5)
+var gappedLog = diaryLog
+gappedLog["2026-10-14"] = nil
+check("a day with no turns breaks the streak", diaryStats(gappedLog, now: diaryNow).streak == 2)
+var quietTodayLog = diaryLog
+quietTodayLog["2026-10-16"] = nil
+check("a quiet today does not break the streak yet", diaryStats(quietTodayLog, now: diaryNow).streak == 4)
+
 print("ALL PASSED")
