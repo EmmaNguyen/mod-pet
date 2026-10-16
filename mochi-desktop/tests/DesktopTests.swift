@@ -122,4 +122,26 @@ var quietTodayLog = diaryLog
 quietTodayLog["2026-10-16"] = nil
 check("a quiet today does not break the streak yet", diaryStats(quietTodayLog, now: diaryNow).streak == 4)
 
+// Mochi's thoughts: what she says, and when
+check("a time shows as hours and minutes, or minutes", timeLeftText(17_520) == "4 h 52 min" && timeLeftText(360) == "6 min")
+let thinkNow = Date(timeIntervalSince1970: 1_800_000_000)
+let calmUsage = Usage(fiveHour: 20, week: 40, at: 0, fiveHourResets: thinkNow.addingTimeInterval(17_520))
+let timeThought = pickThought(usage: calmUsage, readyChats: 0, now: thinkNow, roll: 0, factIndex: 0)
+check("with time left, she says how long is left in the window",
+      timeThought?.kind == .timeLeft && timeThought?.big == "4 h 52 min left")
+let tiredUsage = Usage(fiveHour: 97, week: 40, at: 0, fiveHourResets: thinkNow.addingTimeInterval(360))
+let lowThought = pickThought(usage: tiredUsage, readyChats: 0, now: thinkNow, roll: 0, factIndex: 0)
+check("near the limit, she says so and suggests a stretch",
+      lowThought?.kind == .lowTime && lowThought?.big == "6 min left" && lowThought?.small.contains("97%") == true)
+let pastReset = Usage(fiveHour: 20, week: 40, at: 0, fiveHourResets: thinkNow.addingTimeInterval(-60))
+check("a window that has already reset gives no time thought",
+      pickThought(usage: pastReset, readyChats: 0, now: thinkNow, roll: 0, factIndex: 0)?.kind == .fact)
+check("with no usage and no ready chats, she shares a fact",
+      pickThought(usage: nil, readyChats: 0, now: thinkNow, roll: 0.5, factIndex: 1)?.small == funFacts[1])
+let readyThought = pickThought(usage: nil, readyChats: 3, now: thinkNow, roll: 0, factIndex: 0)
+check("ready chats are counted in the words", readyThought?.kind == .ready && readyThought?.big == "3 chats ready for you")
+check("one ready chat is singular", pickThought(usage: nil, readyChats: 1, now: thinkNow, roll: 0, factIndex: 0)?.big == "1 chat ready for you")
+check("the roll picks among the thoughts that could be said", pickThought(usage: calmUsage, readyChats: 0, now: thinkNow, roll: 0.99, factIndex: 0)?.kind == .fact)
+check("a fact index past the end is clamped", pickThought(usage: nil, readyChats: 0, now: thinkNow, roll: 0, factIndex: 99)?.small == funFacts.last)
+
 print("ALL PASSED")

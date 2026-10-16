@@ -1598,6 +1598,152 @@ final class WeekView: NSView {
     }
 }
 
+// MARK: - Mochi's little thoughts: a bubble now and then, about her time left or a fact
+
+/// One thought: what it says in bold, what it says under that, and which icon it wears
+struct Thought: Equatable {
+    enum Kind: Equatable { case timeLeft, lowTime, ready, fact }
+    let kind: Kind
+    let big: String
+    let small: String
+}
+
+/// Facts for the thoughts. Check each one before it ships.
+let funFacts = [
+    "Cats sleep 12 to 16 hours a day. I'm on duty anyway.",
+    "Octopuses have three hearts. Plenty of room for a nap.",
+    "Honey does not spoil. Edible honey was found in Egyptian tombs.",
+]
+
+/// A time as the bubble shows it: "4 h 52 min" or "6 min"
+func timeLeftText(_ seconds: Double) -> String {
+    let minutes = Int(seconds / 60)
+    return minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min"
+}
+
+/// The thought to show, or nil when there is nothing to say. `roll` (0 to 1) picks among the thoughts that
+/// could be said now, and `factIndex` picks the fact. Her time left shows only while the 5-hour window has
+/// a reset still ahead of `now`.
+func pickThought(usage: Usage?, readyChats: Int, now: Date, roll: Double, factIndex: Int) -> Thought? {
+    var options: [Thought] = []
+    if let usage, let resets = usage.fiveHourResets, resets > now {
+        let left = timeLeftText(resets.timeIntervalSince(now))
+        if usage.fiveHour >= 90 {
+            options.append(Thought(kind: .lowTime, big: "\(left) left", small: "at \(usage.fiveHour)% of your 5-hour window. Maybe stretch?"))
+        } else {
+            options.append(Thought(kind: .timeLeft, big: "\(left) left", small: "in your 5-hour window. Plenty, go on!"))
+        }
+    }
+    if readyChats > 0 {
+        options.append(Thought(kind: .ready, big: "\(readyChats) chat\(readyChats == 1 ? "" : "s") ready for you",
+                               small: "I'll keep the rest warm. No rush."))
+    }
+    if !funFacts.isEmpty {
+        let index = min(max(factIndex, 0), funFacts.count - 1)
+        options.append(Thought(kind: .fact, big: "Did you know?", small: funFacts[index]))
+    }
+    guard !options.isEmpty else { return nil }
+    return options[min(options.count - 1, Int(max(0, min(roll, 0.999)) * Double(options.count)))]
+}
+
+/// The bubble above her: a white thought with its icon, two lines of text, and three dots leading to her
+final class ThoughtView: NSView {
+    static let size = NSSize(width: 330, height: 128)
+    let thought: Thought
+    var onDismiss: (() -> Void)?
+    override var isFlipped: Bool { true }
+
+    init(thought: Thought) {
+        self.thought = thought
+        super.init(frame: NSRect(origin: .zero, size: Self.size))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    private var accent: NSColor {
+        switch thought.kind {
+        case .timeLeft: return NSColor(hex: 0x2F9E44)
+        case .lowTime: return NSColor(hex: 0xE03131)
+        case .ready: return NSColor(hex: 0x1C7ED6)
+        case .fact: return NSColor(hex: 0xF4A259)
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let body = NSRect(x: 2, y: 2, width: bounds.width - 4, height: 92)
+        let shape = NSBezierPath(roundedRect: body, xRadius: 24, yRadius: 24)
+        NSColor.white.setFill()
+        shape.fill()
+        NSColor(hex: 0xE6D5B8).setStroke()
+        shape.lineWidth = 2
+        shape.stroke()
+
+        // The icon, in a soft circle of its own colour
+        accent.withAlphaComponent(0.22).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 20, y: body.midY - 24, width: 48, height: 48)).fill()
+        drawIcon(center: NSPoint(x: 44, y: body.midY))
+
+        let big = NSAttributedString(string: thought.big, attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor(hex: 0x3B2A20),
+        ])
+        big.draw(at: NSPoint(x: 84, y: 22))
+        let small = NSMutableParagraphStyle()
+        small.lineBreakMode = .byWordWrapping
+        NSAttributedString(string: thought.small, attributes: [
+            .font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: NSColor(hex: 0x8A7866), .paragraphStyle: small,
+        ]).draw(in: NSRect(x: 84, y: 46, width: body.width - 104, height: 40))
+
+        // Three dots leading down to her, the largest nearest the bubble
+        NSColor.white.setFill()
+        NSColor(hex: 0xE6D5B8).setStroke()
+        for (radius, y, dx) in [(6.5, 103.0, 0.0), (4.5, 116.0, -8.0), (2.5, 125.0, -14.0)] {
+            let dot = NSBezierPath(ovalIn: NSRect(x: bounds.width * 0.4 + dx - radius, y: y - radius, width: radius * 2, height: radius * 2))
+            dot.lineWidth = 1.5
+            dot.fill()
+            dot.stroke()
+        }
+    }
+
+    private func drawIcon(center c: NSPoint) {
+        accent.setFill()
+        accent.setStroke()
+        switch thought.kind {
+        case .timeLeft:
+            let clock = NSBezierPath(ovalIn: NSRect(x: c.x - 10, y: c.y - 10, width: 20, height: 20))
+            clock.lineWidth = 2.5
+            clock.stroke()
+            let hands = NSBezierPath()
+            hands.move(to: c); hands.line(to: NSPoint(x: c.x, y: c.y - 6))
+            hands.move(to: c); hands.line(to: NSPoint(x: c.x + 5, y: c.y + 2))
+            hands.lineWidth = 2.5
+            hands.stroke()
+        case .lowTime:
+            let flame = NSBezierPath()
+            flame.move(to: NSPoint(x: c.x, y: c.y - 11))
+            flame.line(to: NSPoint(x: c.x + 9, y: c.y + 2)); flame.line(to: NSPoint(x: c.x + 4, y: c.y + 10))
+            flame.line(to: NSPoint(x: c.x - 4, y: c.y + 10)); flame.line(to: NSPoint(x: c.x - 9, y: c.y + 2))
+            flame.close()
+            flame.fill()
+        case .ready:
+            NSBezierPath(roundedRect: NSRect(x: c.x - 11, y: c.y - 9, width: 22, height: 16), xRadius: 6, yRadius: 6).fill()
+        case .fact:
+            let star = NSBezierPath()
+            for k in 0..<10 {
+                let r: CGFloat = k % 2 == 0 ? 11 : 5
+                let a = -CGFloat.pi / 2 + CGFloat(k) * CGFloat.pi / 5
+                let point = NSPoint(x: c.x + r * cos(a), y: c.y + r * sin(a))
+                if k == 0 { star.move(to: point) } else { star.line(to: point) }
+            }
+            star.close()
+            star.fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) { onDismiss?() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 // MARK: - Plan usage, as the Claude app last saw it
 
 struct UsageFile: Decodable {
@@ -1858,6 +2004,9 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var dayLogSavedAt = Date.distantPast
     /// The open "This week" panel, if any
     var weekPanel: NSPanel?
+    /// Her thought bubble, when one is up, and when she may next think out loud
+    var thoughtPanel: NSPanel?
+    var nextThoughtAt = Date().addingTimeInterval(5 * 60)
     var approvals: [String: NSPanel] = [:]
     /// The card view inside each approval panel, so its countdown can be updated
     var approvalViews: [String: ApprovalView] = [:]
@@ -1988,6 +2137,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
+            if let thought = self?.thoughtPanel { self?.placeThought(thought) }
             self?.placeCards()
         }
 
@@ -2063,6 +2213,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
             notify(title: event.headline(chat.title), body: event.summary, link: chat.link)
         }
         syncApprovals()
+        if view.status == .needsInput { hideThought() }
+        maybeThink()
     }
 
     /// Opens the chat that has waited longest for your OK; says so when none is waiting
@@ -2392,6 +2544,57 @@ func playAtTwoThirds(_ sound: NSSound?) {
             testChat = nil
         }
         look()
+    }
+
+    /// Every 20 to 40 minutes she thinks out loud, when nothing needs you and she is not quiet. Otherwise she
+    /// tries again in two minutes.
+    func maybeThink() {
+        let now = Date()
+        guard now >= nextThoughtAt, thoughtPanel == nil else { return }
+        let quiet = quietAt(until: quietUntil, now: now.timeIntervalSince1970)
+        guard approvals.isEmpty, view.status != .needsInput, !quiet else {
+            nextThoughtAt = now.addingTimeInterval(120)
+            return
+        }
+        nextThoughtAt = now.addingTimeInterval(Double.random(in: 20...40) * 60)
+        let ready = chats.filter { $0.status == .ready && $0.isOpen && $0.isRecent }.count
+        guard let thought = pickThought(usage: usage, readyChats: ready, now: now,
+                                        roll: Double.random(in: 0..<1), factIndex: Int.random(in: 0..<funFacts.count)) else { return }
+        showThought(thought)
+    }
+
+    /// Her bubble: it fades in above her, stays about six seconds, and goes when you click it
+    func showThought(_ thought: Thought) {
+        let content = ThoughtView(thought: thought)
+        content.onDismiss = { [weak self] in self?.hideThought() }
+        let panel = floatingPanel(size: ThoughtView.size)
+        panel.hasShadow = true
+        panel.contentView = content
+        placeThought(panel)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.25; panel.animator().alphaValue = 1 }
+        thoughtPanel = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self, weak panel] in
+            if let panel, self?.thoughtPanel === panel { self?.hideThought() }
+        }
+    }
+
+    func hideThought() {
+        guard let panel = thoughtPanel else { return }
+        thoughtPanel = nil
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; panel.animator().alphaValue = 0 }) { panel.orderOut(nil) }
+    }
+
+    /// Centred above her, kept on the screen
+    func placeThought(_ panel: NSPanel) {
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let size = panel.frame.size
+        var x = window.frame.midX - size.width / 2
+        var y = window.frame.maxY + 2
+        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
+        y = min(max(y, screen.minY + 4), screen.maxY - size.height - 4)
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     /// The scroll beside her: opens "This week", or closes it when it is open
