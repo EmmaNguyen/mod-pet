@@ -168,6 +168,29 @@ func pruneOldFiles(in folder: URL, olderThan days: Double) -> Int {
     return deleted
 }
 
+/// Tools that only look at things: a request for these is not shown as a card, and does not ring
+let readOnlyTools: Set<String> = ["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite", "ToolSearch"]
+/// Commands that only look at things, and the git commands that do
+let readOnlyCommands: Set<String> = ["ls", "cat", "head", "tail", "grep", "rg", "find", "pwd", "echo", "wc", "which",
+                                     "stat", "file", "diff", "tree", "du", "df", "date", "whoami", "type"]
+let readOnlyGit: Set<String> = ["status", "log", "diff", "show", "branch", "remote"]
+
+/// Whether a request needs you, judged from what Claude is waiting to do (the same words as its card):
+/// a command or tool that changes something does; one that only looks does not. Questions always do.
+func needsYou(waiting: String) -> Bool {
+    if waiting.hasPrefix("Run: ") {
+        let words = waiting.dropFirst(5).split(separator: " ").map(String.init)
+        guard let first = words.first else { return true }
+        if readOnlyCommands.contains(first) { return false }
+        if first == "git", words.count > 1, readOnlyGit.contains(words[1]) { return false }
+        return true
+    }
+    if waiting.hasPrefix("Use ") {
+        return !readOnlyTools.contains(String(waiting.dropFirst(4)))
+    }
+    return true
+}
+
 /// The kinds of thing Mochi may pop up for: a chat that needs your OK, finished work, a usage warning, or one of her thoughts
 enum Notice { case approval, finished, usage, thought }
 
@@ -2187,7 +2210,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 if seen.insert(key).inserted, !firstLook { fresh.append((event, chat)) }
             }
             // A chat that just started waiting for you
-            if chat.status == .needsInput, needed.insert(chat.id).inserted, !firstLook {
+            if chat.status == .needsInput, needsYou(waiting: chat.waiting), needed.insert(chat.id).inserted, !firstLook {
                 let why = chat.waiting.isEmpty ? "Waiting for your OK" : chat.waiting
                 // With Allow and Deny to answer on, their card carries the question instead
                 if !approveHere || chat.requestId.isEmpty {
@@ -2355,6 +2378,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// A notification card beside Mochi; it fades out on its own after a while
     func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5, dot: NSColor? = nil) {
+        mochiLog("card: \(title) | \(body)")
         let panel = floatingPanel(size: CardView.size)
         panel.acceptsMouseMovedEvents = true // so the title underlines under the pointer
         panel.hasShadow = false // the glass draws its own soft edge
@@ -2439,7 +2463,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let now = Date().timeIntervalSince1970 * 1000
         let asking = approveHere ? chats.filter {
             $0.status == .needsInput && !$0.requestId.isEmpty && now - $0.askedAt < Self.answerWindow
-                && !answered.contains($0.requestId)
+                && needsYou(waiting: $0.waiting) && !answered.contains($0.requestId)
         } : []
         answered = answered.filter { id in chats.contains { $0.requestId == id } }
         let ids = Set(asking.map { $0.requestId })
@@ -2586,6 +2610,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// Her bubble: it fades in above her, stays about six seconds, and goes when you click it
     func showThought(_ thought: Thought) {
+        mochiLog("thought: \(thought.big) | \(thought.small)")
         let content = ThoughtView(thought: thought)
         content.onDismiss = { [weak self] in self?.hideThought() }
         let panel = floatingPanel(size: ThoughtView.size)

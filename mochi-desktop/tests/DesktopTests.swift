@@ -150,4 +150,11 @@ check("finished work, usage and thoughts stay quiet when only approvals are want
       !noticeAllowed(.finished, onlyApprovals: true) && !noticeAllowed(.usage, onlyApprovals: true) && !noticeAllowed(.thought, onlyApprovals: true))
 check("everything pops up when only approvals is off", noticeAllowed(.finished, onlyApprovals: false) && noticeAllowed(.usage, onlyApprovals: false) && noticeAllowed(.thought, onlyApprovals: false))
 
+// Which requests need you: changes do, looking does not
+check("a command that changes something needs you", needsYou(waiting: "Run: npm publish"))
+check("a command that only looks does not", !needsYou(waiting: "Run: ls -la") && !needsYou(waiting: "Run: cat notes.md"))
+check("read-only git does not, but a push does", !needsYou(waiting: "Run: git status") && needsYou(waiting: "Run: git push"))
+check("reading and searching files do not", !needsYou(waiting: "Use Read") && !needsYou(waiting: "Use Grep"))
+check("writing a tool or an edit does, and so do questions", needsYou(waiting: "Use create_issue") && needsYou(waiting: "Edit login.ts") && needsYou(waiting: "Asks: Which database?"))
+
 print("ALL PASSED")
