@@ -21,7 +21,8 @@ Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code)
 - **Shortcuts from any app.** F5 opens a quick note, and F6 starts talking, even when Mochi is not in front. F7 allows and F8 denies the request on her card. If more than one chat is waiting, a key answers none of them, and she asks you to click the card you mean. F9 allows it and switches that session to Accept edits, but only from Manual, and only for that session. F10 allows it and switches that session to Auto, from Manual or Accept edits, and only for that session. Auto lets a model decide which requests to approve. While a live chat is in Auto, gold sparkles appear around her. They go away when the mode changes. Switching modes needs a chat started after the plugin was updated: for an older chat, Mochi says so, and Allow and Deny still work. To try the keys without a real request, right-click her and choose **Test the approval keys**: a pretend request appears for 20 seconds, the keys answer it, and nothing is approved. On a Mac the F-keys control brightness, volume and media unless you hold Fn, so Control-Option-1 to 4 give the same four answers: 1 allows, 2 denies, 3 accepts edits, 4 switches to Auto. On a Mac whose F-keys control brightness or volume, hold Fn with them.
 - **Jump to the chat that needs you.** Option-J, or a click on her red badge, opens the chat that has waited longest for your OK.
 - **A colour for each chat.** Every chat has its own coloured dot on its cards and its line in the list, so you can tell chats apart at a glance.
-- **Tidy by herself.** Status files from chats untouched for a week are deleted at launch and every hour, so she stays quick.
+- **Quiet for an hour.** Right-click her and choose **Quiet for 1 hour** to silence her sounds, and the cards and Mac notifications for finished work, for an hour. Questions and approval cards still show, and the same item ends the quiet early.
+- **Tidy by herself.** Status files from chats untouched for a week, and answer files untouched for two weeks, are deleted at launch and every hour, so she stays quick.
 - **This week.** A round scroll button beside her opens a summary of the week: turns and approvals each day, that day's peak 5-hour usage, the most active chats, and her week limit. Mochi keeps a small daily count in `~/.claude/mochi/days.json`, with no chat content.
 - **Skins.** Six looks, chosen from her right-click menu under **Skin**.
 - **Mochi Studio.** A small app to change her body, eyes, accessory and name, with a live preview. It saves to the same file Mochi reads, opens with the look you saved, and previews her in the skin chosen in Mochi's menu, drawn the way Mochi draws it. Undo and redo (⌘Z and ⇧⌘Z) step back through every change.
@@ -105,6 +106,7 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 10. **Quick note and talk.** Two buttons under Mochi: type a note or speak it, and start a session with it.
 11. **Allow or deny from Mochi, shortcuts, and undo.** Answer a chat's request from her card, open the note or talk from any app, and undo your painting in Mochi Studio.
 12. **Jump, colours, and tidying.** A shortcut and badge click to reach the chat waiting for you, a colour dot for each chat, and old status files cleaned up.
+13. **Quiet hour, and tidier files.** A right-click item that silences her for an hour, and old answer files cleaned up along with the status files.
 
 ## Roadmap
 

@@ -80,4 +80,24 @@ check("a saved log reads back the same", (try? JSONDecoder().decode(DayLog.self,
 let olderRecord = try! JSONDecoder().decode(DayRecord.self, from: #"{"turns":4}"#.data(using: .utf8)!)
 check("an older record with missing keys still reads", olderRecord.turns == 4 && olderRecord.allowed == 0 && olderRecord.chats.isEmpty)
 
+// Quiet for an hour: quiet until its end, and never when it is not set
+check("an hour of quiet is quiet until the hour is up", quietAt(until: 3_600, now: 3_599) && !quietAt(until: 3_600, now: 3_600))
+check("with no quiet set, she is never quiet", !quietAt(until: 0, now: 1_000))
+
+// Answer and session files are tidied: sessions after a week, answers after two weeks, and only .json files
+let tidy = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-tidy-test-\(UUID().uuidString)")
+try! FileManager.default.createDirectory(at: tidy, withIntermediateDirectories: true)
+let oldAnswer = tidy.appendingPathComponent("old.json"), midAnswer = tidy.appendingPathComponent("mid.json")
+let oldText = tidy.appendingPathComponent("old.txt")
+for file in [oldAnswer, midAnswer, oldText] { FileManager.default.createFile(atPath: file.path, contents: Data("{}".utf8)) }
+let daysAgo: (Int) -> Date = { Date().addingTimeInterval(-Double($0) * 86_400) }
+try! FileManager.default.setAttributes([.modificationDate: daysAgo(15)], ofItemAtPath: oldAnswer.path)
+try! FileManager.default.setAttributes([.modificationDate: daysAgo(10)], ofItemAtPath: midAnswer.path)
+try! FileManager.default.setAttributes([.modificationDate: daysAgo(30)], ofItemAtPath: oldText.path)
+let removed = pruneOldFiles(in: tidy, olderThan: 14)
+check("a file untouched for 15 days goes at 14 days", removed == 1 && !FileManager.default.fileExists(atPath: oldAnswer.path))
+check("a file untouched for 10 days stays at 14 days", FileManager.default.fileExists(atPath: midAnswer.path))
+check("a file that is not .json is never deleted", FileManager.default.fileExists(atPath: oldText.path))
+try? FileManager.default.removeItem(at: tidy)
+
 print("ALL PASSED")

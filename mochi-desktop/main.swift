@@ -153,21 +153,37 @@ func drawDot(_ color: NSColor, at center: NSPoint) {
     NSBezierPath(ovalIn: NSRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)).fill()
 }
 
-/// The plugin's reports never delete themselves: files untouched for a week are thrown away
-func pruneOldSessions(olderThan days: Double = 7) {
+/// Deletes the .json files in a folder that have not been changed for `days` days. Returns how many it deleted.
+@discardableResult
+func pruneOldFiles(in folder: URL, olderThan days: Double) -> Int {
     let fm = FileManager.default
     let cutoff = Date().addingTimeInterval(-days * 24 * 3600)
-    let files = (try? fm.contentsOfDirectory(at: sessionsFolder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    var deleted = 0
     for url in files where url.pathExtension == "json" {
         guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
               modified < cutoff else { continue }
-        try? fm.removeItem(at: url)
+        if (try? fm.removeItem(at: url)) != nil { deleted += 1 }
     }
+    return deleted
+}
+
+/// Whether she is quiet at `now` (seconds since 1970): quiet until the time she was set to, and never when that is 0
+func quietAt(until: Double, now: Double) -> Bool { now < until }
+
+/// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
+/// file after two weeks, so Mochi's files stay small
+func pruneOldSessions() {
+    pruneOldFiles(in: sessionsFolder, olderThan: 7)
+    pruneOldFiles(in: answersFolder, olderThan: 14)
 }
 
 let icons = ["turn": "✓", "helper": "•", "task": "⚙", "routine": "⏰", "message": "✉"]
 let sessionsFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi/sessions")
+/// Mochi's answer to each chat's Allow or Deny, one file per chat
+let answersFolder = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".claude/mochi/answers")
 /// The plugin's side of Allow and Deny: Mochi's presence, and the answers she writes for a chat
 let mochiFolder = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/mochi")
@@ -1695,8 +1711,15 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         set { UserDefaults.standard.set(newValue, forKey: "needsSound") }
     }
 
-    /// Mochi's sounds play at a fifth of the Mac's volume
+/// When she stops being quiet, in seconds since 1970. 0 when she is not quiet.
+var quietUntil: Double {
+    get { UserDefaults.standard.double(forKey: "quietUntil") }
+    set { UserDefaults.standard.set(newValue, forKey: "quietUntil") }
+}
+
+/// Mochi's sounds play at a fifth of the Mac's volume, and not at all while she is quiet
 func playAtTwoThirds(_ sound: NSSound?) {
+    guard !quietAt(until: quietUntil, now: Date().timeIntervalSince1970) else { return }
     sound?.volume = 1.0 / 5.0
     sound?.play()
 }
@@ -1842,18 +1865,20 @@ func playAtTwoThirds(_ sound: NSSound?) {
             dayLogSavedAt = Date()
         }
 
+        // While she is quiet, finished work gets no card, sound or Mac notification; the count still goes up
+        let quiet = quietAt(until: quietUntil, now: Date().timeIntervalSince1970)
         if !fresh.isEmpty {
             view.unread += fresh.count
             // A card beside Mochi for every new thing, oldest first so the newest lands on top
-            for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) {
+            for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where !quiet {
                 let color = event.text == "Stopped" ? Status.blocked.color : chat.status.color
                 showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link,
                          dot: chatColor(chat.id))
             }
-            playAtTwoThirds(NSSound(named: "Pop"))
+            if !quiet { playAtTwoThirds(NSSound(named: "Pop")) }
         }
         // One Mac notification per new event, oldest first
-        for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) {
+        for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where !quiet {
             notify(title: event.headline(chat.title), body: event.summary, link: chat.link)
         }
         syncApprovals()
@@ -2588,6 +2613,11 @@ final class NotePanel: NSPanel {
             item.state = name == needsSound ? .on : .off
         }
         soundItem.submenu = soundMenu
+        let now = Date().timeIntervalSince1970
+        let quietTitle = quietAt(until: quietUntil, now: now)
+            ? "Sounds back on (quiet until \(Date(timeIntervalSince1970: quietUntil).formatted(date: .omitted, time: .shortened)))"
+            : "Quiet for 1 hour"
+        menu.addItem(withTitle: quietTitle, action: #selector(menuToggleQuiet), keyEquivalent: "").target = self
         let login = menu.addItem(withTitle: "Open at login", action: #selector(menuToggleLogin), keyEquivalent: "")
         login.target = self
         login.state = opensAtLogin ? .on : .off
@@ -2613,6 +2643,17 @@ final class NotePanel: NSPanel {
     @objc func menuPickSound(_ item: NSMenuItem) {
         needsSound = item.title
         playNeedsSound()
+    }
+
+    /// Starts or ends an hour of quiet: no sounds, and no cards or Mac notifications for finished work
+    @objc func menuToggleQuiet() {
+        if quietAt(until: quietUntil, now: Date().timeIntervalSince1970) {
+            quietUntil = 0
+            mochiLog("quiet: ended early from the menu")
+        } else {
+            quietUntil = Date().timeIntervalSince1970 + 3600
+            mochiLog("quiet: for an hour, from the menu")
+        }
     }
 
     @objc func menuNotifications() { if !bubble.isVisible { toggleNotifications() } }
