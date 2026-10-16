@@ -144,4 +144,10 @@ check("one ready chat is singular", pickThought(usage: nil, readyChats: 1, now: 
 check("the roll picks among the thoughts that could be said", pickThought(usage: calmUsage, readyChats: 0, now: thinkNow, roll: 0.99, factIndex: 0)?.kind == .fact)
 check("a fact index past the end is clamped", pickThought(usage: nil, readyChats: 0, now: thinkNow, roll: 0, factIndex: 99)?.small == funFacts.last)
 
+// What may pop up: with "only tell me when something needs my approval" on, only approvals
+check("approvals always pop up", noticeAllowed(.approval, onlyApprovals: true) && noticeAllowed(.approval, onlyApprovals: false))
+check("finished work, usage and thoughts stay quiet when only approvals are wanted",
+      !noticeAllowed(.finished, onlyApprovals: true) && !noticeAllowed(.usage, onlyApprovals: true) && !noticeAllowed(.thought, onlyApprovals: true))
+check("everything pops up when only approvals is off", noticeAllowed(.finished, onlyApprovals: false) && noticeAllowed(.usage, onlyApprovals: false) && noticeAllowed(.thought, onlyApprovals: false))
+
 print("ALL PASSED")

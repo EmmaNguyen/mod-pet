@@ -168,6 +168,14 @@ func pruneOldFiles(in folder: URL, olderThan days: Double) -> Int {
     return deleted
 }
 
+/// The kinds of thing Mochi may pop up for: a chat that needs your OK, finished work, a usage warning, or one of her thoughts
+enum Notice { case approval, finished, usage, thought }
+
+/// Whether a notice may pop up. With "only tell me when something needs my approval" on, only approvals do.
+func noticeAllowed(_ notice: Notice, onlyApprovals: Bool) -> Bool {
+    notice == .approval || !onlyApprovals
+}
+
 /// Whether she is quiet at `now` (seconds since 1970): quiet until the time she was set to, and never when that is 0
 func quietAt(until: Double, now: Double) -> Bool { now < until }
 
@@ -2026,6 +2034,12 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var cards: [NSPanel] = []
     static let maxCards = 5
 
+    /// On by default: she only pops up for a chat that needs your OK. Finished work, usage warnings and her
+    /// thoughts still go to her list and her pill, not to a card, sound or Mac notification.
+    var onlyApprovals: Bool {
+        get { UserDefaults.standard.object(forKey: "onlyApprovals") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "onlyApprovals") }
+    }
     /// Mac notifications are on unless you switch them off in her menu
     var macNotifications: Bool {
         get { UserDefaults.standard.object(forKey: "macNotifications") as? Bool ?? false } // cards beside Mochi instead
@@ -2105,7 +2119,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         window.orderFrontRegardless()
 
         view.onClick = { [weak self] in self?.toggleNotifications() }
-        view.onUsageClick = { [weak self] in self?.showUsageDetails() }
+        view.onUsageClick = { [weak self] in
+            mochiLog("usage pill clicked")
+            self?.showUsageDetails()
+        }
         view.onQuickNote = { [weak self] in self?.toggleNote() }
         view.onTalk = { [weak self] in self?.toggleTalk() }
         view.onScroll = { [weak self] in self?.toggleWeek() }
@@ -2196,20 +2213,22 @@ func playAtTwoThirds(_ sound: NSSound?) {
             dayLogSavedAt = Date()
         }
 
-        // While she is quiet, finished work gets no card, sound or Mac notification; the count still goes up
+        // While she is quiet, or only approvals are wanted, finished work gets no card, sound or Mac notification;
+        // the count still goes up
         let quiet = quietAt(until: quietUntil, now: Date().timeIntervalSince1970)
+        let finishedShows = !quiet && noticeAllowed(.finished, onlyApprovals: onlyApprovals)
         if !fresh.isEmpty {
             view.unread += fresh.count
             // A card beside Mochi for every new thing, oldest first so the newest lands on top
-            for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where !quiet {
+            for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where finishedShows {
                 let color = event.text == "Stopped" ? Status.blocked.color : chat.status.color
                 showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link,
                          dot: chatColor(chat.id))
             }
-            if !quiet { playAtTwoThirds(NSSound(named: "Pop")) }
+            if finishedShows { playAtTwoThirds(NSSound(named: "Pop")) }
         }
         // One Mac notification per new event, oldest first
-        for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where !quiet {
+        for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where finishedShows {
             notify(title: event.headline(chat.title), body: event.summary, link: chat.link)
         }
         syncApprovals()
@@ -2240,20 +2259,21 @@ func playAtTwoThirds(_ sound: NSSound?) {
         func level(_ percent: Int) -> Int { percent >= 100 ? 100 : percent >= 80 ? 80 : 0 }
         let five = level(now.fiveHour), week = level(now.week)
         if isFirst { warnedFiveHour = five; warnedWeek = week; wasBlocked = now.blocked != nil; return } // no warning for what was already so at launch
+        let usageShows = noticeAllowed(.usage, onlyApprovals: onlyApprovals)
         // You ran out: say when you can continue
-        if let back = now.backText, !wasBlocked {
+        if usageShows, let back = now.backText, !wasBlocked {
             showCard(title: "⏳ \(now.blocked?.what ?? "Limit") reached", body: back,
                      color: Usage.color(100), link: nil)
             warnedFiveHour = max(warnedFiveHour, five); warnedWeek = max(warnedWeek, week)
-        } else if five > warnedFiveHour, five < 100 {
+        } else if usageShows, five > warnedFiveHour, five < 100 {
             showCard(title: "⚠️ 5-hour usage at \(now.fiveHour)%", body: "Week: \(now.week)% used",
                      color: Usage.color(now.fiveHour), link: nil)
-        } else if week > warnedWeek, week < 100 {
+        } else if usageShows, week > warnedWeek, week < 100 {
             showCard(title: "⚠️ Weekly usage at \(now.week)%",
                      body: "5-hour window: \(now.fiveHour)% used", color: Usage.color(now.week), link: nil)
         }
         // The limit lifted: you can continue
-        if wasBlocked, now.blocked == nil {
+        if usageShows, wasBlocked, now.blocked == nil {
             showCard(title: "✅ Claude is back", body: "Your usage reset. You can continue!",
                      color: Status.ready.color, link: nil)
             playAtTwoThirds(NSSound(named: "Glass"))
@@ -2324,6 +2344,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         bubbleView.lines = lines
         bubbleView.accent = Usage.color(worst)
         showBubble()
+        mochiLog("usage bubble shown: frame \(bubble.frame), on screen \(bubble.screen?.visibleFrame ?? .zero)")
         // The usage panel closes on its own a few seconds after the click
         hideBubble?.invalidate()
         hideBubble = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
@@ -2552,7 +2573,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let now = Date()
         guard now >= nextThoughtAt, thoughtPanel == nil else { return }
         let quiet = quietAt(until: quietUntil, now: now.timeIntervalSince1970)
-        guard approvals.isEmpty, view.status != .needsInput, !quiet else {
+        guard approvals.isEmpty, view.status != .needsInput, !quiet, noticeAllowed(.thought, onlyApprovals: onlyApprovals) else {
             nextThoughtAt = now.addingTimeInterval(120)
             return
         }
@@ -2973,6 +2994,9 @@ final class NotePanel: NSPanel {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
+        let onlyItem = menu.addItem(withTitle: "Only tell me when something needs my approval", action: #selector(menuToggleOnlyApprovals), keyEquivalent: "")
+        onlyItem.target = self
+        onlyItem.state = onlyApprovals ? .on : .off
         menu.addItem(withTitle: "Move to bottom-right corner", action: #selector(menuReset), keyEquivalent: "").target = self
         let skinItem = menu.addItem(withTitle: "Skin", action: nil, keyEquivalent: "")
         let skinMenu = NSMenu()
@@ -3016,6 +3040,12 @@ final class NotePanel: NSPanel {
     @objc func menuToggleApprove() { approveHere.toggle(); syncApprovals() }
 
     @objc func menuToggleLogin() { setOpensAtLogin(!opensAtLogin) }
+
+    /// Only approvals pop up, or everything: finished work, usage warnings and her thoughts too
+    @objc func menuToggleOnlyApprovals() {
+        onlyApprovals.toggle()
+        mochiLog("notices: only approvals \(onlyApprovals ? "on" : "off")")
+    }
 
     /// Puts on the chosen skin at once and remembers it
     @objc func menuPickSkin(_ item: NSMenuItem) {
