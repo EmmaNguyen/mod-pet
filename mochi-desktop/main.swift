@@ -993,9 +993,7 @@ final class CardView: NSView {
     private var closeBox: NSRect { NSRect(x: bounds.width - 28, y: 8, width: 18, height: 18) }
 
     override func draw(_ dirtyRect: NSRect) {
-        // The Liquid Glass behind draws the card itself; only the coloured edge is drawn here
-        accent.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: bounds.height - 26), xRadius: 2, yRadius: 2).fill()
+        // The Liquid Glass behind draws the card itself; no coloured bar is drawn on the edge
 
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
@@ -1092,8 +1090,6 @@ final class ApprovalView: NSView {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override func draw(_ dirtyRect: NSRect) {
-        accent.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 10, y: 13, width: 4, height: bounds.height - 26), xRadius: 2, yRadius: 2).fill()
 
         // The question, in up to two lines, then a line under it
         let wrap = NSMutableParagraphStyle()
