@@ -2173,7 +2173,6 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
-            if let thought = self?.thoughtPanel { self?.placeThought(thought) }
             self?.placeCards()
         }
 
@@ -2612,11 +2611,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let panel = floatingPanel(size: ThoughtView.size)
         panel.hasShadow = true
         panel.contentView = content
-        placeThought(panel)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.25; panel.animator().alphaValue = 1 }
         thoughtPanel = panel
+        placeCards() // it takes its place in the stack, so it never covers a card
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self, weak panel] in
             if let panel, self?.thoughtPanel === panel { self?.hideThought() }
         }
@@ -2625,18 +2624,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
     func hideThought() {
         guard let panel = thoughtPanel else { return }
         thoughtPanel = nil
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; panel.animator().alphaValue = 0 }) { panel.orderOut(nil) }
-    }
-
-    /// Centred above her, kept on the screen
-    func placeThought(_ panel: NSPanel) {
-        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let size = panel.frame.size
-        var x = window.frame.midX - size.width / 2
-        var y = window.frame.maxY + 2
-        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
-        y = min(max(y, screen.minY + 4), screen.maxY - size.height - 4)
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; panel.animator().alphaValue = 0 }) { [weak self] in
+            panel.orderOut(nil)
+            self?.placeCards()
+        }
     }
 
     /// The scroll beside her: opens "This week", or closes it when it is open
@@ -2644,30 +2635,20 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let weekPanel, weekPanel.isVisible {
             weekPanel.orderOut(nil)
             self.weekPanel = nil
+            placeCards()
             return
         }
         let content = WeekView(log: dayLog, usage: usage, now: Date(), colorFor: { chatColor($0) })
         content.onClose = { [weak self] in
             self?.weekPanel?.orderOut(nil)
             self?.weekPanel = nil
+            self?.placeCards()
         }
         let panel = floatingPanel(size: WeekView.size)
         panel.contentView = makeGlass(size: WeekView.size, content: content, radius: 18)
-        placeWeek(panel)
         panel.orderFrontRegardless()
         weekPanel = panel
-    }
-
-    /// Above her when there is room, otherwise below, and always on the screen
-    func placeWeek(_ panel: NSPanel) {
-        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let size = panel.frame.size
-        var x = window.frame.midX - size.width / 2
-        var y = window.frame.maxY + 8
-        if y + size.height > screen.maxY { y = window.frame.minY - size.height - 8 }
-        x = min(max(x, screen.minX + 4), screen.maxX - size.width - 4)
-        y = min(max(y, screen.minY + 4), screen.maxY - size.height - 4)
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        placeCards() // the week panel takes its place in the stack, beside the cards
     }
 
     /// The chat list (when open) and the cards stack beside Mochi as one block, the list nearest her,
@@ -2677,6 +2658,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let gap: CGFloat = 12 // room between cards, so their glass edges never touch
         var stack: [NSPanel] = cards
         if bubble.isVisible { stack.insert(bubble, at: 0) }
+        if let thoughtPanel { stack.insert(thoughtPanel, at: 0) }
+        if let weekPanel, weekPanel.isVisible { stack.insert(weekPanel, at: 0) }
         guard !stack.isEmpty else { return }
         let heights = stack.map { $0.frame.height }
         let stackHeight = heights.reduce(0, +) + CGFloat(stack.count - 1) * gap
