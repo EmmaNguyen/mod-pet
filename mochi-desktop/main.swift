@@ -2486,7 +2486,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     func showApproval(_ chat: Chat) {
-        mochiLog("card shown for \(chat.title) (\(chat.requestId))")
+        mochiLog("card shown for \(chat.title) (\(chat.requestId)): \(!chat.detail.isEmpty ? chat.detail : chat.waiting)")
         let id = chat.requestId
         let panel = floatingPanel(size: ApprovalView.size)
         panel.acceptsMouseMovedEvents = true
