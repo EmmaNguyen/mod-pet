@@ -238,6 +238,17 @@ func boardTitle(needing: Int) -> String {
     }
 }
 
+/// The line naming the chats running right now
+func runningText(titles: [String]) -> String {
+    titles.isEmpty ? "Nothing running right now" : "Running: " + titles.map { clip($0, 32) }.joined(separator: ", ")
+}
+
+/// The line naming the chat that finished most recently, and when
+func finishedText(title: String?, updated: Double?) -> String {
+    guard let title, let updated else { return "Nothing finished lately" }
+    return "Finished: \(clip(title, 32)) · \(ago(updated))"
+}
+
 /// The word a chat's box gives its state: waiting chats say "Waiting", never "Needs you"
 func listStateLabel(_ status: Status) -> String {
     status == .needsInput ? "Waiting" : status.label
@@ -1154,6 +1165,8 @@ final class ChatListView: NSView {
     var titleColor: NSColor = .labelColor
     var subtitle = ""
     var footer: String?
+    /// The running and the last finished session, as lines under the heading
+    var activityLines: [(String, NSColor)] = []
     /// The chats whose older news is open, by id
     var expanded = Set<String>()
     var onAnswer: ((Chat, String) -> Void)?
@@ -1183,6 +1196,13 @@ final class ChatListView: NSView {
         label(title, .systemFont(ofSize: 15, weight: .medium), titleColor, x: pad, y: y, width: inner * 0.6, draw: draw)
         label(subtitle, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner, align: .right, draw: draw)
         y += 28
+
+        // Which session is running now, and which one finished last
+        for (text, color) in activityLines {
+            label(text, .systemFont(ofSize: 12, weight: .medium), color, x: pad, y: y, width: inner, draw: draw)
+            y += 18
+        }
+        y += 6
 
         if chats.isEmpty {
             label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 12), .tertiaryLabelColor,
@@ -3250,6 +3270,12 @@ final class NotePanel: NSPanel {
         chatList.titleColor = view.status.color
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
+        let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
+        let finished = chats.filter { $0.status == .ready }.max { $0.updatedAt < $1.updatedAt }
+        chatList.activityLines = [
+            (runningText(titles: running), Status.running.color),
+            (finishedText(title: finished?.title, updated: finished?.updatedAt), Status.ready.color),
+        ]
     }
 
     /// While the list is open it follows the chats, once a second: a chat starting, working or finishing shows at once.

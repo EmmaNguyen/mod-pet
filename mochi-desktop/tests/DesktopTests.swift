@@ -198,4 +198,10 @@ check("with none approving on their own, the subtitle counts open chats", boardS
 check("the running group is always shown", groupAlwaysShown(0))
 check("the other groups are left out when empty", !groupAlwaysShown(1) && !groupAlwaysShown(2) && !groupAlwaysShown(3))
 
+// The chat box names the session running now, and the one that finished last
+check("no running session is named as none", runningText(titles: []) == "Nothing running right now")
+check("the running sessions are named", runningText(titles: ["A", "B"]) == "Running: A, B")
+check("with nothing finished, the line says so", finishedText(title: nil, updated: nil) == "Nothing finished lately")
+check("the finished session is named with its time", finishedText(title: "Mod pet", updated: 0).hasPrefix("Finished: Mod pet · "))
+
 print("ALL PASSED")
