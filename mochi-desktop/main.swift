@@ -1017,6 +1017,13 @@ final class BubbleView: NSView {
 }
 
 /// The rounded box behind the bubble; the lines scroll inside it
+/// A colour that follows light or dark mode, for the glass: one value in light, one in dark
+func adaptiveColor(_ light: NSColor, _ dark: NSColor) -> NSColor {
+    NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
+    }
+}
+
 /// Draws one line of text, or only measures it, and returns its width
 @discardableResult
 func drawLine(_ text: String, _ font: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat,
@@ -1168,11 +1175,16 @@ final class ChatListView: NSView {
     /// Wide enough that names, news and buttons fit on one line each, with no sideways scrolling
     static let width: CGFloat = 520
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .medium)
-    /// The deep blue for running text, and the pale chip behind it, so it reads on the glass
-    static let runningInk = NSColor(hex: 0x0C447C)
-    static let runningChip = NSColor(hex: 0xE6F1FB)
+    /// The blue for running text and its chip: deep on light glass, bright on dark glass
+    static let runningInk = adaptiveColor(NSColor(hex: 0x0A4FA8), NSColor(hex: 0x9CC9FF))
+    static let runningChip = adaptiveColor(NSColor(hex: 0x0A6CF0).withAlphaComponent(0.14), NSColor(hex: 0x0A6CF0).withAlphaComponent(0.3))
+    /// Each chat sits on a faint glass card, with a light edge
+    static let glassCard = adaptiveColor(NSColor.white.withAlphaComponent(0.42), NSColor.white.withAlphaComponent(0.09))
+    static let glassEdge = adaptiveColor(NSColor.white.withAlphaComponent(0.7), NSColor.white.withAlphaComponent(0.16))
+    /// Room on the right for the scrollbar, so it never covers the text
+    static let gutter: CGFloat = 22
     static let groups: [(heading: String, color: NSColor)] = [
-        ("Running now", NSColor(hex: 0x0C447C)),
+        ("Running now", runningInk),
         ("", Status.needsInput.color), // no heading: each box says "Needs you" itself
         ("Finished", Status.ready.color),
         ("Resting", .secondaryLabelColor),
@@ -1208,7 +1220,7 @@ final class ChatListView: NSView {
     private func render(draw: Bool) -> CGFloat {
         hits = []
         let pad: CGFloat = 14
-        let inner = Self.width - pad * 2
+        let inner = Self.width - pad - Self.gutter
         var y: CGFloat = 14
 
         // Her name, and the open chats and notes beside it
@@ -1262,7 +1274,7 @@ final class ChatListView: NSView {
                 y += 24
             }
             for chat in members {
-                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
+                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 8
             }
         }
 
@@ -1277,8 +1289,8 @@ final class ChatListView: NSView {
             for (i, limit) in limits.enumerated() {
                 let x = pad + CGFloat(i) * (cardWidth + 8)
                 if draw {
-                    NSColor.labelColor.withAlphaComponent(0.06).setFill()
-                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 76), xRadius: 8, yRadius: 8).fill()
+                    Self.glassCard.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 76), xRadius: 16, yRadius: 16).fill()
                 }
                 label(limit.name, .systemFont(ofSize: 13), .secondaryLabelColor, x: x + 10, y: y + 8, width: cardWidth - 20, draw: draw)
                 label("\(limit.percent)%", .systemFont(ofSize: 16, weight: .medium), .labelColor, x: x + 10, y: y + 24, width: cardWidth - 20, draw: draw)
@@ -1311,7 +1323,24 @@ final class ChatListView: NSView {
 
     /// One chat: its name, state and time, its latest news, and Allow and Deny when it waits for you.
     /// Returns the bottom edge of the box
+    /// One chat on a glass card. It is measured first, so the card sits under the text, then drawn
     private func box(_ chat: Chat, accent: NSColor, top: CGFloat, pad: CGFloat, inner: CGFloat, draw: Bool) -> CGFloat {
+        if draw {
+            let saved = hits
+            let bottom = layoutBox(chat, accent: accent, top: top, pad: pad, inner: inner, draw: false)
+            hits = saved
+            let card = NSRect(x: pad, y: top, width: inner, height: bottom - top)
+            Self.glassCard.setFill()
+            NSBezierPath(roundedRect: card, xRadius: 16, yRadius: 16).fill()
+            Self.glassEdge.setStroke()
+            let edge = NSBezierPath(roundedRect: card.insetBy(dx: 0.25, dy: 0.25), xRadius: 16, yRadius: 16)
+            edge.lineWidth = 0.5
+            edge.stroke()
+        }
+        return layoutBox(chat, accent: accent, top: top, pad: pad, inner: inner, draw: draw)
+    }
+
+    private func layoutBox(_ chat: Chat, accent: NSColor, top: CGFloat, pad: CGFloat, inner: CGFloat, draw: Bool) -> CGFloat {
         let boxIndex = hits.count
         let contentRight = pad + inner - 10
         let textX = pad + 24
@@ -1326,7 +1355,7 @@ final class ChatListView: NSView {
                                x: contentRight - 200, y: cy, width: 200, align: .right, draw: false)
         if draw, chat.isOpen, chat.status == .running {
             Self.runningChip.setFill()
-            NSBezierPath(roundedRect: NSRect(x: contentRight - stateWidth - 16, y: cy - 2, width: stateWidth + 16, height: 22),
+            NSBezierPath(roundedRect: NSRect(x: contentRight - stateWidth - 8, y: cy - 2, width: stateWidth + 16, height: 22),
                          xRadius: 8, yRadius: 8).fill()
         }
         label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
@@ -1380,12 +1409,6 @@ final class ChatListView: NSView {
         // The whole box opens the chat, and the rounded border goes around it
         let box = NSRect(x: pad, y: top, width: inner, height: cy - top)
         if let link = chat.link { hits.insert((rect: box, hit: .open(link)), at: boxIndex) }
-        if draw {
-            let path = NSBezierPath(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), xRadius: 8, yRadius: 8)
-            path.lineWidth = 0.5
-            NSColor.labelColor.withAlphaComponent(0.15).setStroke()
-            path.stroke()
-        }
         return box.maxY
     }
 

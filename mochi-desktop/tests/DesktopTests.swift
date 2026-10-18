@@ -218,4 +218,7 @@ let autoDone = Chat(id: "y", title: "Y", status: .ready, log: [], updatedAt: 0, 
 check("a running Auto chat is approving on its own", approvingOnItsOwn(autoRunning))
 check("a finished Auto chat is not", !approvingOnItsOwn(autoDone))
 
+// The chat list leaves room on the right for the scrollbar
+check("the chat list keeps a gutter for the scrollbar", ChatListView.gutter >= 20)
+
 print("ALL PASSED")
