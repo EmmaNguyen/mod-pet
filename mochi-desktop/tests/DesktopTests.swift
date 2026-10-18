@@ -83,6 +83,9 @@ check("an older record with missing keys still reads", olderRecord.turns == 4 &&
 // Quiet for an hour: quiet until its end, and never when it is not set
 check("an hour of quiet is quiet until the hour is up", quietAt(until: 3_600, now: 3_599) && !quietAt(until: 3_600, now: 3_600))
 check("with no quiet set, she is never quiet", !quietAt(until: 0, now: 1_000))
+check("quiet until turned back on stays quiet for years", quietAt(until: quietForever, now: 1_800_000_000))
+check("quiet until turned back on shows no end time", quietEndsText(until: quietForever).isEmpty)
+check("a timed quiet shows its end time", !quietEndsText(until: 3_600).isEmpty)
 
 // Answer and session files are tidied: sessions after a week, answers after two weeks, and only .json files
 let tidy = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-tidy-test-\(UUID().uuidString)")

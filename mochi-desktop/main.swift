@@ -202,6 +202,14 @@ func noticeAllowed(_ notice: Notice, onlyApprovals: Bool) -> Bool {
 /// Whether she is quiet at `now` (seconds since 1970): quiet until the time she was set to, and never when that is 0
 func quietAt(until: Double, now: Double) -> Bool { now < until }
 
+/// Quiet with no end: she stays quiet until you turn her sounds back on (1 January 2100, seconds since 1970)
+let quietForever: Double = 4_102_444_800
+
+/// The menu line that shows when she stops being quiet: "until 14:05", or no time at all when she is quiet until you turn her back on
+func quietEndsText(until: Double) -> String {
+    until >= quietForever ? "" : Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened)
+}
+
 /// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
 /// file after two weeks, so Mochi's files stay small
 func pruneOldSessions() {
@@ -3027,10 +3035,18 @@ final class NotePanel: NSPanel {
         }
         soundItem.submenu = soundMenu
         let now = Date().timeIntervalSince1970
-        let quietTitle = quietAt(until: quietUntil, now: now)
-            ? "Sounds back on (quiet until \(Date(timeIntervalSince1970: quietUntil).formatted(date: .omitted, time: .shortened)))"
-            : "Quiet for 1 hour"
-        menu.addItem(withTitle: quietTitle, action: #selector(menuToggleQuiet), keyEquivalent: "").target = self
+        if quietAt(until: quietUntil, now: now) {
+            let ends = quietEndsText(until: quietUntil)
+            let title = ends.isEmpty ? "Sounds back on" : "Sounds back on (quiet until \(ends))"
+            menu.addItem(withTitle: title, action: #selector(menuSetQuiet(_:)), keyEquivalent: "").target = self
+        } else {
+            let hour = menu.addItem(withTitle: "Quiet for 1 hour", action: #selector(menuSetQuiet(_:)), keyEquivalent: "")
+            hour.target = self
+            hour.tag = 1
+            let forever = menu.addItem(withTitle: "Quiet until I turn sounds back on", action: #selector(menuSetQuiet(_:)), keyEquivalent: "")
+            forever.target = self
+            forever.tag = 2
+        }
         let login = menu.addItem(withTitle: "Open at login", action: #selector(menuToggleLogin), keyEquivalent: "")
         login.target = self
         login.state = opensAtLogin ? .on : .off
@@ -3064,11 +3080,15 @@ final class NotePanel: NSPanel {
         playNeedsSound()
     }
 
-    /// Starts or ends an hour of quiet: no sounds, and no cards or Mac notifications for finished work
-    @objc func menuToggleQuiet() {
+    /// Quiet for an hour (tag 1), quiet until you turn her back on (tag 2), or sounds back on (any other tag, when she is quiet).
+    /// Quiet means no sounds, and no cards or Mac notifications for finished work
+    @objc func menuSetQuiet(_ item: NSMenuItem) {
         if quietAt(until: quietUntil, now: Date().timeIntervalSince1970) {
             quietUntil = 0
-            mochiLog("quiet: ended early from the menu")
+            mochiLog("quiet: ended from the menu")
+        } else if item.tag == 2 {
+            quietUntil = quietForever
+            mochiLog("quiet: until turned back on, from the menu")
         } else {
             quietUntil = Date().timeIntervalSince1970 + 3600
             mochiLog("quiet: for an hour, from the menu")
