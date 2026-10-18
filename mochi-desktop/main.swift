@@ -2653,6 +2653,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         firstLook = false
 
+        refreshChatList()
         // Each new finished turn counts toward its day, for "This week"
         for (event, chat) in fresh where event.kind == "turn" {
             let when = Date(timeIntervalSince1970: (event.at ?? Date().timeIntervalSince1970 * 1000) / 1000)
@@ -3225,19 +3226,35 @@ final class NotePanel: NSPanel {
         hideBubble?.invalidate()
         view.unread = 0
 
+        fillChatList()
+        showList()
+        bubbleFrame.scroll.contentView.scroll(to: .zero) // the running chats are at the top
+        bubbleFrame.scroll.reflectScrolledClipView(bubbleFrame.scroll.contentView)
+    }
+
+    /// Gives the chat list the current chats, and its heading and footer
+    func fillChatList() {
         let open = chats.filter(\.isOpen).count
-        let notes = chats.reduce(0) { $0 + $1.log.count }
-        chatList.chats = chats
-        chatList.usage = usage
         let needing = chats.filter { $0.status == .needsInput }.count
         let approving = chats.filter { $0.isOpen && $0.mode == "auto" }.count
+        chatList.chats = chats
+        chatList.usage = usage
         chatList.title = boardTitle(needing: needing)
         chatList.titleColor = view.status.color
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
-        showList()
-        bubbleFrame.scroll.contentView.scroll(to: .zero) // the running chats are at the top
-        bubbleFrame.scroll.reflectScrolledClipView(bubbleFrame.scroll.contentView)
+    }
+
+    /// While the list is open it follows the chats, once a second: a chat starting, working or finishing shows at once.
+    /// The bubble only resizes when the list's height changes, so the scroll position holds
+    func refreshChatList() {
+        guard bubble.isVisible, bubbleFrame.scroll.documentView === chatList else { return }
+        fillChatList()
+        if chatList.fittingHeight() != chatList.frame.height {
+            showList()
+        } else {
+            chatList.needsDisplay = true
+        }
     }
 
     func showBubble() {
