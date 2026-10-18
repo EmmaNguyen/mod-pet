@@ -170,4 +170,8 @@ check("only the latest news shows when collapsed", listShownEvents(total: 5, exp
 check("all the news shows when expanded", listShownEvents(total: 5, expanded: true) == 5)
 check("a chat with no news shows none", listShownEvents(total: 0, expanded: false) == 0)
 
+// Her usage box names the state from the fuller limit
+check("usage under 70% is on track", usageState(worst: 0) == "On track" && usageState(worst: 69) == "On track")
+check("usage from 70% is getting high, from 90% almost out, and 100% out", usageState(worst: 70) == "Getting high" && usageState(worst: 90) == "Almost out" && usageState(worst: 100) == "Out of usage")
+
 print("ALL PASSED")

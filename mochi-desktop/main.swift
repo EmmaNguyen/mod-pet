@@ -954,6 +954,151 @@ final class BubbleView: NSView {
 }
 
 /// The rounded box behind the bubble; the lines scroll inside it
+/// Draws one line of text, or only measures it, and returns its width
+@discardableResult
+func drawLine(_ text: String, _ font: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat,
+              align: NSTextAlignment = .left, draw: Bool) -> CGFloat {
+    let style = NSMutableParagraphStyle()
+    style.lineBreakMode = .byTruncatingTail
+    style.alignment = align
+    let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style])
+    if draw { string.draw(in: NSRect(x: x, y: y, width: width, height: font.pointSize + 6)) }
+    return string.size().width
+}
+
+/// A small rounded button: a filled accent one, or an outlined one
+func drawButton(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
+    guard draw else { return }
+    let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+    if filled {
+        NSColor.controlAccentColor.setFill()
+        path.fill()
+    } else {
+        path.lineWidth = 0.5
+        NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+        path.stroke()
+    }
+    drawLine(title, .systemFont(ofSize: 12, weight: .medium), filled ? .white : .labelColor,
+             x: rect.minX, y: rect.minY + 3, width: rect.width, align: .center, draw: true)
+}
+
+/// The state of her usage, from the fuller of the two limits
+func usageState(worst: Int) -> String {
+    worst >= 100 ? "Out of usage" : worst >= 90 ? "Almost out" : worst >= 70 ? "Getting high" : "On track"
+}
+
+/// Her usage status box, laid out like the chat list: the state, the two limits as cards with bars, and a footer
+/// with the last check and a Refresh button
+final class UsagePanelView: NSView {
+    static let width: CGFloat = 340
+    var usage: Usage?
+    /// True while Claude is being asked for a fresh reading
+    var checking = false
+    /// The last check, in a few words: "Checked 2:14 PM"
+    var footnote = ""
+    var onRefresh: (() -> Void)?
+    private var refreshRect = NSRect.zero
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The height the box needs, measured the same way it is drawn
+    func fittingHeight() -> CGFloat { render(draw: false) }
+
+    override func draw(_ dirtyRect: NSRect) { render(draw: true) }
+
+    @discardableResult
+    private func render(draw: Bool) -> CGFloat {
+        let pad: CGFloat = 16
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 14
+        guard let usage else {
+            drawLine("No usage reading yet. Send a message and I'll get one.", .systemFont(ofSize: 12), .tertiaryLabelColor,
+                     x: pad, y: y, width: inner, draw: draw)
+            return y + 36
+        }
+
+        // The state, in a pill at the right of the title
+        let worst = max(usage.fiveHour, usage.week)
+        let pillFont = NSFont.systemFont(ofSize: 12)
+        drawLine("Your usage", .systemFont(ofSize: 15, weight: .medium), .labelColor, x: pad, y: y, width: inner * 0.6, draw: draw)
+        let state = usageState(worst: worst)
+        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
+        let pill = NSRect(x: pad + inner - textWidth - 16, y: y, width: textWidth + 16, height: 20)
+        if draw {
+            Usage.color(worst).withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+        }
+        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 2, width: pill.width, align: .center, draw: draw)
+        y += 32
+
+        // Out of usage: when you can continue
+        if let back = usage.backText {
+            let box = NSRect(x: pad, y: y, width: inner, height: 48)
+            if draw {
+                Usage.color(100).withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
+            }
+            drawLine(back, .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
+            drawLine("Your limit resets then. Chats can continue.", .systemFont(ofSize: 12), Usage.color(100),
+                     x: pad + 10, y: y + 26, width: inner - 20, draw: draw)
+            y += 56
+        }
+
+        // The two limits as cards: the percentage, a bar, and when it resets
+        let cardWidth = (inner - 8) / 2
+        let limits: [(name: String, percent: Int, resets: Date?)] = [
+            ("5-hour", usage.fiveHour, usage.fiveHourResets),
+            ("Week", usage.week, usage.weekResets),
+        ]
+        for (i, limit) in limits.enumerated() {
+            let x = pad + CGFloat(i) * (cardWidth + 8)
+            if draw {
+                NSColor.labelColor.withAlphaComponent(0.06).setFill()
+                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 90), xRadius: 8, yRadius: 8).fill()
+            }
+            drawLine(limit.name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 10, width: cardWidth - 20, draw: draw)
+            drawLine("\(limit.percent)%", .systemFont(ofSize: 18, weight: .medium), .labelColor, x: x + 10, y: y + 26, width: cardWidth - 20, draw: draw)
+            if draw {
+                let track = NSRect(x: x + 10, y: y + 56, width: cardWidth - 20, height: 4)
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                Usage.color(limit.percent).setFill()
+                let filled = track.width * CGFloat(min(100, max(0, limit.percent))) / 100
+                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+            let reset = Usage.until(limit.resets).map { "Resets in \($0)" } ?? "Reset time unknown"
+            drawLine(reset, .systemFont(ofSize: 11), .tertiaryLabelColor, x: x + 10, y: y + 66, width: cardWidth - 20, draw: draw)
+        }
+        y += 98
+
+        // The footer: the last check, and Refresh
+        if draw {
+            let rule = NSBezierPath()
+            rule.move(to: NSPoint(x: pad, y: y))
+            rule.line(to: NSPoint(x: pad + inner, y: y))
+            rule.lineWidth = 0.5
+            NSColor.labelColor.withAlphaComponent(0.15).setStroke()
+            rule.stroke()
+        }
+        y += 10
+        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 100, draw: draw)
+        refreshRect = NSRect(x: pad + inner - 84, y: y, width: 84, height: 24)
+        drawButton(refreshRect, checking ? "Checking…" : "Refresh", filled: false, draw: draw)
+        return y + 34
+    }
+
+    // A click on Refresh asks for a fresh reading; anywhere else closes the box
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if refreshRect.contains(point) {
+            if !checking { onRefresh?() }
+            return
+        }
+        window?.orderOut(nil)
+    }
+}
+
 /// Her chat list, laid out like the mock: a summary, the two limits as cards, and each chat as a box under the group it
 /// belongs to, with Allow and Deny under the chat that waits for you
 final class ChatListView: NSView {
@@ -1141,29 +1286,12 @@ final class ChatListView: NSView {
     }
 
     private func button(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
-        guard draw else { return }
-        let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        if filled {
-            NSColor.controlAccentColor.setFill()
-            path.fill()
-        } else {
-            path.lineWidth = 0.5
-            NSColor.labelColor.withAlphaComponent(0.25).setStroke()
-            path.stroke()
-        }
-        label(title, .systemFont(ofSize: 12, weight: .medium), filled ? .white : .labelColor,
-              x: rect.minX, y: rect.minY + 3, width: rect.width, align: .center, draw: true)
+        drawButton(rect, title, filled: filled, draw: draw)
     }
 
-    /// Draws one line of text, or only measures it, and returns its width
     private func label(_ text: String, _ font: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat,
                        align: NSTextAlignment = .left, draw: Bool) -> CGFloat {
-        let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
-        style.alignment = align
-        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style])
-        if draw { string.draw(in: NSRect(x: x, y: y, width: width, height: font.pointSize + 6)) }
-        return string.size().width
+        drawLine(text, font, color, x: x, y: y, width: width, align: align, draw: draw)
     }
 
     // Clicks: a button or "Show earlier" first, then the chat's box, and anywhere else closes the list
@@ -2264,6 +2392,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let bubbleView = BubbleView()
     /// Her chat list, shown in the bubble above her
     let chatList = ChatListView()
+    /// Her usage status box, shown in the bubble above her
+    let usagePanel = UsagePanelView()
     let bubbleFrame = BubbleFrame(frame: NSRect(x: 0, y: 0, width: 260, height: 40))
     /// The Liquid Glass the list and speech bubble sit on
     lazy var bubbleGlass: NSView = makeGlass(size: bubbleFrame.frame.size, content: bubbleFrame, radius: 18)
@@ -2386,6 +2516,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         bubbleFrame.scroll.documentView = bubbleView
         chatList.onAnswer = { [weak self] chat, decision in self?.answerApproval(chat, decision) }
         chatList.onRelayout = { [weak self] in self?.showList() }
+        usagePanel.onRefresh = { [weak self] in self?.showUsageDetails() }
         bubbleFrame.autoresizingMask = [.width, .height]
         bubble.contentView = bubbleGlass
         bubble.hasShadow = false // the glass draws its own soft edge
@@ -2603,30 +2734,14 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let clock = DateFormatter()
         clock.dateFormat = "h:mm a"
         let when = clock.string(from: Date(timeIntervalSince1970: usage.at / 1000))
-
-        func window(_ name: String, _ percent: Int, _ resets: Date?) -> [Line] {
-            let reset = resets.flatMap { Usage.until($0) }.map { "resets in \($0)" } ?? "reset time unknown"
-            return [
-                Line(text: "\(name)   \(Usage.bar(percent))   \(percent)%", bold: true, color: Usage.color(percent)),
-                Line(text: reset, indent: 14, dim: true),
-            ]
-        }
-
-        var lines = [Line(text: worst >= 100 ? "Out of usage" : worst >= 90 ? "Almost out of usage" : "Your usage",
-                          bold: true, color: Usage.color(worst))]
-        lines += window("5-hour", usage.fiveHour, usage.fiveHourResets)
-        lines += window("Week  ", usage.week, usage.weekResets)
-        if let back = usage.backText {
-            lines.append(Line(text: "⏳ \(back)", bold: true, color: Usage.color(100)))
-        }
-        let status = updating ? "Updating… · last read \(when)" : fresh ? "Just checked · \(when)" : "Couldn't check now · last read \(when)"
-        lines.append(Line(text: status, dim: true))
-        bubbleView.lines = lines
-        bubbleView.accent = Usage.color(worst)
-        showBubble()
-        mochiLog("usage bubble shown: frame \(bubble.frame), on screen \(bubble.screen?.visibleFrame ?? .zero)")
-        // The usage panel closes on its own a few seconds after the click
+        usagePanel.usage = usage
+        usagePanel.checking = updating
+        usagePanel.footnote = updating ? "Checking now…" : fresh ? "Checked \(when)" : "Last read \(when)"
+        showUsagePanel(accent: Usage.color(worst))
+        mochiLog("usage box shown: \(usageState(worst: worst)), \(updating ? "checking" : fresh ? "fresh" : "last read")")
+        // It closes on its own a few seconds after a reading, and stays open while Claude is being asked
         hideBubble?.invalidate()
+        guard !updating else { return }
         hideBubble = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
             self?.bubble.orderOut(nil)
             self?.placeCards()
@@ -3101,17 +3216,25 @@ final class NotePanel: NSPanel {
 
     /// Shows her chat list in the bubble, sized to fit, scrolling past the cap
     func showList() {
-        let height = chatList.fittingHeight()
-        chatList.frame = NSRect(x: 0, y: 0, width: ChatListView.width, height: height)
-        bubbleFrame.scroll.documentView = chatList
-        let size = NSSize(width: ChatListView.width + 8, height: min(height, bubbleMaxHeight) + 8)
+        presentInBubble(chatList, height: chatList.fittingHeight(), width: ChatListView.width, accent: view.status.color)
+    }
+
+    /// Shows her usage status box in the bubble
+    func showUsagePanel(accent: NSColor) {
+        presentInBubble(usagePanel, height: usagePanel.fittingHeight(), width: UsagePanelView.width, accent: accent)
+    }
+
+    /// Puts a view in the bubble at its size: the glass, its content and the scroll view all take the same size
+    func presentInBubble(_ content: NSView, height: CGFloat, width: CGFloat, accent: NSColor) {
+        content.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        bubbleFrame.scroll.documentView = content
+        let size = NSSize(width: width + 8, height: min(height, bubbleMaxHeight) + 8)
         bubble.setContentSize(size)
-        // The glass and its content take the whole panel, so the list sits inside the box with no gap or overhang
         bubbleGlass.frame = NSRect(origin: .zero, size: size)
         bubbleFrame.frame = NSRect(origin: .zero, size: size)
-        bubbleFrame.accent = view.status.color
-        tintGlass(bubbleGlass, view.status.color)
-        chatList.needsDisplay = true
+        bubbleFrame.accent = accent
+        tintGlass(bubbleGlass, accent)
+        content.needsDisplay = true
         bubble.orderFrontRegardless()
         placeCards()
     }
