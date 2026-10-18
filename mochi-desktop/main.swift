@@ -226,6 +226,14 @@ func listGroup(_ status: Status) -> Int {
 /// How many of a chat's news lines show: only the latest, unless the chat is expanded
 func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
 
+/// How many finished chats her list shows: only the latest ten
+let finishedLimit = 10
+
+/// The newest items first, at most `limit` of them
+func recentFirst<T>(_ items: [T], updated: (T) -> Double, limit: Int) -> [T] {
+    Array(items.sorted { updated($0) > updated($1) }.prefix(limit))
+}
+
 /// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
 /// file after two weeks, so Mochi's files stay small
 func pruneOldSessions() {
@@ -1161,7 +1169,9 @@ final class ChatListView: NSView {
             return $0.updatedAt > $1.updatedAt
         }
         for (index, group) in Self.groups.enumerated() {
-            let members = ordered.filter { listGroup($0.status) == index }
+            var members = ordered.filter { listGroup($0.status) == index }
+            // Finished shows only the latest few, so older ones do not crowd the list
+            if index == 2 { members = recentFirst(members, updated: \.updatedAt, limit: finishedLimit) }
             guard !members.isEmpty else { continue }
             y += 8
             label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)

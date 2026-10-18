@@ -174,4 +174,10 @@ check("a chat with no news shows none", listShownEvents(total: 0, expanded: fals
 check("usage under 70% is on track", usageState(worst: 0) == "On track" && usageState(worst: 69) == "On track")
 check("usage from 70% is getting high, from 90% almost out, and 100% out", usageState(worst: 70) == "Getting high" && usageState(worst: 90) == "Almost out" && usageState(worst: 100) == "Out of usage")
 
+// Finished chats: only the latest ten are listed, newest first
+let manyDone = (0..<12).map { Double($0) }
+let kept = recentFirst(manyDone, updated: { $0 }, limit: finishedLimit)
+check("only the latest ten finished chats are kept", kept.count == 10 && kept.first == 11 && kept.last == 2)
+check("fewer than ten finished chats are all kept", recentFirst([1.0, 2.0], updated: { $0 }, limit: finishedLimit).count == 2)
+
 print("ALL PASSED")
