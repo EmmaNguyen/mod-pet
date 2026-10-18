@@ -1133,8 +1133,8 @@ final class UsagePanelView: NSView {
 /// Her chat list, laid out like the mock: a summary, the two limits as cards, and each chat as a box under the group it
 /// belongs to, with Allow and Deny under the chat that waits for you
 final class ChatListView: NSView {
-    /// The same width as the approval cards, so the list and the cards line up
-    static let width: CGFloat = ApprovalView.size.width
+    /// Wide enough that names, news and buttons fit on one line each, with no sideways scrolling
+    static let width: CGFloat = 520
     static let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
     static let groups: [(heading: String, color: NSColor)] = [
         ("Running now", Status.running.color),

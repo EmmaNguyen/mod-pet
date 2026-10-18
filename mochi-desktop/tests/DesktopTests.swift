@@ -180,8 +180,8 @@ let kept = recentFirst(manyDone, updated: { $0 }, limit: finishedLimit)
 check("only the latest ten finished chats are kept", kept.count == 10 && kept.first == 11 && kept.last == 2)
 check("fewer than ten finished chats are all kept", recentFirst([1.0, 2.0], updated: { $0 }, limit: finishedLimit).count == 2)
 
-// The chat list is as wide as the approval cards
-check("the chat list is as wide as the approval cards", ChatListView.width == ApprovalView.size.width)
+// The chat list is wider than the approval cards
+check("the chat list is wider than the approval cards", ChatListView.width > ApprovalView.size.width)
 
 // A chat in the Claude app is running while it had activity in the last two minutes
 check("a chat active a minute ago is running", isActiveNow(updated: 60_000, now: 120_000))
