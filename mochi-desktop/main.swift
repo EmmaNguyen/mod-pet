@@ -229,6 +229,21 @@ func isActiveNow(updated: Double, now: Double) -> Bool { now - updated < 2 * 60 
 /// How many of a chat's news lines show: only the latest, unless the chat is expanded
 func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
 
+/// The list's heading: her name, and how many chats need you
+func boardTitle(needing: Int) -> String {
+    switch needing {
+    case 0: return "Mochi"
+    case 1: return "Mochi · 1 chat needs you"
+    default: return "Mochi · \(needing) chats need you"
+    }
+}
+
+/// The line under the heading: the chats approving on their own, or else the open chats
+func boardSubtitle(approving: Int, open: Int) -> String {
+    if approving > 0 { return "\(approving) chat\(approving == 1 ? "" : "s") approving on their own" }
+    return "\(open) open chat\(open == 1 ? "" : "s")"
+}
+
 /// How many finished chats her list shows: only the latest ten
 let finishedLimit = 10
 
@@ -1240,7 +1255,9 @@ final class ChatListView: NSView {
         var cy = top + 10
 
         // The name first, then the state and time at the right
-        let state = (chat.isOpen ? chat.status.label : "Closed") + " · " + ago(chat.updatedAt)
+        // An open chat in Auto mode says so, so you can tell which ones approve on their own
+        let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + chat.status.label : "Closed"
+        let state = stateName + " · " + ago(chat.updatedAt)
         let stateWidth = label(state, .systemFont(ofSize: 12), chat.isOpen ? accent : .tertiaryLabelColor,
                                x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
         if draw {
@@ -3204,10 +3221,11 @@ final class NotePanel: NSPanel {
         let notes = chats.reduce(0) { $0 + $1.log.count }
         chatList.chats = chats
         chatList.usage = usage
-        chatList.title = currentLook.name ?? "Mochi"
+        let needing = chats.filter { $0.status == .needsInput }.count
+        let approving = chats.filter { $0.isOpen && $0.mode == "auto" }.count
+        chatList.title = boardTitle(needing: needing)
         chatList.titleColor = view.status.color
-        chatList.subtitle = chats.isEmpty ? "No Claude chats yet"
-            : "\(open) open · \(view.status.label)" + (notes > 0 ? " · \(notes) note\(notes == 1 ? "" : "s")" : "")
+        chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
         showList()
         bubbleFrame.scroll.contentView.scroll(to: .zero) // the running chats are at the top
