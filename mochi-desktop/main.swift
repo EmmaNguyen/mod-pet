@@ -1002,7 +1002,32 @@ final class ChatListView: NSView {
         label(subtitle, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner, align: .right, draw: draw)
         y += 28
 
+        if chats.isEmpty {
+            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 12), .tertiaryLabelColor,
+                  x: pad, y: y, width: inner, draw: draw)
+            y += 22
+        }
+
+        // Each group in turn, most urgent first, then the most recent
+        let ordered = chats.sorted {
+            if $0.isOpen != $1.isOpen { return $0.isOpen }
+            if $0.isRecent != $1.isRecent { return $0.isRecent }
+            if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
+            return $0.updatedAt > $1.updatedAt
+        }
+        for (index, group) in Self.groups.enumerated() {
+            let members = ordered.filter { listGroup($0.status) == index }
+            guard !members.isEmpty else { continue }
+            y += 8
+            label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            for chat in members {
+                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
+            }
+        }
+
         // The two limits as cards, with a bar and when each one resets
+        if usage != nil { y += 6 }
         if let usage {
             let cardWidth = (inner - 8) / 2
             let limits: [(name: String, percent: Int, resets: String?)] = [
@@ -1033,30 +1058,6 @@ final class ChatListView: NSView {
             if let back = usage.backText {
                 label("⏳ \(back)", .systemFont(ofSize: 12, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
                 y += 22
-            }
-        }
-
-        if chats.isEmpty {
-            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 12), .tertiaryLabelColor,
-                  x: pad, y: y, width: inner, draw: draw)
-            y += 22
-        }
-
-        // Each group in turn, most urgent first, then the most recent
-        let ordered = chats.sorted {
-            if $0.isOpen != $1.isOpen { return $0.isOpen }
-            if $0.isRecent != $1.isRecent { return $0.isRecent }
-            if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
-            return $0.updatedAt > $1.updatedAt
-        }
-        for (index, group) in Self.groups.enumerated() {
-            let members = ordered.filter { listGroup($0.status) == index }
-            guard !members.isEmpty else { continue }
-            y += 8
-            label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
-            y += 22
-            for chat in members {
-                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
             }
         }
 
@@ -3078,6 +3079,8 @@ final class NotePanel: NSPanel {
             : "\(open) open · \(view.status.label)" + (notes > 0 ? " · \(notes) note\(notes == 1 ? "" : "s")" : "")
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
         showList()
+        bubbleFrame.scroll.contentView.scroll(to: .zero) // the running chats are at the top
+        bubbleFrame.scroll.reflectScrolledClipView(bubbleFrame.scroll.contentView)
     }
 
     func showBubble() {
@@ -3101,7 +3104,11 @@ final class NotePanel: NSPanel {
         let height = chatList.fittingHeight()
         chatList.frame = NSRect(x: 0, y: 0, width: ChatListView.width, height: height)
         bubbleFrame.scroll.documentView = chatList
-        bubble.setContentSize(NSSize(width: ChatListView.width + 8, height: min(height, bubbleMaxHeight) + 8))
+        let size = NSSize(width: ChatListView.width + 8, height: min(height, bubbleMaxHeight) + 8)
+        bubble.setContentSize(size)
+        // The glass and its content take the whole panel, so the list sits inside the box with no gap or overhang
+        bubbleGlass.frame = NSRect(origin: .zero, size: size)
+        bubbleFrame.frame = NSRect(origin: .zero, size: size)
         bubbleFrame.accent = view.status.color
         tintGlass(bubbleGlass, view.status.color)
         chatList.needsDisplay = true
