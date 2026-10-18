@@ -213,10 +213,14 @@ func quietEndsText(until: Double) -> String {
     until >= quietForever ? "" : Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened)
 }
 
-/// The line at the top of the list naming the chats running right now, or nil when none is running
-func runningNowText(_ chats: [(title: String, status: Status)]) -> String? {
-    let names = chats.filter { $0.status == .running }.map { clip($0.title, 32) }
-    return names.isEmpty ? nil : "Running now: " + names.joined(separator: ", ")
+/// Which group a chat sits in on her list: 0 running now, 1 needs you, 2 finished, 3 resting
+func listGroup(_ status: Status) -> Int {
+    switch status {
+    case .running: return 0
+    case .needsInput, .blocked: return 1
+    case .ready: return 2
+    default: return 3
+    }
 }
 
 /// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
@@ -2826,9 +2830,10 @@ final class NotePanel: NSPanel {
         view.unread = 0
 
         let open = chats.filter(\.isOpen).count
+        let notes = chats.reduce(0) { $0 + $1.log.count }
         var lines = [Line(text: chats.isEmpty
                               ? "Mochi · no Claude chats yet"
-                              : "\(currentLook.name ?? "Mochi") · \(open) open chat\(open == 1 ? "" : "s") · \(view.status.label)",
+                              : "\(currentLook.name ?? "Mochi") · \(open) open · \(view.status.label)\(notes > 0 ? " · \(notes) note\(notes == 1 ? "" : "s")" : "")",
                           bold: true, color: view.status.color)]
         if let usage {
             let worst = max(usage.fiveHour, usage.week)
@@ -2841,41 +2846,47 @@ final class NotePanel: NSPanel {
             lines.append(Line(text: "Start a Claude chat and I'll tell you how it goes!", dim: true))
         }
 
-        // Chats running right now on top, then open chats, the most urgent first, then the most recent
-        if let runningLine = runningNowText(chats.map { ($0.title, $0.status) }) {
-            lines.append(Line(text: runningLine, bold: true, color: Status.running.color))
-        }
-        let sorted = chats.sorted {
-            if ($0.status == .running) != ($1.status == .running) { return $0.status == .running }
-            if $0.isOpen != $1.isOpen { return $0.isOpen }
-            if $0.isRecent != $1.isRecent { return $0.isRecent }
-            if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
-            return $0.updatedAt > $1.updatedAt
-        }
-        for chat in sorted {
-            let state = chat.isOpen ? chat.status.label : "Closed"
-            lines.append(Line(text: "● \(clip(chat.title, 32)) · \(state) · \(ago(chat.updatedAt))\(chat.link == nil ? "" : "  ↗")",
-                              bold: true, color: chat.isOpen ? chat.status.color : .secondaryLabelColor,
-                              link: chat.link, dot: chatColor(chat.id)))
-            if chat.status == .needsInput, !chat.waiting.isEmpty {
-                lines.append(Line(text: "⏰ \(clip(chat.waiting, 52))", color: Status.needsInput.color, indent: 14, link: chat.link))
+        // Grouped by what needs you: running, then needs you, then finished, then the rest. The group is the heading,
+        // so each chat shows its name, time and latest news only, not its state again
+        let groups: [(heading: String, color: NSColor)] = [
+            ("Running now", Status.running.color),
+            ("Needs you", Status.needsInput.color),
+            ("Finished", Status.ready.color),
+            ("Resting", .secondaryLabelColor),
+        ]
+        for (index, group) in groups.enumerated() {
+            let members = chats.filter { listGroup($0.status) == index }.sorted {
+                if $0.isOpen != $1.isOpen { return $0.isOpen }
+                if $0.isRecent != $1.isRecent { return $0.isRecent }
+                if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
+                return $0.updatedAt > $1.updatedAt
             }
-            let latest = chat.log.sorted { ($0.at ?? 0) > ($1.at ?? 0) }
-            if latest.isEmpty {
-                lines.append(Line(text: "Nothing yet", indent: 14, dim: true))
-            }
-            for (i, event) in latest.enumerated() {
+            guard !members.isEmpty else { continue }
+            lines.append(Line(text: group.heading, bold: true, color: group.color))
+            for chat in members {
+                lines.append(Line(text: "\(clip(chat.title, 32))\(chat.isOpen ? "" : " · Closed") · \(ago(chat.updatedAt))\(chat.link == nil ? "" : "  ↗")",
+                                  bold: true, color: chat.isOpen ? nil : .secondaryLabelColor, link: chat.link, dot: chatColor(chat.id)))
+                if chat.status == .needsInput, !chat.waiting.isEmpty {
+                    lines.append(Line(text: "⏰ \(clip(chat.waiting, 52))", color: Status.needsInput.color, indent: 14, link: chat.link))
+                }
+                // Only the latest news; the rest are counted, not listed
+                let latest = chat.log.sorted { ($0.at ?? 0) > ($1.at ?? 0) }
+                guard let event = latest.first else {
+                    lines.append(Line(text: "Nothing yet", indent: 14, dim: true))
+                    continue
+                }
                 let took = event.seconds.map { " · \($0)s" } ?? ""
                 lines.append(Line(text: "\(icons[event.kind] ?? "•") \(clip(event.summary, 48))\(took) · \(ago(event.at))", indent: 14,
-                                  dim: i > 0, link: chat.link))
+                                  dim: true, link: chat.link))
+                if latest.count > 1 {
+                    lines.append(Line(text: "+\(latest.count - 1) earlier", indent: 14, dim: true, link: chat.link))
+                }
             }
         }
 
         if chats.contains(where: { $0.link != nil }) {
             lines.append(Line(text: "Click a chat to open it in Claude", dim: true))
         }
-        let total = chats.reduce(0) { $0 + $1.log.count }
-        if total > 0 { lines[0] = Line(text: lines[0].text + " · \(total) notification\(total == 1 ? "" : "s")", bold: true, color: lines[0].color) }
         bubbleView.lines = lines
         bubbleView.accent = view.status.color
         showBubble()

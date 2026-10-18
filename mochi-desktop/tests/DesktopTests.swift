@@ -160,12 +160,9 @@ check("read-only git does not, but a push does", !needsYou(waiting: "Run: git st
 check("reading and searching files do not", !needsYou(waiting: "Use Read") && !needsYou(waiting: "Use Grep"))
 check("writing a tool or an edit does, and so do questions", needsYou(waiting: "Use create_issue") && needsYou(waiting: "Edit login.ts") && needsYou(waiting: "Asks: Which database?"))
 
-// The running chats are named at the top of the list
-check("no running line when nothing is running", runningNowText([("A", .idle), ("B", .needsInput)]) == nil)
-check("the running chats are named, in order", runningNowText([("A", .idle), ("B", .running), ("C", .running)]) == "Running now: B, C")
-
-// Her list has every chat from the last seven days, not only the last three
-check("a chat from six days ago is listed", isListed(updated: 0, now: 6 * 24 * 3600 * 1000))
-check("a chat from eight days ago is not", !isListed(updated: 0, now: 8 * 24 * 3600 * 1000))
+// Her list groups chats by what needs you
+check("running chats come first", listGroup(.running) == 0)
+check("chats that need you, or are stopped, come second", listGroup(.needsInput) == 1 && listGroup(.blocked) == 1)
+check("finished chats come third, and resting ones last", listGroup(.ready) == 2 && listGroup(.idle) == 3 && listGroup(.ended) == 3)
 
 print("ALL PASSED")
