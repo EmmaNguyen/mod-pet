@@ -183,4 +183,8 @@ check("fewer than ten finished chats are all kept", recentFirst([1.0, 2.0], upda
 // The chat list is as wide as the approval cards
 check("the chat list is as wide as the approval cards", ChatListView.width == ApprovalView.size.width)
 
+// A chat in the Claude app is running while it had activity in the last two minutes
+check("a chat active a minute ago is running", isActiveNow(updated: 60_000, now: 120_000))
+check("a chat quiet for three minutes is not", !isActiveNow(updated: 0, now: 180_000))
+
 print("ALL PASSED")

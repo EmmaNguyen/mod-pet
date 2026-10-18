@@ -223,6 +223,9 @@ func listGroup(_ status: Status) -> Int {
     }
 }
 
+/// Whether a chat in the Claude app had activity in the last two minutes, so it counts as running
+func isActiveNow(updated: Double, now: Double) -> Bool { now - updated < 2 * 60 * 1000 }
+
 /// How many of a chat's news lines show: only the latest, unless the chat is expanded
 func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
 
@@ -388,7 +391,9 @@ func readChats() -> [Chat] {
         let summary = session.postTurnSummary
         let needs = summary?.needs_action ?? ""
         let category = summary?.status_category ?? ""
+        // Waiting for you comes first; otherwise a chat active in the last couple of minutes is running
         let status: Status = !needs.isEmpty ? .needsInput
+            : isActiveNow(updated: updated, now: now) ? .running
             : category == "blocked" ? .blocked
             : category == "completed" ? .ready
             : .idle
