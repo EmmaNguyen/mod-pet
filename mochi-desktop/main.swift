@@ -244,6 +244,9 @@ func boardSubtitle(approving: Int, open: Int) -> String {
     return "\(open) open chat\(open == 1 ? "" : "s")"
 }
 
+/// Whether a group is listed even when empty: only Running now, so it is always at the top of the list
+func groupAlwaysShown(_ index: Int) -> Bool { index == 0 }
+
 /// How many finished chats her list shows: only the latest ten
 let finishedLimit = 10
 
@@ -1193,10 +1196,15 @@ final class ChatListView: NSView {
             var members = ordered.filter { listGroup($0.status) == index }
             // Finished shows only the latest few, so older ones do not crowd the list
             if index == 2 { members = recentFirst(members, updated: \.updatedAt, limit: finishedLimit) }
-            guard !members.isEmpty else { continue }
+            // Running now is always there, at the top, even when nothing is running
+            guard !members.isEmpty || groupAlwaysShown(index) else { continue }
             y += 8
             label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
             y += 22
+            if members.isEmpty {
+                label("Nothing running right now", .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+                y += 22
+            }
             for chat in members {
                 y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
             }

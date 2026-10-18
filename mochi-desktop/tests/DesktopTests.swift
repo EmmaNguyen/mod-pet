@@ -193,4 +193,8 @@ check("the heading counts chats that need you", boardTitle(needing: 1) == "Mochi
 check("the subtitle names the chats approving on their own", boardSubtitle(approving: 2, open: 5) == "2 chats approving on their own")
 check("with none approving on their own, the subtitle counts open chats", boardSubtitle(approving: 0, open: 1) == "1 open chat" && boardSubtitle(approving: 0, open: 4) == "4 open chats")
 
+// Running now is always listed at the top, even when empty; the others are left out when empty
+check("the running group is always shown", groupAlwaysShown(0))
+check("the other groups are left out when empty", !groupAlwaysShown(1) && !groupAlwaysShown(2) && !groupAlwaysShown(3))
+
 print("ALL PASSED")
