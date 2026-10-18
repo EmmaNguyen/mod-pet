@@ -1152,8 +1152,11 @@ final class ChatListView: NSView {
     /// Wide enough that names, news and buttons fit on one line each, with no sideways scrolling
     static let width: CGFloat = 520
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .medium)
+    /// The deep blue for running text, and the pale chip behind it, so it reads on the glass
+    static let runningInk = NSColor(hex: 0x0C447C)
+    static let runningChip = NSColor(hex: 0xE6F1FB)
     static let groups: [(heading: String, color: NSColor)] = [
-        ("Running now", Status.running.color),
+        ("Running now", NSColor(hex: 0x0C447C)),
         ("", Status.needsInput.color), // no heading: each box says "Needs you" itself
         ("Finished", Status.ready.color),
         ("Resting", .secondaryLabelColor),
@@ -1225,7 +1228,17 @@ final class ChatListView: NSView {
             guard !members.isEmpty || groupAlwaysShown(index) else { continue }
             y += 8
             if !group.heading.isEmpty {
-                label(group.heading, .systemFont(ofSize: 13, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
+                let headingFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+                if index == 0 {
+                    let width = label(group.heading, headingFont, group.color, x: pad, y: y, width: inner, draw: false)
+                    if draw {
+                        Self.runningChip.setFill()
+                        NSBezierPath(roundedRect: NSRect(x: pad, y: y - 2, width: width + 16, height: 22), xRadius: 8, yRadius: 8).fill()
+                    }
+                    label(group.heading, headingFont, group.color, x: pad + 8, y: y, width: inner, draw: draw)
+                } else {
+                    label(group.heading, headingFont, group.color, x: pad, y: y, width: inner, draw: draw)
+                }
                 y += 24
             }
             if members.isEmpty {
@@ -1294,7 +1307,14 @@ final class ChatListView: NSView {
         let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + listStateLabel(chat.status) : "Closed"
         let state = stateName + " · " + ago(chat.updatedAt)
         let stateWidth = label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
-                               x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
+                               x: contentRight - 200, y: cy, width: 200, align: .right, draw: false)
+        if draw, chat.isOpen, chat.status == .running {
+            Self.runningChip.setFill()
+            NSBezierPath(roundedRect: NSRect(x: contentRight - stateWidth - 16, y: cy - 2, width: stateWidth + 16, height: 22),
+                         xRadius: 8, yRadius: 8).fill()
+        }
+        label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
+              x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
         if draw {
             chatColor(chat.id).setFill()
             NSBezierPath(ovalIn: NSRect(x: pad + 10, y: cy + 5, width: 8, height: 8)).fill()
@@ -1322,7 +1342,7 @@ final class ChatListView: NSView {
         }
         if latest.count > 1 {
             let more = expandedNow ? "Show less" : "Show \(latest.count - 1) earlier"
-            let width = label(more, .systemFont(ofSize: 13, weight: .medium), .controlAccentColor,
+            let width = label(more, .systemFont(ofSize: 13, weight: .medium), Self.runningInk,
                               x: textX, y: cy, width: textWidth, draw: draw)
             hits.append((rect: NSRect(x: textX, y: cy, width: width + 4, height: 20), hit: .expand(chat.id)))
             cy += 20
@@ -3273,7 +3293,7 @@ final class NotePanel: NSPanel {
         let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
         let finished = chats.filter { $0.status == .ready }.max { $0.updatedAt < $1.updatedAt }
         chatList.activityLines = [
-            (runningText(titles: running), Status.running.color),
+            (runningText(titles: running), ChatListView.runningInk),
             (finishedText(title: finished?.title, updated: finished?.updatedAt), Status.ready.color),
         ]
     }

@@ -204,4 +204,7 @@ check("the running sessions are named", runningText(titles: ["A", "B"]) == "Runn
 check("with nothing finished, the line says so", finishedText(title: nil, updated: nil) == "Nothing finished lately")
 check("the finished session is named with its time", finishedText(title: "Mod pet", updated: 0).hasPrefix("Finished: Mod pet · "))
 
+// The running text is the deep blue, not the light one, so it reads on the glass
+check("the running heading uses the deep blue", ChatListView.groups[0].color == ChatListView.runningInk && ChatListView.runningInk != Status.running.color)
+
 print("ALL PASSED")
