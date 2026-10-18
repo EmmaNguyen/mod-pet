@@ -223,6 +223,18 @@ func listGroup(_ status: Status) -> Int {
     }
 }
 
+/// A chat approving on its own: running, in Auto mode. Finished chats in Auto are not counted
+func approvingOnItsOwn(_ chat: Chat) -> Bool {
+    chat.isOpen && chat.status == .running && chat.mode == "auto"
+}
+
+/// The mode a chat is in: the Claude app's own record when it has one, since the plugin's report only
+/// carries the mode after a permission request
+func effectiveMode(app: String?, report: String?) -> String {
+    if let app, !app.isEmpty { return app }
+    return report ?? ""
+}
+
 /// Whether a chat in the Claude app had activity in the last two minutes, so it counts as running
 func isActiveNow(updated: Double, now: Double) -> Bool { now - updated < 2 * 60 * 1000 }
 
@@ -346,6 +358,8 @@ struct AppSession: Decodable {
     let cliSessionId: String?
     let title: String?
     let lastActivityAt: Double?
+    /// The mode the Claude app has the chat in: "default", "acceptEdits", "auto" and so on
+    let permissionMode: String?
     let isArchived: Bool?
     let postTurnSummary: Summary?
 }
@@ -417,7 +431,8 @@ func readChats() -> [Chat] {
             chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
                               waiting: mine.waiting, isRecent: mine.isRecent,
-                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail, mode: mine.mode, canSwitchMode: mine.canSwitchMode))
+                              requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail,
+                              mode: effectiveMode(app: session.permissionMode, report: mine.mode), canSwitchMode: mine.canSwitchMode))
             continue
         }
 
@@ -439,7 +454,8 @@ func readChats() -> [Chat] {
         // A chat that is resting with nothing to report is left out: its link is not one Mochi can trust
         if status == .idle && log.isEmpty { continue }
         chats.append(Chat(id: session.sessionId, title: title, status: status, log: log, updatedAt: updated,
-                          link: link, waiting: needs, isRecent: now - updated < recent))
+                          link: link, waiting: needs, isRecent: now - updated < recent,
+                          mode: effectiveMode(app: session.permissionMode, report: "")))
     }
 
     // Terminal chats the app does not know of
@@ -2677,7 +2693,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         checkUsage()
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
         // Sparkles only while a live chat is in Auto
-        view.autoMode = chats.contains { $0.isOpen && $0.isRecent && $0.mode == "auto" }
+        view.autoMode = chats.contains(where: approvingOnItsOwn)
 
         var fresh: [(Event, Chat)] = []
         for chat in chats {
@@ -3283,7 +3299,7 @@ final class NotePanel: NSPanel {
     func fillChatList() {
         let open = chats.filter(\.isOpen).count
         let needing = chats.filter { $0.status == .needsInput }.count
-        let approving = chats.filter { $0.isOpen && $0.mode == "auto" }.count
+        let approving = chats.filter(approvingOnItsOwn).count
         chatList.chats = chats
         chatList.usage = usage
         chatList.title = boardTitle(needing: needing)

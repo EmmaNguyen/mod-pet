@@ -207,4 +207,15 @@ check("the finished session is named with its time", finishedText(title: "Mod pe
 // The running text is the deep blue, not the light one, so it reads on the glass
 check("the running heading uses the deep blue", ChatListView.groups[0].color == ChatListView.runningInk && ChatListView.runningInk != Status.running.color)
 
+// A chat's mode is the Claude app's own record when it has one, so an Auto chat shows as Auto
+check("the app's mode wins over the plugin's report", effectiveMode(app: "auto", report: "default") == "auto")
+check("the plugin's mode is used when the app has none", effectiveMode(app: nil, report: "acceptEdits") == "acceptEdits" && effectiveMode(app: "", report: "acceptEdits") == "acceptEdits")
+check("a chat with no mode anywhere has an empty one", effectiveMode(app: nil, report: nil) == "")
+
+// Only running chats in Auto count as approving on their own
+let autoRunning = Chat(id: "x", title: "X", status: .running, log: [], updatedAt: 0, link: nil, waiting: "", mode: "auto")
+let autoDone = Chat(id: "y", title: "Y", status: .ready, log: [], updatedAt: 0, link: nil, waiting: "", mode: "auto")
+check("a running Auto chat is approving on its own", approvingOnItsOwn(autoRunning))
+check("a finished Auto chat is not", !approvingOnItsOwn(autoDone))
+
 print("ALL PASSED")
