@@ -761,7 +761,8 @@ final class MochiView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
         ])
         let size = text.size()
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 0, width: size.width + 18, height: 20)
+        // A few points below the top edge, so the rounded ends are not cut off by the window
+        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 4, width: size.width + 18, height: 20)
         usagePill = pill
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
