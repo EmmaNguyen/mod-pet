@@ -189,7 +189,8 @@ check("a chat quiet for three minutes is not", !isActiveNow(updated: 0, now: 180
 
 // The board's heading names what needs you, and the line under it names the chats approving on their own
 check("the heading is plain Mochi with nothing waiting", boardTitle(needing: 0) == "Mochi")
-check("the heading counts chats that need you", boardTitle(needing: 1) == "Mochi · 1 chat needs you" && boardTitle(needing: 3) == "Mochi · 3 chats need you")
+check("the heading counts chats waiting for you", boardTitle(needing: 1) == "Mochi · 1 waiting" && boardTitle(needing: 3) == "Mochi · 3 waiting")
+check("a waiting chat's box says Waiting, not Needs you", listStateLabel(.needsInput) == "Waiting" && listStateLabel(.running) == "Working")
 check("the subtitle names the chats approving on their own", boardSubtitle(approving: 2, open: 5) == "2 chats approving on their own")
 check("with none approving on their own, the subtitle counts open chats", boardSubtitle(approving: 0, open: 1) == "1 open chat" && boardSubtitle(approving: 0, open: 4) == "4 open chats")
 

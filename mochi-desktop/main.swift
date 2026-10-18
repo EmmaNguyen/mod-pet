@@ -233,9 +233,14 @@ func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min
 func boardTitle(needing: Int) -> String {
     switch needing {
     case 0: return "Mochi"
-    case 1: return "Mochi · 1 chat needs you"
-    default: return "Mochi · \(needing) chats need you"
+    case 1: return "Mochi · 1 waiting"
+    default: return "Mochi · \(needing) waiting"
     }
+}
+
+/// The word a chat's box gives its state: waiting chats say "Waiting", never "Needs you"
+func listStateLabel(_ status: Status) -> String {
+    status == .needsInput ? "Waiting" : status.label
 }
 
 /// The line under the heading: the chats approving on their own, or else the open chats
@@ -1266,7 +1271,7 @@ final class ChatListView: NSView {
 
         // The name first, then the state and time at the right
         // An open chat in Auto mode says so, so you can tell which ones approve on their own
-        let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + chat.status.label : "Closed"
+        let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + listStateLabel(chat.status) : "Closed"
         let state = stateName + " · " + ago(chat.updatedAt)
         let stateWidth = label(state, .systemFont(ofSize: 12), chat.isOpen ? accent : .tertiaryLabelColor,
                                x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
