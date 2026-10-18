@@ -180,4 +180,7 @@ let kept = recentFirst(manyDone, updated: { $0 }, limit: finishedLimit)
 check("only the latest ten finished chats are kept", kept.count == 10 && kept.first == 11 && kept.last == 2)
 check("fewer than ten finished chats are all kept", recentFirst([1.0, 2.0], updated: { $0 }, limit: finishedLimit).count == 2)
 
+// The chat list is as wide as the approval cards
+check("the chat list is as wide as the approval cards", ChatListView.width == ApprovalView.size.width)
+
 print("ALL PASSED")
