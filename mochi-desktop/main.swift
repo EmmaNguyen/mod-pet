@@ -202,6 +202,9 @@ func noticeAllowed(_ notice: Notice, onlyApprovals: Bool) -> Bool {
 /// Whether she is quiet at `now` (seconds since 1970): quiet until the time she was set to, and never when that is 0
 func quietAt(until: Double, now: Double) -> Bool { now < until }
 
+/// Whether a chat last active at `updated` (milliseconds) is in her list: any chat from the last seven days, the same as the tidying
+func isListed(updated: Double, now: Double) -> Bool { now - updated < 7 * 24 * 3600 * 1000 }
+
 /// Quiet with no end: she stays quiet until you turn her sounds back on (1 January 2100, seconds since 1970)
 let quietForever: Double = 4_102_444_800
 
@@ -353,7 +356,7 @@ func readChats() -> [Chat] {
     var chats: [Chat] = []
     for session in readAppSessions() where session.isArchived != true {
         let updated = session.lastActivityAt ?? 0
-        guard now - updated < 3 * 24 * 3600 * 1000 else { continue } // the last three days
+        guard isListed(updated: updated, now: now) else { continue }
         let link = "claude://code/continue?session=\(session.sessionId)&source=mochi"
         let title = session.title ?? "Claude chat"
 

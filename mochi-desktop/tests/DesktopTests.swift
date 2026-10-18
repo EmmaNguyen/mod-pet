@@ -164,4 +164,8 @@ check("writing a tool or an edit does, and so do questions", needsYou(waiting: "
 check("no running line when nothing is running", runningNowText([("A", .idle), ("B", .needsInput)]) == nil)
 check("the running chats are named, in order", runningNowText([("A", .idle), ("B", .running), ("C", .running)]) == "Running now: B, C")
 
+// Her list has every chat from the last seven days, not only the last three
+check("a chat from six days ago is listed", isListed(updated: 0, now: 6 * 24 * 3600 * 1000))
+check("a chat from eight days ago is not", !isListed(updated: 0, now: 8 * 24 * 3600 * 1000))
+
 print("ALL PASSED")
