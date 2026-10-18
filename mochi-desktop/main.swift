@@ -1138,7 +1138,7 @@ final class ChatListView: NSView {
     static let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
     static let groups: [(heading: String, color: NSColor)] = [
         ("Running now", Status.running.color),
-        ("Needs you", Status.needsInput.color),
+        ("", Status.needsInput.color), // no heading: each box says "Needs you" itself
         ("Finished", Status.ready.color),
         ("Resting", .secondaryLabelColor),
     ]
@@ -1199,8 +1199,10 @@ final class ChatListView: NSView {
             // Running now is always there, at the top, even when nothing is running
             guard !members.isEmpty || groupAlwaysShown(index) else { continue }
             y += 8
-            label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
-            y += 22
+            if !group.heading.isEmpty {
+                label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
+                y += 22
+            }
             if members.isEmpty {
                 label("Nothing running right now", .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, draw: draw)
                 y += 22
