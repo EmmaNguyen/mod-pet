@@ -1151,7 +1151,7 @@ final class UsagePanelView: NSView {
 final class ChatListView: NSView {
     /// Wide enough that names, news and buttons fit on one line each, with no sideways scrolling
     static let width: CGFloat = 520
-    static let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+    static let titleFont = NSFont.systemFont(ofSize: 14, weight: .medium)
     static let groups: [(heading: String, color: NSColor)] = [
         ("Running now", Status.running.color),
         ("", Status.needsInput.color), // no heading: each box says "Needs you" itself
@@ -1194,18 +1194,18 @@ final class ChatListView: NSView {
 
         // Her name, and the open chats and notes beside it
         label(title, .systemFont(ofSize: 15, weight: .medium), titleColor, x: pad, y: y, width: inner * 0.6, draw: draw)
-        label(subtitle, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner, align: .right, draw: draw)
+        label(subtitle, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y + 2, width: inner, align: .right, draw: draw)
         y += 28
 
         // Which session is running now, and which one finished last
         for (text, color) in activityLines {
-            label(text, .systemFont(ofSize: 12, weight: .medium), color, x: pad, y: y, width: inner, draw: draw)
-            y += 18
+            label(text, .systemFont(ofSize: 13, weight: .medium), color, x: pad, y: y, width: inner, draw: draw)
+            y += 21
         }
         y += 6
 
         if chats.isEmpty {
-            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 12), .tertiaryLabelColor,
+            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 13), .secondaryLabelColor,
                   x: pad, y: y, width: inner, draw: draw)
             y += 22
         }
@@ -1225,12 +1225,12 @@ final class ChatListView: NSView {
             guard !members.isEmpty || groupAlwaysShown(index) else { continue }
             y += 8
             if !group.heading.isEmpty {
-                label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
-                y += 22
+                label(group.heading, .systemFont(ofSize: 13, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
+                y += 24
             }
             if members.isEmpty {
-                label("Nothing running right now", .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, draw: draw)
-                y += 22
+                label("Nothing running right now", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+                y += 24
             }
             for chat in members {
                 y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
@@ -1251,7 +1251,7 @@ final class ChatListView: NSView {
                     NSColor.labelColor.withAlphaComponent(0.06).setFill()
                     NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 76), xRadius: 8, yRadius: 8).fill()
                 }
-                label(limit.name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 8, width: cardWidth - 20, draw: draw)
+                label(limit.name, .systemFont(ofSize: 13), .secondaryLabelColor, x: x + 10, y: y + 8, width: cardWidth - 20, draw: draw)
                 label("\(limit.percent)%", .systemFont(ofSize: 16, weight: .medium), .labelColor, x: x + 10, y: y + 24, width: cardWidth - 20, draw: draw)
                 if draw {
                     let track = NSRect(x: x + 10, y: y + 48, width: cardWidth - 20, height: 4)
@@ -1262,19 +1262,19 @@ final class ChatListView: NSView {
                     NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
                 }
                 if let resets = limit.resets {
-                    label("Resets in \(resets)", .systemFont(ofSize: 11), .tertiaryLabelColor, x: x + 10, y: y + 56, width: cardWidth - 20, draw: draw)
+                    label("Resets in \(resets)", .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 56, width: cardWidth - 20, draw: draw)
                 }
             }
             y += 84
             if let back = usage.backText {
-                label("⏳ \(back)", .systemFont(ofSize: 12, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
+                label("⏳ \(back)", .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
                 y += 22
             }
         }
 
         if let footer {
             y += 8
-            label(footer, .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, align: .center, draw: draw)
+            label(footer, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .center, draw: draw)
             y += 22
         }
         return y + 10
@@ -1293,39 +1293,39 @@ final class ChatListView: NSView {
         // An open chat in Auto mode says so, so you can tell which ones approve on their own
         let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + listStateLabel(chat.status) : "Closed"
         let state = stateName + " · " + ago(chat.updatedAt)
-        let stateWidth = label(state, .systemFont(ofSize: 12), chat.isOpen ? accent : .tertiaryLabelColor,
+        let stateWidth = label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
                                x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
         if draw {
             chatColor(chat.id).setFill()
             NSBezierPath(ovalIn: NSRect(x: pad + 10, y: cy + 5, width: 8, height: 8)).fill()
         }
         label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
-        cy += 22
+        cy += 24
 
         if chat.status == .needsInput, !chat.waiting.isEmpty {
-            label(clip(chat.waiting, 70), .systemFont(ofSize: 13), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
-            cy += 20
+            label(clip(chat.waiting, 90), .systemFont(ofSize: 14), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 22
         }
 
         // Only the latest news unless the chat is expanded
         let latest = chat.log.sorted { ($0.at ?? 0) > ($1.at ?? 0) }
         let expandedNow = expanded.contains(chat.id)
         if latest.isEmpty {
-            label("Nothing yet", .systemFont(ofSize: 12), .tertiaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
-            cy += 17
+            label("Nothing yet", .systemFont(ofSize: 13), .secondaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 20
         }
         for event in latest.prefix(listShownEvents(total: latest.count, expanded: expandedNow)) {
             let took = event.seconds.map { " · \($0)s" } ?? ""
-            label("\(icons[event.kind] ?? "•") \(clip(event.summary, 56))\(took) · \(ago(event.at))",
-                  .systemFont(ofSize: 12), .secondaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
-            cy += 17
+            label("\(icons[event.kind] ?? "•") \(clip(event.summary, 70))\(took) · \(ago(event.at))",
+                  .systemFont(ofSize: 13), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 20
         }
         if latest.count > 1 {
             let more = expandedNow ? "Show less" : "Show \(latest.count - 1) earlier"
-            let width = label(more, .systemFont(ofSize: 12, weight: .medium), .controlAccentColor,
+            let width = label(more, .systemFont(ofSize: 13, weight: .medium), .controlAccentColor,
                               x: textX, y: cy, width: textWidth, draw: draw)
-            hits.append((rect: NSRect(x: textX, y: cy, width: width + 4, height: 18), hit: .expand(chat.id)))
-            cy += 18
+            hits.append((rect: NSRect(x: textX, y: cy, width: width + 4, height: 20), hit: .expand(chat.id)))
+            cy += 20
         }
 
         // Allow and Deny under the chat that waits for you
