@@ -165,4 +165,9 @@ check("running chats come first", listGroup(.running) == 0)
 check("chats that need you, or are stopped, come second", listGroup(.needsInput) == 1 && listGroup(.blocked) == 1)
 check("finished chats come third, and resting ones last", listGroup(.ready) == 2 && listGroup(.idle) == 3 && listGroup(.ended) == 3)
 
+// Her list shows only the latest news of each chat until it is expanded
+check("only the latest news shows when collapsed", listShownEvents(total: 5, expanded: false) == 1)
+check("all the news shows when expanded", listShownEvents(total: 5, expanded: true) == 5)
+check("a chat with no news shows none", listShownEvents(total: 0, expanded: false) == 0)
+
 print("ALL PASSED")

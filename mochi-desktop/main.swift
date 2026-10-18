@@ -223,6 +223,9 @@ func listGroup(_ status: Status) -> Int {
     }
 }
 
+/// How many of a chat's news lines show: only the latest, unless the chat is expanded
+func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
+
 /// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
 /// file after two weeks, so Mochi's files stay small
 func pruneOldSessions() {
@@ -951,6 +954,238 @@ final class BubbleView: NSView {
 }
 
 /// The rounded box behind the bubble; the lines scroll inside it
+/// Her chat list, laid out like the mock: a summary, the two limits as cards, and each chat as a box under the group it
+/// belongs to, with Allow and Deny under the chat that waits for you
+final class ChatListView: NSView {
+    static let width: CGFloat = 380
+    static let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+    static let groups: [(heading: String, color: NSColor)] = [
+        ("Running now", Status.running.color),
+        ("Needs you", Status.needsInput.color),
+        ("Finished", Status.ready.color),
+        ("Resting", .secondaryLabelColor),
+    ]
+
+    var chats: [Chat] = []
+    var usage: Usage?
+    var title = "Mochi"
+    var titleColor: NSColor = .labelColor
+    var subtitle = ""
+    var footer: String?
+    /// The chats whose older news is open, by id
+    var expanded = Set<String>()
+    var onAnswer: ((Chat, String) -> Void)?
+    /// Asked when the list must be sized again, such as after "Show earlier"
+    var onRelayout: (() -> Void)?
+
+    enum Hit { case open(String), answer(Chat, String), expand(String) }
+    /// Where each click goes, in drawing order; the last one under the pointer wins, so a button beats the box around it
+    private var hits: [(rect: NSRect, hit: Hit)] = []
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The height the list needs, measured the same way it is drawn
+    func fittingHeight() -> CGFloat { render(draw: false) }
+
+    override func draw(_ dirtyRect: NSRect) { render(draw: true) }
+
+    @discardableResult
+    private func render(draw: Bool) -> CGFloat {
+        hits = []
+        let pad: CGFloat = 14
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 14
+
+        // Her name, and the open chats and notes beside it
+        label(title, .systemFont(ofSize: 15, weight: .medium), titleColor, x: pad, y: y, width: inner * 0.6, draw: draw)
+        label(subtitle, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner, align: .right, draw: draw)
+        y += 28
+
+        // The two limits as cards, with a bar and when each one resets
+        if let usage {
+            let cardWidth = (inner - 8) / 2
+            let limits: [(name: String, percent: Int, resets: String?)] = [
+                ("5-hour limit", usage.fiveHour, Usage.until(usage.fiveHourResets)),
+                ("Week limit", usage.week, Usage.until(usage.weekResets)),
+            ]
+            for (i, limit) in limits.enumerated() {
+                let x = pad + CGFloat(i) * (cardWidth + 8)
+                if draw {
+                    NSColor.labelColor.withAlphaComponent(0.06).setFill()
+                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 76), xRadius: 8, yRadius: 8).fill()
+                }
+                label(limit.name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 8, width: cardWidth - 20, draw: draw)
+                label("\(limit.percent)%", .systemFont(ofSize: 16, weight: .medium), .labelColor, x: x + 10, y: y + 24, width: cardWidth - 20, draw: draw)
+                if draw {
+                    let track = NSRect(x: x + 10, y: y + 48, width: cardWidth - 20, height: 4)
+                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                    NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                    Usage.color(limit.percent).setFill()
+                    let filled = track.width * CGFloat(min(100, max(0, limit.percent))) / 100
+                    NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+                }
+                if let resets = limit.resets {
+                    label("Resets in \(resets)", .systemFont(ofSize: 11), .tertiaryLabelColor, x: x + 10, y: y + 56, width: cardWidth - 20, draw: draw)
+                }
+            }
+            y += 84
+            if let back = usage.backText {
+                label("⏳ \(back)", .systemFont(ofSize: 12, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
+                y += 22
+            }
+        }
+
+        if chats.isEmpty {
+            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 12), .tertiaryLabelColor,
+                  x: pad, y: y, width: inner, draw: draw)
+            y += 22
+        }
+
+        // Each group in turn, most urgent first, then the most recent
+        let ordered = chats.sorted {
+            if $0.isOpen != $1.isOpen { return $0.isOpen }
+            if $0.isRecent != $1.isRecent { return $0.isRecent }
+            if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
+            return $0.updatedAt > $1.updatedAt
+        }
+        for (index, group) in Self.groups.enumerated() {
+            let members = ordered.filter { listGroup($0.status) == index }
+            guard !members.isEmpty else { continue }
+            y += 8
+            label(group.heading, .systemFont(ofSize: 12, weight: .medium), group.color, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            for chat in members {
+                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 6
+            }
+        }
+
+        if let footer {
+            y += 8
+            label(footer, .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, align: .center, draw: draw)
+            y += 22
+        }
+        return y + 10
+    }
+
+    /// One chat: its name, state and time, its latest news, and Allow and Deny when it waits for you.
+    /// Returns the bottom edge of the box
+    private func box(_ chat: Chat, accent: NSColor, top: CGFloat, pad: CGFloat, inner: CGFloat, draw: Bool) -> CGFloat {
+        let boxIndex = hits.count
+        let contentRight = pad + inner - 10
+        let textX = pad + 24
+        let textWidth = contentRight - textX
+        var cy = top + 10
+
+        // The name first, then the state and time at the right
+        let state = (chat.isOpen ? chat.status.label : "Closed") + " · " + ago(chat.updatedAt)
+        let stateWidth = label(state, .systemFont(ofSize: 12), chat.isOpen ? accent : .tertiaryLabelColor,
+                               x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
+        if draw {
+            chatColor(chat.id).setFill()
+            NSBezierPath(ovalIn: NSRect(x: pad + 10, y: cy + 5, width: 8, height: 8)).fill()
+        }
+        label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
+        cy += 22
+
+        if chat.status == .needsInput, !chat.waiting.isEmpty {
+            label(clip(chat.waiting, 70), .systemFont(ofSize: 13), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 20
+        }
+
+        // Only the latest news unless the chat is expanded
+        let latest = chat.log.sorted { ($0.at ?? 0) > ($1.at ?? 0) }
+        let expandedNow = expanded.contains(chat.id)
+        if latest.isEmpty {
+            label("Nothing yet", .systemFont(ofSize: 12), .tertiaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 17
+        }
+        for event in latest.prefix(listShownEvents(total: latest.count, expanded: expandedNow)) {
+            let took = event.seconds.map { " · \($0)s" } ?? ""
+            label("\(icons[event.kind] ?? "•") \(clip(event.summary, 56))\(took) · \(ago(event.at))",
+                  .systemFont(ofSize: 12), .secondaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 17
+        }
+        if latest.count > 1 {
+            let more = expandedNow ? "Show less" : "Show \(latest.count - 1) earlier"
+            let width = label(more, .systemFont(ofSize: 12, weight: .medium), .controlAccentColor,
+                              x: textX, y: cy, width: textWidth, draw: draw)
+            hits.append((rect: NSRect(x: textX, y: cy, width: width + 4, height: 18), hit: .expand(chat.id)))
+            cy += 18
+        }
+
+        // Allow and Deny under the chat that waits for you
+        if chat.isOpen, chat.status == .needsInput, !chat.requestId.isEmpty {
+            cy += 4
+            let deny = NSRect(x: contentRight - 120 - 6 - 84, y: cy, width: 84, height: 24)
+            let allow = NSRect(x: contentRight - 120, y: cy, width: 120, height: 24)
+            button(deny, "Deny ⌃⌥2", filled: false, draw: draw)
+            button(allow, "Allow once ⌃⌥1", filled: true, draw: draw)
+            hits.append((rect: deny, hit: .answer(chat, "deny")))
+            hits.append((rect: allow, hit: .answer(chat, "allow")))
+            cy += 30
+        }
+        cy += 6
+
+        // The whole box opens the chat, and the rounded border goes around it
+        let box = NSRect(x: pad, y: top, width: inner, height: cy - top)
+        if let link = chat.link { hits.insert((rect: box, hit: .open(link)), at: boxIndex) }
+        if draw {
+            let path = NSBezierPath(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), xRadius: 8, yRadius: 8)
+            path.lineWidth = 0.5
+            NSColor.labelColor.withAlphaComponent(0.15).setStroke()
+            path.stroke()
+        }
+        return box.maxY
+    }
+
+    private func button(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
+        guard draw else { return }
+        let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        if filled {
+            NSColor.controlAccentColor.setFill()
+            path.fill()
+        } else {
+            path.lineWidth = 0.5
+            NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+            path.stroke()
+        }
+        label(title, .systemFont(ofSize: 12, weight: .medium), filled ? .white : .labelColor,
+              x: rect.minX, y: rect.minY + 3, width: rect.width, align: .center, draw: true)
+    }
+
+    /// Draws one line of text, or only measures it, and returns its width
+    private func label(_ text: String, _ font: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat,
+                       align: NSTextAlignment = .left, draw: Bool) -> CGFloat {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        style.alignment = align
+        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style])
+        if draw { string.draw(in: NSRect(x: x, y: y, width: width, height: font.pointSize + 6)) }
+        return string.size().width
+    }
+
+    // Clicks: a button or "Show earlier" first, then the chat's box, and anywhere else closes the list
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = hits.last(where: { $0.rect.contains(point) })?.hit else {
+            window?.orderOut(nil)
+            return
+        }
+        switch hit {
+        case .open(let link):
+            openChat(link)
+            window?.orderOut(nil)
+        case .answer(let chat, let decision):
+            onAnswer?(chat, decision)
+            window?.orderOut(nil)
+        case .expand(let id):
+            if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+            onRelayout?()
+        }
+    }
+}
+
 final class BubbleFrame: NSView {
     var accent: NSColor = .systemBlue
     let scroll = NSScrollView()
@@ -2026,6 +2261,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let view = MochiView()
     let bubble = floatingPanel(size: NSSize(width: 260, height: 40))
     let bubbleView = BubbleView()
+    /// Her chat list, shown in the bubble above her
+    let chatList = ChatListView()
     let bubbleFrame = BubbleFrame(frame: NSRect(x: 0, y: 0, width: 260, height: 40))
     /// The Liquid Glass the list and speech bubble sit on
     lazy var bubbleGlass: NSView = makeGlass(size: bubbleFrame.frame.size, content: bubbleFrame, radius: 18)
@@ -2146,6 +2383,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
         window.contentView = view
         bubbleFrame.scroll.documentView = bubbleView
+        chatList.onAnswer = { [weak self] chat, decision in self?.answerApproval(chat, decision) }
+        chatList.onRelayout = { [weak self] in self?.showList() }
         bubbleFrame.autoresizingMask = [.width, .height]
         bubble.contentView = bubbleGlass
         bubble.hasShadow = false // the glass draws its own soft edge
@@ -2831,68 +3070,18 @@ final class NotePanel: NSPanel {
 
         let open = chats.filter(\.isOpen).count
         let notes = chats.reduce(0) { $0 + $1.log.count }
-        var lines = [Line(text: chats.isEmpty
-                              ? "Mochi · no Claude chats yet"
-                              : "\(currentLook.name ?? "Mochi") · \(open) open · \(view.status.label)\(notes > 0 ? " · \(notes) note\(notes == 1 ? "" : "s")" : "")",
-                          bold: true, color: view.status.color)]
-        if let usage {
-            let worst = max(usage.fiveHour, usage.week)
-            lines.append(Line(text: "Usage  " + usage.line, color: Usage.color(worst)))
-            if let back = usage.backText {
-                lines.append(Line(text: "⏳ \(back)", bold: true, color: Usage.color(100)))
-            }
-        }
-        if chats.isEmpty {
-            lines.append(Line(text: "Start a Claude chat and I'll tell you how it goes!", dim: true))
-        }
-
-        // Grouped by what needs you: running, then needs you, then finished, then the rest. The group is the heading,
-        // so each chat shows its name, time and latest news only, not its state again
-        let groups: [(heading: String, color: NSColor)] = [
-            ("Running now", Status.running.color),
-            ("Needs you", Status.needsInput.color),
-            ("Finished", Status.ready.color),
-            ("Resting", .secondaryLabelColor),
-        ]
-        for (index, group) in groups.enumerated() {
-            let members = chats.filter { listGroup($0.status) == index }.sorted {
-                if $0.isOpen != $1.isOpen { return $0.isOpen }
-                if $0.isRecent != $1.isRecent { return $0.isRecent }
-                if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
-                return $0.updatedAt > $1.updatedAt
-            }
-            guard !members.isEmpty else { continue }
-            lines.append(Line(text: group.heading, bold: true, color: group.color))
-            for chat in members {
-                lines.append(Line(text: "\(clip(chat.title, 32))\(chat.isOpen ? "" : " · Closed") · \(ago(chat.updatedAt))\(chat.link == nil ? "" : "  ↗")",
-                                  bold: true, color: chat.isOpen ? nil : .secondaryLabelColor, link: chat.link, dot: chatColor(chat.id)))
-                if chat.status == .needsInput, !chat.waiting.isEmpty {
-                    lines.append(Line(text: "⏰ \(clip(chat.waiting, 52))", color: Status.needsInput.color, indent: 14, link: chat.link))
-                }
-                // Only the latest news; the rest are counted, not listed
-                let latest = chat.log.sorted { ($0.at ?? 0) > ($1.at ?? 0) }
-                guard let event = latest.first else {
-                    lines.append(Line(text: "Nothing yet", indent: 14, dim: true))
-                    continue
-                }
-                let took = event.seconds.map { " · \($0)s" } ?? ""
-                lines.append(Line(text: "\(icons[event.kind] ?? "•") \(clip(event.summary, 48))\(took) · \(ago(event.at))", indent: 14,
-                                  dim: true, link: chat.link))
-                if latest.count > 1 {
-                    lines.append(Line(text: "+\(latest.count - 1) earlier", indent: 14, dim: true, link: chat.link))
-                }
-            }
-        }
-
-        if chats.contains(where: { $0.link != nil }) {
-            lines.append(Line(text: "Click a chat to open it in Claude", dim: true))
-        }
-        bubbleView.lines = lines
-        bubbleView.accent = view.status.color
-        showBubble()
+        chatList.chats = chats
+        chatList.usage = usage
+        chatList.title = currentLook.name ?? "Mochi"
+        chatList.titleColor = view.status.color
+        chatList.subtitle = chats.isEmpty ? "No Claude chats yet"
+            : "\(open) open · \(view.status.label)" + (notes > 0 ? " · \(notes) note\(notes == 1 ? "" : "s")" : "")
+        chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
+        showList()
     }
 
     func showBubble() {
+        bubbleFrame.scroll.documentView = bubbleView
         let size = bubbleView.fittingSize(maxWidth: 460)
         // The lines take their full height; the bubble stops growing and scrolls past the cap
         bubble.setContentSize(NSSize(width: size.width + 8, height: min(size.height, bubbleMaxHeight) + 8))
@@ -2903,6 +3092,19 @@ final class NotePanel: NSPanel {
         bubbleView.needsDisplay = true
         bubble.invalidateCursorRects(for: bubbleView)
         bubble.acceptsMouseMovedEvents = true // so a chat's line underlines under the pointer
+        bubble.orderFrontRegardless()
+        placeCards()
+    }
+
+    /// Shows her chat list in the bubble, sized to fit, scrolling past the cap
+    func showList() {
+        let height = chatList.fittingHeight()
+        chatList.frame = NSRect(x: 0, y: 0, width: ChatListView.width, height: height)
+        bubbleFrame.scroll.documentView = chatList
+        bubble.setContentSize(NSSize(width: ChatListView.width + 8, height: min(height, bubbleMaxHeight) + 8))
+        bubbleFrame.accent = view.status.color
+        tintGlass(bubbleGlass, view.status.color)
+        chatList.needsDisplay = true
         bubble.orderFrontRegardless()
         placeCards()
     }
