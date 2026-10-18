@@ -210,6 +210,12 @@ func quietEndsText(until: Double) -> String {
     until >= quietForever ? "" : Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened)
 }
 
+/// The line at the top of the list naming the chats running right now, or nil when none is running
+func runningNowText(_ chats: [(title: String, status: Status)]) -> String? {
+    let names = chats.filter { $0.status == .running }.map { clip($0.title, 32) }
+    return names.isEmpty ? nil : "Running now: " + names.joined(separator: ", ")
+}
+
 /// The plugin's reports never delete themselves: a chat's report goes after a week untouched, and its answer
 /// file after two weeks, so Mochi's files stay small
 func pruneOldSessions() {
@@ -2832,8 +2838,12 @@ final class NotePanel: NSPanel {
             lines.append(Line(text: "Start a Claude chat and I'll tell you how it goes!", dim: true))
         }
 
-        // Open chats first, the most urgent on top, then the most recent
+        // Chats running right now on top, then open chats, the most urgent first, then the most recent
+        if let runningLine = runningNowText(chats.map { ($0.title, $0.status) }) {
+            lines.append(Line(text: runningLine, bold: true, color: Status.running.color))
+        }
         let sorted = chats.sorted {
+            if ($0.status == .running) != ($1.status == .running) { return $0.status == .running }
             if $0.isOpen != $1.isOpen { return $0.isOpen }
             if $0.isRecent != $1.isRecent { return $0.isRecent }
             if $0.status.urgency != $1.status.urgency { return $0.status.urgency > $1.status.urgency }
