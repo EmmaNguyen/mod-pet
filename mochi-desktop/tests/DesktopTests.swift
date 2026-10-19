@@ -150,7 +150,8 @@ check("a fact index past the end is clamped", pickThought(usage: nil, readyChats
 // What may pop up: with "only tell me when something needs my approval" on, only approvals
 check("approvals always pop up", noticeAllowed(.approval, onlyApprovals: true) && noticeAllowed(.approval, onlyApprovals: false))
 check("finished work, usage and thoughts stay quiet when only approvals are wanted",
-      !noticeAllowed(.finished, onlyApprovals: true) && !noticeAllowed(.usage, onlyApprovals: true) && !noticeAllowed(.thought, onlyApprovals: true))
+      !noticeAllowed(.finished, onlyApprovals: true) && !noticeAllowed(.usage, onlyApprovals: true))
+check("her thoughts still pop up when only approvals is on", noticeAllowed(.thought, onlyApprovals: true))
 check("everything pops up when only approvals is off", noticeAllowed(.finished, onlyApprovals: false) && noticeAllowed(.usage, onlyApprovals: false) && noticeAllowed(.thought, onlyApprovals: false))
 
 // Which requests need you: changes do, looking does not

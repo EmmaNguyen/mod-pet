@@ -194,9 +194,10 @@ func needsYou(waiting: String) -> Bool {
 /// The kinds of thing Mochi may pop up for: a chat that needs your OK, finished work, a usage warning, or one of her thoughts
 enum Notice { case approval, finished, usage, thought }
 
-/// Whether a notice may pop up. With "only tell me when something needs my approval" on, only approvals do.
+/// Whether a notice may pop up. With "only tell me when something needs my approval" on, approvals and her
+/// thoughts (such as how long is left in your 5-hour window) still pop up; finished work and usage warnings do not
 func noticeAllowed(_ notice: Notice, onlyApprovals: Bool) -> Bool {
-    notice == .approval || !onlyApprovals
+    notice == .approval || notice == .thought || !onlyApprovals
 }
 
 /// Whether she is quiet at `now` (seconds since 1970): quiet until the time she was set to, and never when that is 0
