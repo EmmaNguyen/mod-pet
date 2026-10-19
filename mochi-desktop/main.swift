@@ -636,7 +636,7 @@ final class MochiView: NSView {
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
         drawPixels(currentLook.art, blinking: blinking)
-        if usageTired {
+        if usageTired || lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) != nil {
             // A lid: the top half of each eye in the body colour, so she looks half-closed
             face.setFill()
             for col in [3, 11] { NSRect(x: CGFloat(col) * scale, y: 7 * scale, width: 2 * scale, height: scale / 2).fill() }
@@ -646,6 +646,9 @@ final class MochiView: NSView {
         if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        if let minutes = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
+            drawCountdown(minutes, at: NSPoint(x: originX + petSize + 15, y: originY + 6))
+        }
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
@@ -857,6 +860,18 @@ final class MochiView: NSView {
         text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
     }
 
+    /// The countdown to the end of the 5-hour window: a small amber circle with the minutes left
+    private func drawCountdown(_ minutes: Int, at center: NSPoint) {
+        let r: CGFloat = 9
+        NSColor(hex: 0xD4A017).setFill()
+        NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)).fill()
+        let text = NSAttributedString(string: "\(minutes)", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: NSColor(hex: 0x412402),
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
+    }
+
     /// How many things finished that you have not looked at yet
     private func drawUnread(at center: NSPoint) {
         let r: CGFloat = 8
@@ -1051,6 +1066,14 @@ func drawButton(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
     }
     drawLine(title, .systemFont(ofSize: 12, weight: .medium), filled ? .white : .labelColor,
              x: rect.minX, y: rect.minY + 3, width: rect.width, align: .center, draw: true)
+}
+
+/// Whole minutes left in the 5-hour window, only in its last 30 minutes: 30 down to 0. Nil otherwise
+func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
+    guard let resets else { return nil }
+    let left = resets.timeIntervalSince(now)
+    guard left > 0, left <= 30 * 60 else { return nil }
+    return Int(left / 60)
 }
 
 /// The state of her usage, from the fuller of the two limits
