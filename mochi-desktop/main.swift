@@ -652,7 +652,7 @@ final class MochiView: NSView {
         if showsStatusBadge(status) { drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6)) }
         // The countdown sits on the right, level with the status badge
         if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
-            drawCountdown(minutesLeft, at: NSPoint(x: originX + petSize + 15, y: originY + 6))
+            drawCountdown(minutesLeft, at: NSPoint(x: originX + petSize + 9, y: originY + 20)) // beside the right ear, below the status badge
         }
         badgeRect = showsStatusBadge(status) ? NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18) : .zero
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
