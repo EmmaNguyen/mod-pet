@@ -2867,10 +2867,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         usagePanel.footnote = updating ? "Checking now…" : fresh ? "Checked \(when)" : "Last read \(when)"
         showUsagePanel(accent: Usage.color(worst))
         mochiLog("usage box shown: \(usageState(worst: worst)), \(updating ? "checking" : fresh ? "fresh" : "last read")")
-        // It closes on its own a few seconds after a reading, and stays open while Claude is being asked
+        // It closes on its own fifteen seconds after a reading, long enough to read it, and stays open while Claude is being asked
         hideBubble?.invalidate()
         guard !updating else { return }
-        hideBubble = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+        hideBubble = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
             self?.bubble.orderOut(nil)
             self?.placeCards()
         }
