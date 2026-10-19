@@ -650,13 +650,13 @@ final class MochiView: NSView {
 
         // The status badge: a red "!" for a chat waiting for you is not drawn, but her pose still shows it
         if showsStatusBadge(status) { drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6)) }
-        // The countdown sits on the right, level with the status badge
-        if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
-            drawCountdown(minutesLeft, at: NSPoint(x: originX + petSize + 9, y: originY + 20)) // beside the right ear, below the status badge
-        }
         badgeRect = showsStatusBadge(status) ? NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18) : .zero
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
+        // The countdown sits on the right end of the usage bar, over its corner
+        if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
+            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX + 3, y: usagePill.midY))
+        }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening
         if nearby || forceShow || recording {
             drawButtons()
