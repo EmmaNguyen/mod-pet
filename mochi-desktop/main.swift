@@ -1034,6 +1034,32 @@ final class BubbleView: NSView {
 }
 
 /// The rounded box behind the bubble; the lines scroll inside it
+/// A reset offer: how many resets you have, and the moment you must use them by
+struct ResetOffer {
+    let count: Int
+    let useBy: Date
+}
+
+/// Whole days left to use a reset offer, rounding a part day up. Nil once it has passed
+func resetOfferDaysLeft(useBy: Date, now: Date) -> Int? {
+    let left = useBy.timeIntervalSince(now)
+    guard left > 0 else { return nil }
+    return Int(ceil(left / 86400))
+}
+
+/// Reads "yyyy-mm-dd, count" into an offer, usable until the end of that day. Nil if it does not read
+func parseResetOffer(_ text: String, calendar: Calendar = .current) -> ResetOffer? {
+    let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    guard parts.count == 2, let count = Int(parts[1]), count > 0 else { return nil }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    guard let day = formatter.date(from: parts[0]),
+          let end = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: day) else { return nil }
+    return ResetOffer(count: count, useBy: end)
+}
+
 /// A colour that follows light or dark mode, for the glass: one value in light, one in dark
 func adaptiveColor(_ light: NSColor, _ dark: NSColor) -> NSColor {
     NSColor(name: nil) { appearance in
@@ -1090,6 +1116,8 @@ func usageState(worst: Int) -> String {
 final class UsagePanelView: NSView {
     static let width: CGFloat = 340
     var usage: Usage?
+    /// A reset offer to show in the box, when there is one still open
+    var resetOffer: ResetOffer?
     /// True while Claude is being asked for a fresh reading
     var checking = false
     /// The last check, in a few words: "Checked 2:14 PM"
@@ -1129,6 +1157,28 @@ final class UsagePanelView: NSView {
         }
         drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 2, width: pill.width, align: .center, draw: draw)
         y += 32
+
+        // A reset offer you can still use: how many, the day to use it by, and the days left
+        if let offer = resetOffer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: Date()) {
+            let box = NSRect(x: pad, y: y, width: inner, height: 50)
+            if draw {
+                adaptiveColor(NSColor(hex: 0xFAEEDA), NSColor(hex: 0x4A3510)).setFill()
+                NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12).fill()
+                NSColor(hex: 0xEF9F27).setStroke()
+                let edge = NSBezierPath(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), xRadius: 12, yRadius: 12)
+                edge.lineWidth = 0.5
+                edge.stroke()
+            }
+            let day = DateFormatter()
+            day.dateFormat = "EEE, d MMMM"
+            let headline = "\(offer.count) reset\(offer.count == 1 ? "" : "s") offer\(offer.count == 1 ? "" : "s") available"
+            drawLine(headline, .systemFont(ofSize: 13, weight: .medium), adaptiveColor(NSColor(hex: 0x412402), NSColor(hex: 0xFAEEDA)),
+                     x: pad + 12, y: y + 8, width: inner - 24, draw: draw)
+            drawLine("Use it before \(day.string(from: offer.useBy)) · \(days) day\(days == 1 ? "" : "s") left",
+                     .systemFont(ofSize: 12), adaptiveColor(NSColor(hex: 0x633806), NSColor(hex: 0xF5D9A6)),
+                     x: pad + 12, y: y + 27, width: inner - 24, draw: draw)
+            y += 60
+        }
 
         // Out of usage: when you can continue
         if let back = usage.backText {
@@ -2619,6 +2669,25 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         set { UserDefaults.standard.set(newValue, forKey: "needsSound") }
     }
 
+/// The reset offer you entered, kept on this Mac; nil when there is none
+var resetOffer: ResetOffer? {
+    get {
+        let defaults = UserDefaults.standard
+        guard let useBy = defaults.object(forKey: "resetOfferUseBy") as? Double else { return nil }
+        return ResetOffer(count: defaults.integer(forKey: "resetOfferCount"), useBy: Date(timeIntervalSince1970: useBy))
+    }
+    set {
+        let defaults = UserDefaults.standard
+        if let newValue {
+            defaults.set(newValue.useBy.timeIntervalSince1970, forKey: "resetOfferUseBy")
+            defaults.set(newValue.count, forKey: "resetOfferCount")
+        } else {
+            defaults.removeObject(forKey: "resetOfferUseBy")
+            defaults.removeObject(forKey: "resetOfferCount")
+        }
+    }
+}
+
 /// When she stops being quiet, in seconds since 1970. 0 when she is not quiet.
 var quietUntil: Double {
     get { UserDefaults.standard.double(forKey: "quietUntil") }
@@ -2891,6 +2960,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         clock.dateFormat = "h:mm a"
         let when = clock.string(from: Date(timeIntervalSince1970: usage.at / 1000))
         usagePanel.usage = usage
+        usagePanel.resetOffer = resetOffer
         usagePanel.checking = updating
         usagePanel.footnote = updating ? "Checking now…" : fresh ? "Checked \(when)" : "Last read \(when)"
         showUsagePanel(accent: Usage.color(worst))
@@ -3582,6 +3652,11 @@ final class NotePanel: NSPanel {
             forever.target = self
             forever.tag = 2
         }
+        let offerTitle = resetOffer == nil ? "Add a reset offer…" : "Change reset offer…"
+        menu.addItem(withTitle: offerTitle, action: #selector(menuResetOffer), keyEquivalent: "").target = self
+        if resetOffer != nil {
+            menu.addItem(withTitle: "Remove reset offer", action: #selector(menuRemoveResetOffer), keyEquivalent: "").target = self
+        }
         let login = menu.addItem(withTitle: "Open at login", action: #selector(menuToggleLogin), keyEquivalent: "")
         login.target = self
         login.state = opensAtLogin ? .on : .off
@@ -3628,6 +3703,38 @@ final class NotePanel: NSPanel {
             quietUntil = Date().timeIntervalSince1970 + 3600
             mochiLog("quiet: for an hour, from the menu")
         }
+    }
+
+    /// Asks for a reset offer as "yyyy-mm-dd, count", the day to use it by and how many resets you have
+    @objc func menuResetOffer() {
+        let alert = NSAlert()
+        alert.messageText = "Reset offer"
+        alert.informativeText = "Type the last day to use it, as yyyy-mm-dd, then a comma and how many resets you have."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "2026-10-22, 1"
+        if let resetOffer {
+            let day = DateFormatter()
+            day.dateFormat = "yyyy-MM-dd"
+            field.stringValue = "\(day.string(from: resetOffer.useBy)), \(resetOffer.count)"
+        }
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let offer = parseResetOffer(field.stringValue) else {
+            mochiLog("reset offer: could not read \(field.stringValue)")
+            showCard(title: "Reset offer not saved", body: "Type a date and a count, like 2026-10-22, 1", color: Status.blocked.color, link: nil)
+            return
+        }
+        resetOffer = offer
+        mochiLog("reset offer: \(offer.count) until \(offer.useBy)")
+    }
+
+    /// Takes the reset offer off the box
+    @objc func menuRemoveResetOffer() {
+        resetOffer = nil
+        mochiLog("reset offer: removed")
     }
 
     @objc func menuNotifications() { if !bubble.isVisible { toggleNotifications() } }

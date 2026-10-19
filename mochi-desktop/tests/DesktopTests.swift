@@ -231,4 +231,15 @@ check("over 60 minutes left shows nothing", lowTimeMinutes(resets: lowNow.adding
 check("a window that has reset shows nothing", lowTimeMinutes(resets: lowNow.addingTimeInterval(-60), now: lowNow) == nil)
 check("no reset time shows nothing", lowTimeMinutes(resets: nil, now: lowNow) == nil)
 
+// A reset offer: read as "yyyy-mm-dd, count", usable to the end of that day, and counted in days left
+let offerGood = parseResetOffer("2026-10-22, 1")
+check("a reset offer reads its count", offerGood?.count == 1)
+check("a reset offer is usable until the end of its day", offerGood.map { Calendar.current.component(.day, from: $0.useBy) } == 22 && offerGood.map { Calendar.current.component(.hour, from: $0.useBy) } == 23)
+check("a reset offer without a count does not read", parseResetOffer("2026-10-22") == nil)
+check("a reset offer with no resets does not read", parseResetOffer("2026-10-22, 0") == nil)
+check("a reset offer with a bad date does not read", parseResetOffer("soon, 1") == nil)
+let offerNow = Date(timeIntervalSince1970: 1_000_000)
+check("2.5 days left shows 3 days", resetOfferDaysLeft(useBy: offerNow.addingTimeInterval(2.5 * 86400), now: offerNow) == 3)
+check("an offer that has passed shows no days", resetOfferDaysLeft(useBy: offerNow.addingTimeInterval(-1), now: offerNow) == nil)
+
 print("ALL PASSED")
