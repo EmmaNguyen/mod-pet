@@ -868,10 +868,10 @@ final class MochiView: NSView {
     /// The countdown to the end of the 5-hour window: a small amber circle with the minutes left
     private func drawCountdown(_ minutes: Int, at center: NSPoint) {
         let r: CGFloat = 9
-        NSColor(hex: 0xD4A017).setFill()
+        (countdownIsUrgent(minutes) ? NSColor(hex: 0xE03131) : NSColor(hex: 0xF08C00)).setFill()
         NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)).fill()
         let text = NSAttributedString(string: "\(minutes)", attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: NSColor(hex: 0x412402),
+            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: NSColor.white,
         ])
         let size = text.size()
         text.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
@@ -1080,6 +1080,9 @@ func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
     guard left > 0, left <= 60 * 60 else { return nil }
     return Int(left / 60)
 }
+
+/// The countdown turns red in the last 30 minutes of the 5-hour window, and is orange before that
+func countdownIsUrgent(_ minutes: Int) -> Bool { minutes <= 30 }
 
 /// The state of her usage, from the fuller of the two limits
 func usageState(worst: Int) -> String {

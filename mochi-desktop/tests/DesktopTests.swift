@@ -235,4 +235,8 @@ check("no reset time shows nothing", lowTimeMinutes(resets: nil, now: lowNow) ==
 check("a waiting chat has no status badge", !showsStatusBadge(.needsInput))
 check("the other statuses keep their badge", showsStatusBadge(.running) && showsStatusBadge(.ready) && showsStatusBadge(.idle))
 
+// The countdown is orange from 60 to 31 minutes, and red at 30 and below
+check("the countdown is orange above 30 minutes", !countdownIsUrgent(60) && !countdownIsUrgent(31))
+check("the countdown is red at 30 minutes and below", countdownIsUrgent(30) && countdownIsUrgent(0))
+
 print("ALL PASSED")
