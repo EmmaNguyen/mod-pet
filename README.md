@@ -8,6 +8,16 @@
 
 Mochi is a pixel-art companion for [Claude Code](https://claude.com/claude-code) on macOS. She sits above your message box, floats on your desktop, and keeps you informed about every chat without you having to watch them.
 
+## Install in 3 steps
+
+1. Install the Xcode command line tools: `xcode-select --install`. Mochi builds from source, so this is required.
+2. Download this repository, open Claude Code in the folder, and say: *Follow CLAUDE-SETUP.md in this folder to set up Mochi.*
+3. Mochi appears in the bottom-right corner of the screen. Allow notifications when macOS asks.
+
+Mochi needs macOS 13 or later. The app is not notarised yet, so macOS may show a warning the first time you open it. The full steps are in [CLAUDE-SETUP.md](CLAUDE-SETUP.md).
+
+Press and launch assets are in [media/](media/README.md).
+
 ## Features
 
 - **Status at a glance.** Working, needs your OK, ready, or blocked, shown by her pose, her badge, and her colours.
