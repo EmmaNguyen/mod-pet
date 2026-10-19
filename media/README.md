@@ -17,21 +17,22 @@ Press and launch assets for Mochi, the pixel-art companion for Claude Code on ma
 | `posts/show-hn.md` | Show HN title and first comment |
 | `posts/reddit-claudeai.md` | r/ClaudeAI title and body |
 | `posts/x-bluesky.md` | Three-post X and Bluesky draft |
-| `screenshots/README.md` | Shot list for the real screenshots, not yet captured |
+| `screenshots/` | Eleven screenshots of the app, drawn from its real views with made-up chats. See [screenshots/README.md](screenshots/README.md) |
+| `snapshots.sh` | Redraws the screenshots: `sh media/snapshots.sh` |
 
 ## Rebuilding the images
 
-The images are generated from the app's own sprite grid and skin palettes, so they stay accurate after UI changes:
+The logo, skin images, GIF and social cards are generated from the app's own sprite grid and skin palettes, so they stay accurate after UI changes:
 
 ```bash
 python3 media/build.py
 ```
 
-It needs Pillow (`pip3 install pillow`). It writes only into `media/`.
+It needs Pillow (`pip3 install pillow`). It writes only into `media/`. The screenshots are separate: `sh media/snapshots.sh` draws them from the app's real views and needs only the Xcode command line tools.
 
 ## Still to do
 
-- Real screenshots of the running app (see [screenshots/README.md](screenshots/README.md)).
+- Real screen captures for the Liquid Glass look, the quick note box and the right-click menu (see [screenshots/README.md](screenshots/README.md)).
 - Decide the licence for these assets. Code stays MIT. A proposal is CC BY 4.0 for images and copy.
 - Check the "mods announced 1 October 2026" date against Anthropic's documentation before using it anywhere.
 - Post the drafts yourself, after checking each channel's rules.
