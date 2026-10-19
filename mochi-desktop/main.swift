@@ -655,7 +655,7 @@ final class MochiView: NSView {
         if let usage { drawUsage(usage) }
         // The countdown sits on the right end of the usage bar, over its corner
         if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
-            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 6, y: 11)) // above the usage bar, at its right end
+            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 6, y: 16)) // at the right end of the usage bar, on its top edge
         }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening
         if nearby || forceShow || recording {
