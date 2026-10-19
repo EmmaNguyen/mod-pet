@@ -230,4 +230,8 @@ check("over 30 minutes left shows nothing", lowTimeMinutes(resets: lowNow.adding
 check("a window that has reset shows nothing", lowTimeMinutes(resets: lowNow.addingTimeInterval(-60), now: lowNow) == nil)
 check("no reset time shows nothing", lowTimeMinutes(resets: nil, now: lowNow) == nil)
 
+// The red "!" badge is not drawn; the other statuses keep their badge
+check("a waiting chat has no status badge", !showsStatusBadge(.needsInput))
+check("the other statuses keep their badge", showsStatusBadge(.running) && showsStatusBadge(.ready) && showsStatusBadge(.idle))
+
 print("ALL PASSED")

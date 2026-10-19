@@ -194,6 +194,9 @@ func needsYou(waiting: String) -> Bool {
 /// The kinds of thing Mochi may pop up for: a chat that needs your OK, finished work, a usage warning, or one of her thoughts
 enum Notice { case approval, finished, usage, thought }
 
+/// Whether her status badge is drawn: not for a chat waiting for you, which her pose and the list still show
+func showsStatusBadge(_ status: Status) -> Bool { status != .needsInput }
+
 /// Whether a notice may pop up. With "only tell me when something needs my approval" on, approvals and her
 /// thoughts (such as how long is left in your 5-hour window) still pop up; finished work and usage warnings do not
 func noticeAllowed(_ notice: Notice, onlyApprovals: Bool) -> Bool {
@@ -645,11 +648,12 @@ final class MochiView: NSView {
         ctx.restoreGState()
         if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
-        drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        // The status badge: a red "!" for a chat waiting for you is not drawn, but her pose still shows it
+        if showsStatusBadge(status) { drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6)) }
         if let minutes = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
             drawCountdown(minutes, at: NSPoint(x: originX + petSize + 15, y: originY + 6))
         }
-        badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
+        badgeRect = showsStatusBadge(status) ? NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18) : .zero
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
         if let usage { drawUsage(usage) }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening
