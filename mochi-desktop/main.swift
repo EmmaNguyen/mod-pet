@@ -2266,7 +2266,8 @@ func pickThought(usage: Usage?, readyChats: Int, now: Date, roll: Double, factIn
 
 /// The bubble above her: a white thought with its icon, two lines of text, and three dots leading to her
 final class ThoughtView: NSView {
-    static let size = NSSize(width: 330, height: 128)
+    /// As small as the notification cards: the same width, and a short bubble
+    static let size = NSSize(width: 300, height: 64)
     let thought: Thought
     var onDismiss: (() -> Void)?
     override var isFlipped: Bool { true }
@@ -2288,33 +2289,33 @@ final class ThoughtView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let body = NSRect(x: 2, y: 2, width: bounds.width - 4, height: 92)
-        let shape = NSBezierPath(roundedRect: body, xRadius: 24, yRadius: 24)
+        let body = NSRect(x: 2, y: 2, width: bounds.width - 4, height: 46)
+        let shape = NSBezierPath(roundedRect: body, xRadius: 16, yRadius: 16)
         NSColor.white.setFill()
         shape.fill()
         NSColor(hex: 0xE6D5B8).setStroke()
-        shape.lineWidth = 2
+        shape.lineWidth = 1.5
         shape.stroke()
 
-        // The icon, in a soft circle of its own colour
+        // The icon, in a small circle of its own colour
         accent.withAlphaComponent(0.22).setFill()
-        NSBezierPath(ovalIn: NSRect(x: 20, y: body.midY - 24, width: 48, height: 48)).fill()
-        drawIcon(center: NSPoint(x: 44, y: body.midY))
+        NSBezierPath(ovalIn: NSRect(x: 12, y: body.midY - 16, width: 32, height: 32)).fill()
+        drawIcon(center: NSPoint(x: 28, y: body.midY))
 
         let big = NSAttributedString(string: thought.big, attributes: [
-            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor(hex: 0x3B2A20),
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor(hex: 0x3B2A20),
         ])
-        big.draw(at: NSPoint(x: 84, y: 22))
+        big.draw(at: NSPoint(x: 54, y: 9))
         let small = NSMutableParagraphStyle()
-        small.lineBreakMode = .byWordWrapping
+        small.lineBreakMode = .byTruncatingTail
         NSAttributedString(string: thought.small, attributes: [
-            .font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: NSColor(hex: 0x8A7866), .paragraphStyle: small,
-        ]).draw(in: NSRect(x: 84, y: 46, width: body.width - 104, height: 40))
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor(hex: 0x8A7866), .paragraphStyle: small,
+        ]).draw(in: NSRect(x: 54, y: 26, width: body.width - 66, height: 16))
 
-        // Three dots leading down to her, the largest nearest the bubble
+        // Two small dots leading down to her
         NSColor.white.setFill()
         NSColor(hex: 0xE6D5B8).setStroke()
-        for (radius, y, dx) in [(6.5, 103.0, 0.0), (4.5, 116.0, -8.0), (2.5, 125.0, -14.0)] {
+        for (radius, y, dx) in [(3.5, 53.0, 0.0), (2.2, 60.0, -6.0)] {
             let dot = NSBezierPath(ovalIn: NSRect(x: bounds.width * 0.4 + dx - radius, y: y - radius, width: radius * 2, height: radius * 2))
             dot.lineWidth = 1.5
             dot.fill()
