@@ -633,7 +633,7 @@ final class MochiView: NSView {
         usageTired = (usage.map { max($0.fiveHour, $0.week) } ?? 0) >= 70
 
         let originX = (bounds.width - petSize) / 2
-        let originY = 30 - lift // the usage label above her, the two buttons below
+        let originY = 46 - lift // the usage label above her, the two buttons below
         ctx.saveGState()
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
@@ -655,7 +655,7 @@ final class MochiView: NSView {
         if let usage { drawUsage(usage) }
         // The countdown sits on the right end of the usage bar, over its corner
         if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
-            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX + 3, y: usagePill.midY))
+            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 6, y: 9)) // above the usage bar, at its right end
         }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening
         if nearby || forceShow || recording {
@@ -684,7 +684,7 @@ final class MochiView: NSView {
 
     /// Two round buttons under her: a quick note to start a session, and talk to Mochi (red while listening)
     private func drawButtons() {
-        let y: CGFloat = 126
+        let y: CGFloat = 142
         let center = bounds.width / 2
         let spread: CGFloat = 36
         quickRect = NSRect(x: center - spread - 13, y: y - 13, width: 26, height: 26)
@@ -858,7 +858,7 @@ final class MochiView: NSView {
         ])
         let size = text.size()
         // A few points below the top edge, so the rounded ends are not cut off by the window
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 4, width: size.width + 18, height: 20)
+        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 20, width: size.width + 18, height: 20)
         usagePill = pill
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
@@ -2542,7 +2542,7 @@ enum Shortcuts {
 }
 
 final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    let window = floatingPanel(size: NSSize(width: 130, height: 146))
+    let window = floatingPanel(size: NSSize(width: 130, height: 162))
     let view = MochiView()
     let bubble = floatingPanel(size: NSSize(width: 260, height: 40))
     let bubbleView = BubbleView()
