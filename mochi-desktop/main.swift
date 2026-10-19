@@ -1073,11 +1073,11 @@ func drawButton(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
              x: rect.minX, y: rect.minY + 3, width: rect.width, align: .center, draw: true)
 }
 
-/// Whole minutes left in the 5-hour window, only in its last 30 minutes: 30 down to 0. Nil otherwise
+/// Whole minutes left in the 5-hour window, only in its last 60 minutes: 60 down to 0. Nil otherwise
 func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
     guard let resets else { return nil }
     let left = resets.timeIntervalSince(now)
-    guard left > 0, left <= 30 * 60 else { return nil }
+    guard left > 0, left <= 60 * 60 else { return nil }
     return Int(left / 60)
 }
 

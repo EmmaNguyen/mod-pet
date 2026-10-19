@@ -222,11 +222,12 @@ check("a finished Auto chat is not", !approvingOnItsOwn(autoDone))
 // The chat list leaves room on the right for the scrollbar
 check("the chat list keeps a gutter for the scrollbar", ChatListView.gutter >= 20)
 
-// The last thirty minutes of the 5-hour window count down from 30 to 0
+// The last hour of the 5-hour window counts down from 60 to 0
 let lowNow = Date(timeIntervalSince1970: 1_000_000)
 check("25 minutes left shows 25", lowTimeMinutes(resets: lowNow.addingTimeInterval(25 * 60 + 30), now: lowNow) == 25)
-check("30 minutes exactly shows 30", lowTimeMinutes(resets: lowNow.addingTimeInterval(30 * 60), now: lowNow) == 30)
-check("over 30 minutes left shows nothing", lowTimeMinutes(resets: lowNow.addingTimeInterval(31 * 60), now: lowNow) == nil)
+check("45 minutes left shows 45", lowTimeMinutes(resets: lowNow.addingTimeInterval(45 * 60 + 30), now: lowNow) == 45)
+check("60 minutes exactly shows 60", lowTimeMinutes(resets: lowNow.addingTimeInterval(60 * 60), now: lowNow) == 60)
+check("over 60 minutes left shows nothing", lowTimeMinutes(resets: lowNow.addingTimeInterval(61 * 60), now: lowNow) == nil)
 check("a window that has reset shows nothing", lowTimeMinutes(resets: lowNow.addingTimeInterval(-60), now: lowNow) == nil)
 check("no reset time shows nothing", lowTimeMinutes(resets: nil, now: lowNow) == nil)
 
