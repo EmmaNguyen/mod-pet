@@ -92,8 +92,8 @@ img { max-width: 100%; height: auto; display: block; }
 .top nav a { color: var(--ink); text-decoration: none; }
 .top nav a:hover { text-decoration: underline; }
 .theme {
-  font: inherit; font-weight: 700; font-size: 0.9rem; cursor: pointer;
-  padding: 6px 14px; border-radius: 999px; border: 2px solid var(--ink);
+  font: inherit; font-size: 1.15rem; line-height: 1; cursor: pointer;
+  padding: 2px 4px; border: 0; border-radius: 6px;
   background: transparent; color: var(--ink);
 }
 
@@ -181,7 +181,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <a href="#screens">Screens</a>
     <a href="#install">Install</a>
     <a href="https://github.com/EmmaNguyen/mod-pet">GitHub</a>
-    <button class="theme" type="button" id="theme-toggle" aria-label="Switch between light and dark">Dark</button>
+    <button class="theme" type="button" id="theme-toggle" aria-label="Switch to light theme">&#9790;</button>
   </nav>
 </header>
 
@@ -339,7 +339,12 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     };
     var toggle = document.getElementById('theme-toggle');
-    var label = function () { toggle.textContent = current() === 'dark' ? 'Light' : 'Dark'; };
+    // The symbol shows the theme you will switch to: a sun in dark mode, a moon in light mode
+    var label = function () {
+      var dark = current() === 'dark';
+      toggle.textContent = dark ? '\u2600\uFE0E' : '\u263E\uFE0E';
+      toggle.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+    };
     toggle.addEventListener('click', function () {
       var next = current() === 'dark' ? 'light' : 'dark';
       root.setAttribute('data-theme', next);
