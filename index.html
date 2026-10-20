@@ -91,6 +91,11 @@ img { max-width: 100%; height: auto; display: block; }
 .top nav { display: flex; gap: 18px; flex-wrap: wrap; font-weight: 700; }
 .top nav a { color: var(--ink); text-decoration: none; }
 .top nav a:hover { text-decoration: underline; }
+.theme {
+  font: inherit; font-weight: 700; font-size: 0.9rem; cursor: pointer;
+  padding: 6px 14px; border-radius: 999px; border: 2px solid var(--ink);
+  background: transparent; color: var(--ink);
+}
 
 /* Hero */
 .hero {
@@ -176,6 +181,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <a href="#screens">Screens</a>
     <a href="#install">Install</a>
     <a href="https://github.com/EmmaNguyen/mod-pet">GitHub</a>
+    <button class="theme" type="button" id="theme-toggle" aria-label="Switch between light and dark">Dark</button>
   </nav>
 </header>
 
@@ -320,6 +326,29 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   </div>
 </footer>
 
+<script>
+  // Theme: the system setting until the reader picks one, then their choice, kept in this browser only.
+  (function () {
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = localStorage.getItem('mochi-theme'); } catch (e) {}
+    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+    var current = function () {
+      var set = root.getAttribute('data-theme');
+      if (set) return set;
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    };
+    var toggle = document.getElementById('theme-toggle');
+    var label = function () { toggle.textContent = current() === 'dark' ? 'Light' : 'Dark'; };
+    toggle.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('mochi-theme', next); } catch (e) {}
+      label();
+    });
+    label();
+  })();
+</script>
 <script>
   // Copy buttons: write to the clipboard on click, and fall back to selecting the text when the browser refuses.
   document.querySelectorAll('.copy').forEach(function (button) {
