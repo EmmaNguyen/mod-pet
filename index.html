@@ -115,15 +115,6 @@ img { max-width: 100%; height: auto; display: block; }
 .hero-art img { width: 62%; animation: hop 2.4s ease-in-out infinite; image-rendering: pixelated; }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 
-/* Stats */
-.stats {
-  display: grid; gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-}
-.stat { background: var(--surface); border: 2px solid var(--line); border-radius: 18px; padding: 20px; }
-.stat strong { display: block; font-family: var(--pixel); font-size: 2.1rem; line-height: 1.1; color: var(--ink); }
-.stat span { color: var(--muted); font-size: 0.95rem; }
-
 /* Features */
 .features {
   display: grid; gap: 16px; margin-top: 32px;
@@ -202,15 +193,6 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   </div>
   <div class="hero-art">
     <img src="media/logo/mochi-logo-1024.png" alt="Mochi, a pixel-art orange cat">
-  </div>
-</section>
-
-<section aria-label="The project in numbers">
-  <div class="stats">
-    <div class="stat"><strong>100</strong><span>commits in ten days, 9 to 19 October 2026</span></div>
-    <div class="stat"><strong>115</strong><span>commits on the dev branch so far</span></div>
-    <div class="stat"><strong>0</strong><span>network requests in Mochi's own code</span></div>
-    <div class="stat"><strong>MIT</strong><span>open source licence</span></div>
   </div>
 </section>
 
