@@ -4,6 +4,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&family=Silkscreen&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>
+  // Light is the default. A reader's own choice from the switch, kept in this browser only, overrides it.
+  (function () {
+    var theme = 'light';
+    try { var saved = localStorage.getItem('mochi-theme'); if (saved === 'light' || saved === 'dark') theme = saved; } catch (e) {}
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
 <style>
 /* Layout: one column of text, with the screens and features set in their own grids below it.
    Palette: her body orange on warm cream, ink brown for text, lavender for a single quiet accent. */
@@ -327,17 +335,10 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 </footer>
 
 <script>
-  // Theme: the system setting until the reader picks one, then their choice, kept in this browser only.
+  // Theme switch: flips between light and dark, and remembers the choice.
   (function () {
     var root = document.documentElement;
-    var saved = null;
-    try { saved = localStorage.getItem('mochi-theme'); } catch (e) {}
-    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
-    var current = function () {
-      var set = root.getAttribute('data-theme');
-      if (set) return set;
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    };
+    var current = function () { return root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'; };
     var toggle = document.getElementById('theme-toggle');
     // The symbol shows the theme you will switch to: a sun in dark mode, a moon in light mode
     var label = function () {
