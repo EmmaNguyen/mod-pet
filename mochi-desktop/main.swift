@@ -239,6 +239,11 @@ func effectiveMode(app: String?, report: String?) -> String {
 /// Whether a chat in the Claude app had activity in the last two minutes, so it counts as running
 func isActiveNow(updated: Double, now: Double) -> Bool { now - updated < 2 * 60 * 1000 }
 
+/// A chat that stopped goes back to normal after ten minutes, so Mochi does not stay grey for a chat nobody is watching
+func settledStatus(_ status: Status, updated: Double, now: Double) -> Status {
+    status == .blocked && now - updated >= 10 * 60 * 1000 ? .ready : status
+}
+
 /// How many of a chat's news lines show: only the latest, unless the chat is expanded
 func listShownEvents(total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
 
@@ -413,7 +418,8 @@ func readChats() -> [Chat] {
               !([.idle, .ended].contains(status) && (report.log ?? []).isEmpty) // resting or ended, nothing to report: left out
         else { continue }
         let id = url.deletingPathExtension().lastPathComponent
-        live[id] = Chat(id: id, title: report.title ?? "Claude", status: status, log: report.log ?? [],
+        live[id] = Chat(id: id, title: report.title ?? "Claude",
+                        status: settledStatus(status, updated: report.updatedAt ?? 0, now: now), log: report.log ?? [],
                         updatedAt: report.updatedAt ?? 0, link: report.link, waiting: report.waiting ?? "",
                         isRecent: now - (report.updatedAt ?? 0) < recent,
                         requestId: report.requestId ?? "", askedAt: report.askedAt ?? 0, detail: report.detail ?? "",
@@ -444,7 +450,7 @@ func readChats() -> [Chat] {
         // Waiting for you comes first; otherwise a chat active in the last couple of minutes is running
         let status: Status = !needs.isEmpty ? .needsInput
             : isActiveNow(updated: updated, now: now) ? .running
-            : category == "blocked" ? .blocked
+            : category == "blocked" ? settledStatus(.blocked, updated: updated, now: now)
             : category == "completed" ? .ready
             : .idle
         var log: [Event] = []
@@ -3656,6 +3662,7 @@ final class NotePanel: NSPanel {
         tintGlass(bubbleGlass, accent)
         content.needsDisplay = true
         bubble.orderFrontRegardless()
+        mochiLog("bubble: shown \(Int(width))x\(Int(height)) at \(bubble.frame), content \(content.frame), scroll \(bubbleFrame.scroll.documentView?.frame ?? .zero)")
         placeCards()
     }
 

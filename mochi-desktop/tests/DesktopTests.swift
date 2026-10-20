@@ -267,4 +267,9 @@ let linkChats = [
 check("a countdown names the chat it finds by part of its title", chatNamed("redo", in: linkChats)?.id == "a")
 check("a name that matches no open chat finds none", chatNamed("nothing", in: linkChats) == nil)
 
+// A stopped chat goes back to normal after ten minutes
+check("a chat that stopped a minute ago is still stopped", settledStatus(.blocked, updated: 0, now: 60_000) == .blocked)
+check("a chat that stopped ten minutes ago is back to normal", settledStatus(.blocked, updated: 0, now: 600_000) == .ready)
+check("other statuses are not changed by the timeout", settledStatus(.running, updated: 0, now: 9_000_000) == .running)
+
 print("ALL PASSED")
