@@ -279,3 +279,21 @@ do {
     }
     save(s, as: "10-thoughts.png")
 }
+
+// MARK: - Her trot for the demo video: one PNG per frame, on a transparent background, from the app's own view
+
+let walkFolder = outFolder.deletingLastPathComponent().appendingPathComponent("video/walk")
+try? FileManager.default.createDirectory(at: walkFolder, withIntermediateDirectories: true)
+for frame in 0..<24 {
+    let view = mochi(.running, tick: frame)
+    let factor: CGFloat = 4
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * factor),
+                                     pixelsHigh: Int(view.bounds.height * factor), bitsPerSample: 8, samplesPerPixel: 4,
+                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
+                                     bitsPerPixel: 0) else { continue }
+    rep.size = view.bounds.size
+    view.cacheDisplay(in: view.bounds, to: rep)
+    let url = walkFolder.appendingPathComponent(String(format: "walk-%02d.png", frame))
+    try? rep.representation(using: .png, properties: [:])?.write(to: url)
+}
+print("wrote 24 walk frames to \(walkFolder.path)")

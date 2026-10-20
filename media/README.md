@@ -19,6 +19,9 @@ Press and launch assets for Mochi, the pixel-art companion for Claude Code on ma
 | `posts/x-bluesky.md` | Three-post X and Bluesky draft |
 | `screenshots/` | Eleven screenshots of the app, drawn from its real views with made-up chats. See [screenshots/README.md](screenshots/README.md) |
 | `snapshots.sh` | Redraws the screenshots: `sh media/snapshots.sh` |
+| `video/mochi-demo-30s.mp4` | A 30-second demo: the app's screens, a title and end card, with original music |
+| `video/make_demo.py` | Rebuilds the video: `python3 media/video/make_demo.py` (needs Pillow, numpy and ffmpeg) |
+| `video/walk/` | Mochi trotting, 24 transparent frames drawn by the app's own view, used in the video |
 
 ## Rebuilding the images
 
