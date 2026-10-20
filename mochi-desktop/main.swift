@@ -1113,6 +1113,41 @@ func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
     return Int(left / 60)
 }
 
+/// A countdown on one chat, from when it started to when it is up
+struct ChatTimer {
+    let title: String
+    let start: Date
+    let end: Date
+}
+
+/// What a mochi:// link asks for: a countdown on a chat, or stopping one
+enum MochiLink: Equatable {
+    case countdown(chat: String, minutes: Int)
+    case stop(chat: String?)
+}
+
+/// Reads "mochi://countdown?chat=Redo%20the%20search&minutes=47" or "mochi://stop?chat=..." into a request
+func parseMochiLink(_ url: URL) -> MochiLink? {
+    guard url.scheme == "mochi", let host = url.host else { return nil }
+    let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+    switch host {
+    case "countdown":
+        guard let chat = value("chat"), !chat.isEmpty, let minutes = Int(value("minutes") ?? ""), minutes > 0 else { return nil }
+        return .countdown(chat: chat, minutes: minutes)
+    case "stop":
+        return .stop(chat: value("chat"))
+    default:
+        return nil
+    }
+}
+
+/// The chat a name means: the open chat whose title contains it, most recent first
+func chatNamed(_ name: String, in chats: [Chat]) -> Chat? {
+    let key = name.lowercased()
+    return chats.filter { $0.isOpen && $0.title.lowercased().contains(key) }.max { $0.updatedAt < $1.updatedAt }
+}
+
 /// How long a chat's last finished turn took, in seconds: the estimate for its next run. Nil when none is known
 func taskEstimate(_ log: [Event]) -> Int? {
     log.filter { $0.seconds != nil }.max { ($0.at ?? 0) < ($1.at ?? 0) }?.seconds
@@ -1317,6 +1352,8 @@ final class ChatListView: NSView {
     var expanded = Set<String>()
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
+    /// The countdowns started from a mochi:// link, by chat
+    var countdowns: [String: ChatTimer] = [:]
     var onAnswer: ((Chat, String) -> Void)?
     /// Asked when the list must be sized again, such as after "Show earlier"
     var onRelayout: (() -> Void)?
@@ -1483,6 +1520,24 @@ final class ChatListView: NSView {
         }
         label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
         cy += 24
+
+        // A countdown you started: the minutes left, and a bar that fills to the end
+        if let countdown = countdowns[chat.id] {
+            let total = countdown.end.timeIntervalSince(countdown.start)
+            let left = countdown.end.timeIntervalSinceNow
+            let text = left > 0 ? "Countdown: \(Int(ceil(left / 60))) min left" : "Countdown: time\'s up"
+            label(text, .systemFont(ofSize: 12, weight: .medium), Self.runningInk, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 19
+            if draw, total > 0 {
+                let track = NSRect(x: textX, y: cy + 2, width: textWidth, height: 4)
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                Self.runningInk.setFill()
+                let done = min(1, max(0, 1 - left / total))
+                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * CGFloat(done), height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+            cy += 12
+        }
 
         // A running chat: how long it has run, and how much of its estimate is used
         if chat.isOpen, chat.status == .running, let started = runningSince[chat.id] {
@@ -2656,6 +2711,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let bubbleView = BubbleView()
     /// Her chat list, shown in the bubble above her
     let chatList = ChatListView()
+    /// The countdowns started from a mochi:// link, by chat
+    var countdowns: [String: ChatTimer] = [:]
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
     /// Her usage status box, shown in the bubble above her
@@ -2780,6 +2837,38 @@ func playAtTwoThirds(_ sound: NSSound?) {
         UserDefaults.standard.set(on, forKey: "openAtLoginChosen")
     }
 
+    /// A mochi:// link from Terminal or another app: "open \"mochi://countdown?chat=Redo%20the%20search&minutes=47\""
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { handleMochiLink(url) }
+    }
+
+    func handleMochiLink(_ url: URL) {
+        guard let link = parseMochiLink(url) else {
+            mochiLog("link: not understood \(url.absoluteString)")
+            return
+        }
+        switch link {
+        case .countdown(let name, let minutes):
+            guard let chat = chatNamed(name, in: chats) else {
+                showCard(title: "No chat to count down", body: "No open chat called \(name)", color: Status.blocked.color, link: nil)
+                return
+            }
+            let now = Date()
+            countdowns[chat.id] = ChatTimer(title: chat.title, start: now, end: now.addingTimeInterval(Double(minutes) * 60))
+            mochiLog("countdown: \(minutes) min for \(chat.title)")
+            showCard(title: "Countdown: \(chat.title)", body: "\(minutes) min. I\'ll tell you when it\'s up.", color: Status.running.color, link: chat.link, dot: chatColor(chat.id))
+        case .stop(let name):
+            let key = name?.lowercased() ?? ""
+            guard let entry = countdowns.first(where: { key.isEmpty || $0.value.title.lowercased().contains(key) }) else {
+                showCard(title: "No countdown to stop", body: "Nothing is counting down right now.", color: Status.idle.color, link: nil)
+                return
+            }
+            countdowns[entry.key] = nil
+            mochiLog("countdown: stopped for \(entry.value.title)")
+            showCard(title: "Countdown stopped: \(entry.value.title)", body: "Mochi won\'t tell you when it\'s up.", color: Status.idle.color, link: nil)
+        }
+    }
+
     func applicationDidFinishLaunching(_ note: Notification) {
         // Only one Mochi at a time: if she is already running, this copy bows out
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -2882,6 +2971,16 @@ func playAtTwoThirds(_ sound: NSSound?) {
             guard chat.status == .running, let started = self.runningSince[chat.id] else { return nil }
             return taskCircleMinutes(elapsed: Int(Date().timeIntervalSince(started)), estimate: taskEstimate(chat.log))
         }.first
+        // A countdown that is up: say so once, then forget it. While one runs, its minutes take the circle
+        for (id, countdown) in countdowns where countdown.end <= Date() {
+            countdowns[id] = nil
+            let minutes = Int(countdown.end.timeIntervalSince(countdown.start) / 60)
+            showCard(title: "Time\'s up: \(countdown.title)", body: "Your \(minutes) min countdown has finished.", color: Status.ready.color, link: nil, dot: chatColor(id))
+            playNeedsSound()
+        }
+        if let next = countdowns.values.min(by: { $0.end < $1.end }) {
+            view.taskMinutesLeft = max(1, Int(ceil(next.end.timeIntervalSinceNow / 60)))
+        }
         // Sparkles only while a live chat is in Auto
         view.autoMode = chats.contains(where: approvingOnItsOwn)
 
@@ -3498,6 +3597,7 @@ final class NotePanel: NSPanel {
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
         chatList.runningSince = runningSince
+        chatList.countdowns = countdowns
         let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
         let finished = chats.filter { $0.status == .ready }.max { $0.updatedAt < $1.updatedAt }
         chatList.activityLines = [

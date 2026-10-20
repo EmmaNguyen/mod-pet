@@ -253,4 +253,18 @@ check("the bar fills to the estimate and stops there", taskProgress(elapsed: 450
 check("Mochi's circle counts the minutes left", taskCircleMinutes(elapsed: 360, estimate: 900) == 9)
 check("Mochi's circle is gone once the estimate has passed", taskCircleMinutes(elapsed: 1000, estimate: 900) == nil && taskCircleMinutes(elapsed: 0, estimate: nil) == nil)
 
+// A mochi:// link starts or stops a countdown on a chat
+check("a countdown link names the chat and the minutes", parseMochiLink(URL(string: "mochi://countdown?chat=Redo%20the%20search&minutes=47")!) == .countdown(chat: "Redo the search", minutes: 47))
+check("a stop link with a chat names it", parseMochiLink(URL(string: "mochi://stop?chat=Redo")!) == .stop(chat: "Redo"))
+check("a stop link with no chat stops any countdown", parseMochiLink(URL(string: "mochi://stop")!) == .stop(chat: nil))
+check("a countdown link without minutes is not read", parseMochiLink(URL(string: "mochi://countdown?chat=Redo")!) == nil)
+check("a countdown link with zero minutes is not read", parseMochiLink(URL(string: "mochi://countdown?chat=Redo&minutes=0")!) == nil)
+check("another scheme or host is not read", parseMochiLink(URL(string: "https://countdown?chat=Redo&minutes=5")!) == nil && parseMochiLink(URL(string: "mochi://other")!) == nil)
+let linkChats = [
+    Chat(id: "a", title: "Redo the search", status: .ready, log: [], updatedAt: 100, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
+    Chat(id: "b", title: "Build the report", status: .running, log: [], updatedAt: 200, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: true),
+]
+check("a countdown names the chat it finds by part of its title", chatNamed("redo", in: linkChats)?.id == "a")
+check("a name that matches no open chat finds none", chatNamed("nothing", in: linkChats) == nil)
+
 print("ALL PASSED")
