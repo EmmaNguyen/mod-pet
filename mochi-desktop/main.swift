@@ -1113,46 +1113,6 @@ func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
     return Int(left / 60)
 }
 
-/// A timer you started with a note: "/mochi time 15", "/mochi time 15 Redo the search", "/mochi stop"
-enum MochiCommand: Equatable {
-    case timer(minutes: Int, chat: String?)
-    case stop(chat: String?)
-    case help
-}
-
-/// Reads a note as a Mochi command. Nil for an ordinary note, so it goes to Claude
-func parseMochiCommand(_ text: String) -> MochiCommand? {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.lowercased().hasPrefix("/mochi") else { return nil }
-    let rest = trimmed.dropFirst("/mochi".count).trimmingCharacters(in: .whitespaces)
-    guard !rest.isEmpty else { return .help }
-    let parts = rest.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).map(String.init)
-    switch parts.first?.lowercased() {
-    case "time":
-        guard parts.count >= 2, let minutes = Int(parts[1]), minutes > 0 else { return .help }
-        return .timer(minutes: minutes, chat: parts.count > 2 ? parts[2] : nil)
-    case "stop":
-        return .stop(chat: parts.count > 1 ? rest.dropFirst(parts[0].count).trimmingCharacters(in: .whitespaces) : nil)
-    default:
-        return .help
-    }
-}
-
-/// A timer on one chat, from when it started to when it is up
-struct ChatTimer {
-    let title: String
-    let start: Date
-    let end: Date
-}
-
-/// The chat a command means: the one named, or else the most recent open chat
-func chatForCommand(_ name: String?, in chats: [Chat]) -> Chat? {
-    let open = chats.filter(\.isOpen)
-    guard let name, !name.isEmpty else { return open.max { $0.updatedAt < $1.updatedAt } }
-    let key = name.lowercased()
-    return open.filter { $0.title.lowercased().contains(key) }.max { $0.updatedAt < $1.updatedAt }
-}
-
 /// How long a chat's last finished turn took, in seconds: the estimate for its next run. Nil when none is known
 func taskEstimate(_ log: [Event]) -> Int? {
     log.filter { $0.seconds != nil }.max { ($0.at ?? 0) < ($1.at ?? 0) }?.seconds
@@ -1357,8 +1317,6 @@ final class ChatListView: NSView {
     var expanded = Set<String>()
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
-    /// The timers you started with "/mochi time", by chat
-    var timers: [String: ChatTimer] = [:]
     var onAnswer: ((Chat, String) -> Void)?
     /// Asked when the list must be sized again, such as after "Show earlier"
     var onRelayout: (() -> Void)?
@@ -1525,24 +1483,6 @@ final class ChatListView: NSView {
         }
         label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
         cy += 24
-
-        // A timer you set: the minutes left, and a bar that fills to the end
-        if let timer = timers[chat.id] {
-            let total = timer.end.timeIntervalSince(timer.start)
-            let left = timer.end.timeIntervalSinceNow
-            let text = left > 0 ? "Timer: \(Int(ceil(left / 60))) min left" : "Timer: time\'s up"
-            label(text, .systemFont(ofSize: 12, weight: .medium), Self.runningInk, x: textX, y: cy, width: textWidth, draw: draw)
-            cy += 19
-            if draw, total > 0 {
-                let track = NSRect(x: textX, y: cy + 2, width: textWidth, height: 4)
-                NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                Self.runningInk.setFill()
-                let done = min(1, max(0, 1 - left / total))
-                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * CGFloat(done), height: 4), xRadius: 2, yRadius: 2).fill()
-            }
-            cy += 12
-        }
 
         // A running chat: how long it has run, and how much of its estimate is used
         if chat.isOpen, chat.status == .running, let started = runningSince[chat.id] {
@@ -2718,8 +2658,6 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let chatList = ChatListView()
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
-    /// The timers you started with "/mochi time", by chat
-    var manualTimers: [String: ChatTimer] = [:]
     /// Her usage status box, shown in the bubble above her
     let usagePanel = UsagePanelView()
     let bubbleFrame = BubbleFrame(frame: NSRect(x: 0, y: 0, width: 260, height: 40))
@@ -2944,16 +2882,6 @@ func playAtTwoThirds(_ sound: NSSound?) {
             guard chat.status == .running, let started = self.runningSince[chat.id] else { return nil }
             return taskCircleMinutes(elapsed: Int(Date().timeIntervalSince(started)), estimate: taskEstimate(chat.log))
         }.first
-        // A timer you set: when it runs out, say so once and forget it; while it runs, its minutes take the circle
-        for (id, timer) in manualTimers where timer.end <= Date() {
-            manualTimers[id] = nil
-            let minutes = Int(timer.end.timeIntervalSince(timer.start) / 60)
-            showCard(title: "Time\'s up: \(timer.title)", body: "Your \(minutes) min timer has finished.", color: Status.ready.color, link: nil, dot: chatColor(id))
-            playNeedsSound()
-        }
-        if let next = manualTimers.values.min(by: { $0.end < $1.end }) {
-            view.taskMinutesLeft = max(1, Int(ceil(next.end.timeIntervalSinceNow / 60)))
-        }
         // Sparkles only while a live chat is in Auto
         view.autoMode = chats.contains(where: approvingOnItsOwn)
 
@@ -3570,7 +3498,6 @@ final class NotePanel: NSPanel {
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
         chatList.runningSince = runningSince
-        chatList.timers = manualTimers
         let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
         let finished = chats.filter { $0.status == .ready }.max { $0.updatedAt < $1.updatedAt }
         chatList.activityLines = [
@@ -3713,13 +3640,6 @@ final class NotePanel: NSPanel {
     @objc func sendNote() {
         let text = noteField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        // "/mochi ..." is a command for her, not a new Claude session
-        if let command = parseMochiCommand(text) {
-            closeNote()
-            noteField.stringValue = ""
-            runMochiCommand(command)
-            return
-        }
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&+=#?")
         guard let encoded = text.addingPercentEncoding(withAllowedCharacters: allowed),
@@ -3727,34 +3647,6 @@ final class NotePanel: NSPanel {
         closeNote()
         noteField.stringValue = ""
         NSWorkspace.shared.open(url)
-    }
-
-    /// Starts, stops or explains a timer from the note box
-    func runMochiCommand(_ command: MochiCommand) {
-        switch command {
-        case .help:
-            showCard(title: "Mochi commands", body: "/mochi time 15 · /mochi stop. Add a chat name to pick one.", color: Status.idle.color, link: nil)
-        case .timer(let minutes, let name):
-            guard let chat = chatForCommand(name, in: chats) else {
-                showCard(title: "No chat to time", body: name.map { "No open chat called \($0)" } ?? "No open chat right now", color: Status.blocked.color, link: nil)
-                return
-            }
-            let now = Date()
-            manualTimers[chat.id] = ChatTimer(title: chat.title, start: now, end: now.addingTimeInterval(Double(minutes) * 60))
-            mochiLog("timer: \(minutes) min for \(chat.title)")
-            showCard(title: "Timer set: \(chat.title)", body: "\(minutes) min. I\'ll tell you when it\'s up.", color: Status.running.color, link: chat.link, dot: chatColor(chat.id))
-            look()
-        case .stop(let name):
-            let key = name?.lowercased() ?? ""
-            guard let (id, timer) = manualTimers.first(where: { key.isEmpty || $0.value.title.lowercased().contains(key) }) else {
-                showCard(title: "No timer to stop", body: "Nothing is being timed right now.", color: Status.idle.color, link: nil)
-                return
-            }
-            manualTimers[id] = nil
-            mochiLog("timer: stopped for \(timer.title)")
-            showCard(title: "Timer stopped: \(timer.title)", body: "Mochi won\'t tell you when it\'s up.", color: Status.idle.color, link: nil)
-            look()
-        }
     }
 
     /// Under the buttons, near the pencil, so the box opens where you pressed; above Mochi when there is no room below

@@ -253,20 +253,4 @@ check("the bar fills to the estimate and stops there", taskProgress(elapsed: 450
 check("Mochi's circle counts the minutes left", taskCircleMinutes(elapsed: 360, estimate: 900) == 9)
 check("Mochi's circle is gone once the estimate has passed", taskCircleMinutes(elapsed: 1000, estimate: 900) == nil && taskCircleMinutes(elapsed: 0, estimate: nil) == nil)
 
-// "/mochi" notes are commands for her: time a chat, stop a timer, or explain
-check("a note that is not a command goes to Claude", parseMochiCommand("write a poem") == nil)
-check("/mochi time 15 times the most recent chat", parseMochiCommand("/mochi time 15") == .timer(minutes: 15, chat: nil))
-check("/mochi time 15 with a name times that chat", parseMochiCommand("/mochi time 15 Redo the search") == .timer(minutes: 15, chat: "Redo the search"))
-check("/mochi stop stops the timer", parseMochiCommand("/mochi stop") == .stop(chat: nil))
-check("/mochi stop with a name stops that chat", parseMochiCommand("/mochi stop Redo the search") == .stop(chat: "Redo the search"))
-check("/mochi on its own explains the commands", parseMochiCommand("/mochi") == .help)
-check("a time of zero or no number explains the commands", parseMochiCommand("/mochi time 0") == .help && parseMochiCommand("/mochi time soon") == .help)
-let timerChats = [
-    Chat(id: "a", title: "Redo the search", status: .ready, log: [], updatedAt: 100, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
-    Chat(id: "b", title: "Build the report", status: .running, log: [], updatedAt: 200, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: true),
-]
-check("with no name, the most recent open chat is timed", chatForCommand(nil, in: timerChats)?.id == "b")
-check("with a name, the chat with that name is timed", chatForCommand("redo", in: timerChats)?.id == "a")
-check("a name that matches no chat finds none", chatForCommand("nothing", in: timerChats) == nil)
-
 print("ALL PASSED")
