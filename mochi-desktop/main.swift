@@ -581,6 +581,8 @@ final class MochiView: NSView {
     var unread = 0
     /// Auto is on in a live chat: she shows gold sparkles around her, and nothing changes in the other modes
     var autoMode = false
+    /// Minutes left on a running chat's estimate, for the circle on her left
+    var taskMinutesLeft: Int?
     /// Plan usage, shown as a small label under her
     var usage: Usage?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
@@ -647,7 +649,10 @@ final class MochiView: NSView {
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
-        if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: originY + 6)) }
+        if let taskMinutesLeft {
+            drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
+        }
+        if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: taskMinutesLeft == nil ? originY + 6 : originY + 24)) }
         if let usage { drawUsage(usage) }
         // The countdown sits on the right end of the usage bar, over its corner
         if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
@@ -861,10 +866,15 @@ final class MochiView: NSView {
         text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
     }
 
-    /// The countdown to the end of the 5-hour window: a small amber circle with the minutes left
+    /// The countdown to the end of the 5-hour window: a small circle, orange then red, with the minutes left
     private func drawCountdown(_ minutes: Int, at center: NSPoint) {
+        drawCountCircle(minutes, color: countdownIsUrgent(minutes) ? NSColor(hex: 0xE03131) : NSColor(hex: 0xF08C00), at: center)
+    }
+
+    /// A small coloured circle with a number in it
+    private func drawCountCircle(_ minutes: Int, color: NSColor, at center: NSPoint) {
         let r: CGFloat = 9
-        (countdownIsUrgent(minutes) ? NSColor(hex: 0xE03131) : NSColor(hex: 0xF08C00)).setFill()
+        color.setFill()
         NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)).fill()
         let text = NSAttributedString(string: "\(minutes)", attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: NSColor.white,
@@ -1103,6 +1113,33 @@ func lowTimeMinutes(resets: Date?, now: Date) -> Int? {
     return Int(left / 60)
 }
 
+/// How long a chat's last finished turn took, in seconds: the estimate for its next run. Nil when none is known
+func taskEstimate(_ log: [Event]) -> Int? {
+    log.filter { $0.seconds != nil }.max { ($0.at ?? 0) < ($1.at ?? 0) }?.seconds
+}
+
+/// The timer line for a running chat: how long it has run, and the time left on its estimate
+func taskTimerText(elapsed: Int, estimate: Int?) -> String {
+    let ran = max(1, elapsed / 60)
+    guard let estimate else { return "Running for \(ran) min · no estimate yet" }
+    if elapsed <= estimate {
+        return "Running for \(ran) min · about \(max(1, Int(ceil(Double(estimate - elapsed) / 60)))) min left"
+    }
+    return "Running for \(ran) min · past the \(max(1, estimate / 60)) min estimate"
+}
+
+/// How far through its estimate a run is, from 0 to 1
+func taskProgress(elapsed: Int, estimate: Int?) -> Double {
+    guard let estimate, estimate > 0 else { return 0 }
+    return min(1, Double(elapsed) / Double(estimate))
+}
+
+/// Minutes left on the estimate for Mochi's circle. Nil when there is no estimate, or it has passed
+func taskCircleMinutes(elapsed: Int, estimate: Int?) -> Int? {
+    guard let estimate, elapsed < estimate else { return nil }
+    return max(1, Int(ceil(Double(estimate - elapsed) / 60)))
+}
+
 /// The countdown turns red in the last 30 minutes of the 5-hour window, and is orange before that
 func countdownIsUrgent(_ minutes: Int) -> Bool { minutes <= 30 }
 
@@ -1278,6 +1315,8 @@ final class ChatListView: NSView {
     var activityLines: [(String, NSColor)] = []
     /// The chats whose older news is open, by id
     var expanded = Set<String>()
+    /// When each running chat was first seen running, for its timer
+    var runningSince: [String: Date] = [:]
     var onAnswer: ((Chat, String) -> Void)?
     /// Asked when the list must be sized again, such as after "Show earlier"
     var onRelayout: (() -> Void)?
@@ -1444,6 +1483,25 @@ final class ChatListView: NSView {
         }
         label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
         cy += 24
+
+        // A running chat: how long it has run, and how much of its estimate is used
+        if chat.isOpen, chat.status == .running, let started = runningSince[chat.id] {
+            let elapsed = Int(Date().timeIntervalSince(started))
+            let estimate = taskEstimate(chat.log)
+            label(taskTimerText(elapsed: elapsed, estimate: estimate), .systemFont(ofSize: 12, weight: .medium), Self.runningInk,
+                  x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 19
+            if draw {
+                let track = NSRect(x: textX, y: cy + 2, width: textWidth, height: 4)
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                let past = estimate.map { elapsed > $0 } ?? false
+                (past ? NSColor(hex: 0xF08C00) : Self.runningInk).setFill()
+                let filled = track.width * CGFloat(taskProgress(elapsed: elapsed, estimate: estimate))
+                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+            cy += 12
+        }
 
         if chat.status == .needsInput, !chat.waiting.isEmpty {
             label(clip(chat.waiting, 90), .systemFont(ofSize: 14), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
@@ -2598,6 +2656,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let bubbleView = BubbleView()
     /// Her chat list, shown in the bubble above her
     let chatList = ChatListView()
+    /// When each running chat was first seen running, for its timer
+    var runningSince: [String: Date] = [:]
     /// Her usage status box, shown in the bubble above her
     let usagePanel = UsagePanelView()
     let bubbleFrame = BubbleFrame(frame: NSRect(x: 0, y: 0, width: 260, height: 40))
@@ -2813,6 +2873,15 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let testChat { chats.append(testChat) }
         checkUsage()
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
+        // When each chat was first seen running, for its timer; forgotten once it stops
+        let running = Set(chats.filter { $0.status == .running }.map(\.id))
+        for id in running where runningSince[id] == nil { runningSince[id] = Date() }
+        runningSince = runningSince.filter { running.contains($0.key) }
+        // Mochi's circle: the first running chat that still has time left on its estimate
+        view.taskMinutesLeft = chats.lazy.compactMap { chat -> Int? in
+            guard chat.status == .running, let started = self.runningSince[chat.id] else { return nil }
+            return taskCircleMinutes(elapsed: Int(Date().timeIntervalSince(started)), estimate: taskEstimate(chat.log))
+        }.first
         // Sparkles only while a live chat is in Auto
         view.autoMode = chats.contains(where: approvingOnItsOwn)
 
@@ -3428,6 +3497,7 @@ final class NotePanel: NSPanel {
         chatList.titleColor = view.status.color
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
         chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
+        chatList.runningSince = runningSince
         let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
         let finished = chats.filter { $0.status == .ready }.max { $0.updatedAt < $1.updatedAt }
         chatList.activityLines = [

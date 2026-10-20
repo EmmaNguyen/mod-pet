@@ -242,4 +242,15 @@ let offerNow = Date(timeIntervalSince1970: 1_000_000)
 check("2.5 days left shows 3 days", resetOfferDaysLeft(useBy: offerNow.addingTimeInterval(2.5 * 86400), now: offerNow) == 3)
 check("an offer that has passed shows no days", resetOfferDaysLeft(useBy: offerNow.addingTimeInterval(-1), now: offerNow) == nil)
 
+// A task timer: the estimate is the last finished turn, and the line and circle say how long is left
+let timerLog = [Event(kind: "turn", text: "Done", detail: nil, seconds: 900, at: 1000), Event(kind: "turn", text: "Done", detail: nil, seconds: 300, at: 500)]
+check("the estimate is the last finished turn's length", taskEstimate(timerLog) == 900)
+check("a chat with no finished turn has no estimate", taskEstimate([]) == nil)
+check("the timer says minutes left on the estimate", taskTimerText(elapsed: 360, estimate: 900) == "Running for 6 min · about 9 min left")
+check("the timer says when it is past the estimate", taskTimerText(elapsed: 1000, estimate: 900) == "Running for 16 min · past the 15 min estimate")
+check("the timer with no estimate shows elapsed only", taskTimerText(elapsed: 180, estimate: nil) == "Running for 3 min · no estimate yet")
+check("the bar fills to the estimate and stops there", taskProgress(elapsed: 450, estimate: 900) == 0.5 && taskProgress(elapsed: 1800, estimate: 900) == 1)
+check("Mochi's circle counts the minutes left", taskCircleMinutes(elapsed: 360, estimate: 900) == 9)
+check("Mochi's circle is gone once the estimate has passed", taskCircleMinutes(elapsed: 1000, estimate: 900) == nil && taskCircleMinutes(elapsed: 0, estimate: nil) == nil)
+
 print("ALL PASSED")
