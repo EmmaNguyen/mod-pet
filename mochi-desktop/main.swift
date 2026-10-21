@@ -2160,8 +2160,32 @@ final class WeekView: NSView {
             drawLine(clockText(tile.1), .systemFont(ofSize: 18, weight: .medium), Self.ink, x: x + 10, y: 32, width: tileWidth - 20, draw: true)
         }
 
+        // The week day by day: working time on each day, today in orange, its time above each bar
+        let days = weekDates(containing: now)
+        let dayTotals = days.map { day in log[dayKey(day)]?.chats.values.reduce(0) { $0 + ($1.working ?? 0) } ?? 0 }
+        let peak = max(1, dayTotals.max() ?? 1)
+        let slot = inner / 7
+        let baseY: CGFloat = 190
+        let barHeight: CGFloat = 80
+        drawLine("This week, day by day", .systemFont(ofSize: 12, weight: .medium), Self.muted, x: pad, y: 72, width: inner, draw: true)
+        for (i, day) in days.enumerated() {
+            let x = pad + CGFloat(i) * slot
+            let total = dayTotals[i]
+            let height = max(2, CGFloat(total) / CGFloat(peak) * barHeight)
+            let isToday = dayKey(day) == dayKey(now)
+            (isToday ? Self.turnColor : NSColor(hex: 0x0A6CF0).withAlphaComponent(0.7)).setFill()
+            NSBezierPath(roundedRect: NSRect(x: x + slot * 0.2, y: baseY - height, width: slot * 0.6, height: height), xRadius: 5, yRadius: 5).fill()
+            if total > 0 {
+                drawLine(clockText(total), .systemFont(ofSize: 11, weight: .medium), Self.ink,
+                         x: x, y: baseY - height - 16, width: slot, align: .center, draw: true)
+            }
+            drawLine(Self.dayNames[i], .systemFont(ofSize: 12, weight: isToday ? .semibold : .regular),
+                     isToday ? Self.ink : Self.muted, x: x, y: baseY + 4, width: slot, align: .center, draw: true)
+        }
+
         // Each chat today: its time, and a bar for its share of the busiest chat
-        var y: CGFloat = 84
+        drawLine("Today by chat", .systemFont(ofSize: 12, weight: .medium), Self.muted, x: pad, y: 222, width: inner, draw: true)
+        var y: CGFloat = 244
         if rows.isEmpty {
             drawLine("Nothing timed today yet. Time counts while a chat is working or waiting for you.",
                      .systemFont(ofSize: 13), Self.muted, x: pad, y: y, width: inner, draw: true)
