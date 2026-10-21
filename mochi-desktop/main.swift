@@ -1081,6 +1081,15 @@ func buttonsShowFor(pointer: NSPoint, frame: NSRect) -> Bool {
     frame.insetBy(dx: -60, dy: -60).contains(pointer)
 }
 
+/// Reads one line of /usage, such as "Current session: 58% used · resets Oct 19 at 6:40pm". The reset time may be missing
+func usageReading(in output: String, line: String) -> (percent: Int, resets: String?)? {
+    guard let regex = try? NSRegularExpression(pattern: "\(line): (\\d+)% used(?: · resets ([^\\n]+))?"),
+          let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+          let percent = Range(match.range(at: 1), in: output) else { return nil }
+    let resets = Range(match.range(at: 2), in: output).map { String(output[$0]) }
+    return (Int(output[percent]) ?? 0, resets)
+}
+
 /// A colour that follows light or dark mode, for the glass: one value in light, one in dark
 func adaptiveColor(_ light: NSColor, _ dark: NSColor) -> NSColor {
     NSColor(name: nil) { appearance in
@@ -2755,15 +2764,12 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
         process.waitUntilExit()
         killer.cancel()
 
-        let five = try? NSRegularExpression(pattern: "Current session: (\\d+)% used · resets ([^\\n]+)")
-        let week = try? NSRegularExpression(pattern: "Current week[^:]*: (\\d+)% used · resets ([^\\n]+)")
-        func match(_ regex: NSRegularExpression?) -> (Int, Date?)? {
-            guard let regex, let m = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
-                  let pct = Range(m.range(at: 1), in: output), let when = Range(m.range(at: 2), in: output)
-            else { return nil }
-            return (Int(output[pct]) ?? 0, parseResetDate(String(output[when])))
-        }
-        guard let fiveNow = match(five), let weekNow = match(week) else { done(false); return }
+        // After a reset, /usage says "Current session: 0% used" with no reset time, so the time is optional
+        guard let fiveRead = usageReading(in: output, line: "Current session"),
+              let weekRead = usageReading(in: output, line: "Current week[^:]*")
+        else { done(false); return }
+        let fiveNow = (fiveRead.percent, fiveRead.resets.flatMap(parseResetDate))
+        let weekNow = (weekRead.percent, weekRead.resets.flatMap(parseResetDate))
 
         let iso = ISO8601DateFormatter()
         let report: [String: Any] = [

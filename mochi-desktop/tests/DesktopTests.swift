@@ -287,4 +287,11 @@ check("the buttons show when the pointer is over her", buttonsShowFor(pointer: N
 check("the buttons show when the pointer is just beside her", buttonsShowFor(pointer: NSPoint(x: 240, y: 150), frame: mochiFrame))
 check("the buttons stay hidden when the pointer is far away", !buttonsShowFor(pointer: NSPoint(x: 600, y: 600), frame: mochiFrame))
 
+// /usage after a reset has no reset time, so Mochi still reads the percentage
+let usageAfterReset = "Current session: 0% used\nCurrent week (all models): 0% used · resets Oct 25 at 2am (Asia/Saigon)"
+check("a session line with no reset time still reads", usageReading(in: usageAfterReset, line: "Current session")?.percent == 0 && usageReading(in: usageAfterReset, line: "Current session")?.resets == nil)
+check("a week line with a reset time reads both", usageReading(in: usageAfterReset, line: "Current week[^:]*")?.percent == 0 && usageReading(in: usageAfterReset, line: "Current week[^:]*")?.resets == "Oct 25 at 2am (Asia/Saigon)")
+check("a session line with a reset time reads both", usageReading(in: "Current session: 58% used · resets Oct 19 at 6:40pm (Asia/Saigon)", line: "Current session")?.percent == 58)
+check("text with no usage line reads nothing", usageReading(in: "nothing here", line: "Current session") == nil)
+
 print("ALL PASSED")
