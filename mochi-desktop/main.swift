@@ -2312,7 +2312,7 @@ final class WeekView: NSView {
 
         draw("Mochi's diary", at: NSPoint(x: 22, y: 6), font: .systemFont(ofSize: 16, weight: .semibold), color: Self.ink)
         draw("Every square is a day. The darker, the busier.", at: NSPoint(x: 22, y: 28),
-             font: .systemFont(ofSize: 12), color: Self.muted)
+             font: .systemFont(ofSize: 12), color: Self.timeText)
 
         let cell: CGFloat = 21, gap: CGFloat = 5
         let gx: CGFloat = 46, gy: CGFloat = 80
@@ -2330,7 +2330,7 @@ final class WeekView: NSView {
         for (i, name) in ["Mon", "Wed", "Fri", "Sun"].enumerated() {
             let row = [0, 2, 4, 6][i]
             centered(name, in: NSRect(x: 18, y: gy + CGFloat(row) * (cell + gap), width: 26, height: cell),
-                     font: .systemFont(ofSize: 10), color: Self.muted)
+                     font: .systemFont(ofSize: 10), color: Self.timeText)
         }
         // The squares
         for (w, week) in weeks.enumerated() {
@@ -2363,12 +2363,12 @@ final class WeekView: NSView {
 
         // Legend, then the stats as tiles
         let legendY = gy + 7 * (cell + gap) + 10
-        draw("less", at: NSPoint(x: 22, y: legendY), font: .systemFont(ofSize: 11), color: Self.muted)
+        draw("less", at: NSPoint(x: 22, y: legendY), font: .systemFont(ofSize: 11), color: Self.timeText)
         for i in 0..<5 {
             Self.peachColor(i).setFill()
             NSBezierPath(roundedRect: NSRect(x: 58 + CGFloat(i) * 20, y: legendY + 2, width: 14, height: 14), xRadius: 4, yRadius: 4).fill()
         }
-        draw("more", at: NSPoint(x: 164, y: legendY), font: .systemFont(ofSize: 11), color: Self.muted)
+        draw("more", at: NSPoint(x: 164, y: legendY), font: .systemFont(ofSize: 11), color: Self.timeText)
 
         let busiestText: String
         if let key = stats.busiestKey, let date = dayFormatter.date(from: key) {
@@ -2384,11 +2384,11 @@ final class WeekView: NSView {
             centered(tile.1, in: NSRect(x: box.minX, y: box.minY + 7, width: box.width, height: 22),
                      font: .systemFont(ofSize: 15, weight: .semibold), color: Self.ink)
             centered(tile.0, in: NSRect(x: box.minX, y: box.minY + 31, width: box.width, height: 16),
-                     font: .systemFont(ofSize: 11), color: Self.muted)
+                     font: .systemFont(ofSize: 11), color: Self.timeText)
         }
         if let key = stats.busiestKey, let date = dayFormatter.date(from: key) {
             draw("Busiest day: \(Self.shortDay(date)) with \(stats.busiestTurns) turns.", at: NSPoint(x: 22, y: 400),
-                 font: .systemFont(ofSize: 12), color: Self.muted)
+                 font: .systemFont(ofSize: 12), color: Self.timeText)
         }
     }
 
