@@ -281,4 +281,10 @@ recordSecond(&timeLog, day: "2026-10-21", chatID: "a", title: "Redo the search",
 recordSecond(&timeLog, day: "2026-10-21", chatID: "a", title: "Redo the search", waiting: true)
 check("a working second and a waiting second are counted apart", timeLog["2026-10-21"]?.chats["a"]?.working == 2 && timeLog["2026-10-21"]?.chats["a"]?.waiting == 1)
 
+// Her three buttons show only when the pointer is near her
+let mochiFrame = NSRect(x: 100, y: 100, width: 130, height: 162)
+check("the buttons show when the pointer is over her", buttonsShowFor(pointer: NSPoint(x: 150, y: 150), frame: mochiFrame))
+check("the buttons show when the pointer is just beside her", buttonsShowFor(pointer: NSPoint(x: 240, y: 150), frame: mochiFrame))
+check("the buttons stay hidden when the pointer is far away", !buttonsShowFor(pointer: NSPoint(x: 600, y: 600), frame: mochiFrame))
+
 print("ALL PASSED")

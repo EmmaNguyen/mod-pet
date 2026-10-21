@@ -1076,6 +1076,11 @@ func parseResetOffer(_ text: String, calendar: Calendar = .current) -> ResetOffe
     return ResetOffer(count: count, useBy: end)
 }
 
+/// Whether her three buttons show: when the pointer is within 60 points of her window, and hidden otherwise
+func buttonsShowFor(pointer: NSPoint, frame: NSRect) -> Bool {
+    frame.insetBy(dx: -60, dy: -60).contains(pointer)
+}
+
 /// A colour that follows light or dark mode, for the glass: one value in light, one in dark
 func adaptiveColor(_ light: NSColor, _ dark: NSColor) -> NSColor {
     NSColor(name: nil) { appearance in
@@ -3050,6 +3055,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.view.tick += 1
+            // The buttons show while the pointer is near her, whatever the hover events did
+            self.view.nearby = buttonsShowFor(pointer: NSEvent.mouseLocation, frame: self.window.frame)
             self.view.needsDisplay = true
         }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.look() }
