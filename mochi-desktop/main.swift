@@ -2156,7 +2156,7 @@ final class WeekView: NSView {
             let x = pad + CGFloat(i) * (tileWidth + 10)
             Self.tileFill.setFill()
             NSBezierPath(roundedRect: NSRect(x: x, y: 8, width: tileWidth, height: 56), xRadius: 12, yRadius: 12).fill()
-            drawLine(tile.0, .systemFont(ofSize: 12), Self.muted, x: x + 10, y: 16, width: tileWidth - 20, draw: true)
+            drawLine(tile.0, .systemFont(ofSize: 12), Self.timeText, x: x + 10, y: 16, width: tileWidth - 20, draw: true)
             drawLine(clockText(tile.1), .systemFont(ofSize: 18, weight: .medium), Self.ink, x: x + 10, y: 32, width: tileWidth - 20, draw: true)
         }
 
@@ -2167,7 +2167,7 @@ final class WeekView: NSView {
         let slot = inner / 7
         let baseY: CGFloat = 190
         let barHeight: CGFloat = 80
-        drawLine("This week, day by day", .systemFont(ofSize: 12, weight: .medium), Self.muted, x: pad, y: 72, width: inner, draw: true)
+        drawLine("This week, day by day", .systemFont(ofSize: 12, weight: .medium), Self.timeText, x: pad, y: 72, width: inner, draw: true)
         for (i, day) in days.enumerated() {
             let x = pad + CGFloat(i) * slot
             let total = dayTotals[i]
@@ -2180,21 +2180,21 @@ final class WeekView: NSView {
                          x: x, y: baseY - height - 16, width: slot, align: .center, draw: true)
             }
             drawLine(Self.dayNames[i], .systemFont(ofSize: 12, weight: isToday ? .semibold : .regular),
-                     isToday ? Self.ink : Self.muted, x: x, y: baseY + 4, width: slot, align: .center, draw: true)
+                     isToday ? Self.ink : Self.timeText, x: x, y: baseY + 4, width: slot, align: .center, draw: true)
         }
 
         // Each chat today: its time, and a bar for its share of the busiest chat
-        drawLine("Today by chat", .systemFont(ofSize: 12, weight: .medium), Self.muted, x: pad, y: 222, width: inner, draw: true)
+        drawLine("Today by chat", .systemFont(ofSize: 12, weight: .medium), Self.timeText, x: pad, y: 222, width: inner, draw: true)
         var y: CGFloat = 244
         if rows.isEmpty {
             drawLine("Nothing timed today yet. Time counts while a chat is working or waiting for you.",
-                     .systemFont(ofSize: 13), Self.muted, x: pad, y: y, width: inner, draw: true)
+                     .systemFont(ofSize: 13), Self.timeText, x: pad, y: y, width: inner, draw: true)
         }
         let busiest = max(1, rows.map { $0.working + $0.waiting }.max() ?? 1)
         for row in rows {
             let total = row.working + row.waiting
             drawLine(row.title, .systemFont(ofSize: 13, weight: .medium), Self.ink, x: pad, y: y, width: inner - 90, draw: true)
-            drawLine(clockText(total), .systemFont(ofSize: 13), Self.muted, x: pad, y: y, width: inner, align: .right, draw: true)
+            drawLine(clockText(total), .systemFont(ofSize: 13), Self.timeText, x: pad, y: y, width: inner, align: .right, draw: true)
             let track = NSRect(x: pad, y: y + 22, width: inner, height: 6)
             NSColor.labelColor.withAlphaComponent(0.08).setFill()
             NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
@@ -2206,11 +2206,13 @@ final class WeekView: NSView {
 
         // The footer: the week's working time, and what is counted
         let footerY = bounds.height - Self.contentTop - 34
-        drawLine("This week: \(clockText(week)) working", .systemFont(ofSize: 12), Self.muted, x: pad, y: footerY, width: inner, draw: true)
-        drawLine("Counted while Mochi is open", .systemFont(ofSize: 11), Self.muted, x: pad, y: footerY + 16, width: inner, draw: true)
+        drawLine("This week: \(clockText(week)) working", .systemFont(ofSize: 12), Self.timeText, x: pad, y: footerY, width: inner, draw: true)
+        drawLine("Counted while Mochi is open", .systemFont(ofSize: 11), Self.timeText, x: pad, y: footerY + 16, width: inner, draw: true)
     }
 
     private static let tileFill = NSColor.labelColor.withAlphaComponent(0.06)
+    /// Darker grey for the Time tab, so its labels read clearly on the glass
+    private static let timeText = NSColor(hex: 0x3F4553)
 
     private func drawThisWeek() {
         let days = weekDates(containing: now)
