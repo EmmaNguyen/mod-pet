@@ -1882,6 +1882,9 @@ final class ApprovalView: NSView {
 struct ChatDay: Codable {
     var title: String
     var turns: Int
+    /// Seconds the chat spent working, and waiting for you, on this day, counted while Mochi was open
+    var working: Int? = nil
+    var waiting: Int? = nil
 }
 
 /// What happened on one day: turns finished, approvals you gave, the highest 5-hour usage, and each chat's turns
@@ -1937,6 +1940,23 @@ func recordTurn(_ log: inout DayLog, day: String, chatID: String, title: String)
     chat.turns += 1
     record.chats[chatID] = chat
     log[day] = record
+}
+
+/// Counts one second of a chat's time on its day: waiting for you, or working
+func recordSecond(_ log: inout DayLog, day: String, chatID: String, title: String, waiting: Bool) {
+    var record = log[day] ?? DayRecord()
+    var chat = record.chats[chatID] ?? ChatDay(title: title, turns: 0)
+    chat.title = title
+    if waiting { chat.waiting = (chat.waiting ?? 0) + 1 } else { chat.working = (chat.working ?? 0) + 1 }
+    record.chats[chatID] = chat
+    log[day] = record
+}
+
+/// A time as words: "3h 40m", "22m", or "under a minute"
+func clockText(_ seconds: Int) -> String {
+    let minutes = seconds / 60
+    if minutes < 1 { return seconds > 0 ? "under a minute" : "0m" }
+    return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
 }
 
 /// Counts one answer you gave: allowed, or declined
@@ -2049,7 +2069,7 @@ final class WeekView: NSView {
     private let usage: Usage?
     private let now: Date
     private let colorFor: (String) -> NSColor
-    var tab = 0 // 0 is "This week", 1 is "Diary"
+    var tab = 0 // 0 is "This week", 1 is "Diary", 2 is "Time"
     var onClose: (() -> Void)?
     override var isFlipped: Bool { true }
 
@@ -2065,7 +2085,7 @@ final class WeekView: NSView {
 
     private var closeBox: NSRect { NSRect(x: bounds.width - 30, y: 12, width: 16, height: 16) }
     private var tabBoxes: [NSRect] {
-        [NSRect(x: 22, y: 10, width: 150, height: 28), NSRect(x: 180, y: 10, width: 150, height: 28)]
+        [NSRect(x: 22, y: 10, width: 100, height: 28), NSRect(x: 130, y: 10, width: 100, height: 28), NSRect(x: 238, y: 10, width: 100, height: 28)]
     }
     /// The tabs take the top of the panel; the content is drawn below them
     private static let contentTop: CGFloat = 40
@@ -2091,12 +2111,12 @@ final class WeekView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.translateBy(x: 0, y: Self.contentTop)
-        if tab == 0 { drawThisWeek() } else { drawDiary() }
+        if tab == 0 { drawThisWeek() } else if tab == 1 { drawDiary() } else { drawTime() }
         context.restoreGState()
     }
 
     private func drawTabs() {
-        let names = ["This week", "Diary"]
+        let names = ["This week", "Diary", "Time"]
         for (i, box) in tabBoxes.enumerated() {
             let selected = i == tab
             (selected ? Self.turnColor : NSColor(hex: 0xE9ECF1)).setFill()
@@ -2115,6 +2135,58 @@ final class WeekView: NSView {
         Self.muted.setStroke()
         path.stroke()
     }
+
+    /// Today's time per chat: working and waiting for you, the week's working total, and what it counts
+    private func drawTime() {
+        let record = log[dayKey(now)] ?? DayRecord()
+        let rows = record.chats.map { (id: $0.key, title: $0.value.title, working: $0.value.working ?? 0, waiting: $0.value.waiting ?? 0) }
+            .filter { $0.working + $0.waiting > 0 }
+            .sorted { $0.working + $0.waiting > $1.working + $1.waiting }
+        let working = rows.reduce(0) { $0 + $1.working }
+        let waiting = rows.reduce(0) { $0 + $1.waiting }
+        let week = weekDates(containing: now).reduce(0) { total, day in
+            total + (log[dayKey(day)]?.chats.values.reduce(0) { $0 + ($1.working ?? 0) } ?? 0)
+        }
+        let pad: CGFloat = 22
+        let inner = bounds.width - pad * 2
+
+        // Two tiles: working and waiting for you, today
+        let tileWidth = (inner - 10) / 2
+        for (i, tile) in [("Working", working), ("Waiting for you", waiting)].enumerated() {
+            let x = pad + CGFloat(i) * (tileWidth + 10)
+            Self.tileFill.setFill()
+            NSBezierPath(roundedRect: NSRect(x: x, y: 8, width: tileWidth, height: 56), xRadius: 12, yRadius: 12).fill()
+            drawLine(tile.0, .systemFont(ofSize: 12), Self.muted, x: x + 10, y: 16, width: tileWidth - 20, draw: true)
+            drawLine(clockText(tile.1), .systemFont(ofSize: 18, weight: .medium), Self.ink, x: x + 10, y: 32, width: tileWidth - 20, draw: true)
+        }
+
+        // Each chat today: its time, and a bar for its share of the busiest chat
+        var y: CGFloat = 84
+        if rows.isEmpty {
+            drawLine("Nothing timed today yet. Time counts while a chat is working or waiting for you.",
+                     .systemFont(ofSize: 13), Self.muted, x: pad, y: y, width: inner, draw: true)
+        }
+        let busiest = max(1, rows.map { $0.working + $0.waiting }.max() ?? 1)
+        for row in rows {
+            let total = row.working + row.waiting
+            drawLine(row.title, .systemFont(ofSize: 13, weight: .medium), Self.ink, x: pad, y: y, width: inner - 90, draw: true)
+            drawLine(clockText(total), .systemFont(ofSize: 13), Self.muted, x: pad, y: y, width: inner, align: .right, draw: true)
+            let track = NSRect(x: pad, y: y + 22, width: inner, height: 6)
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+            colorFor(row.id).setFill()
+            let fill = track.width * CGFloat(total) / CGFloat(busiest)
+            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: fill, height: 6), xRadius: 3, yRadius: 3).fill()
+            y += 42
+        }
+
+        // The footer: the week's working time, and what is counted
+        let footerY = bounds.height - Self.contentTop - 34
+        drawLine("This week: \(clockText(week)) working", .systemFont(ofSize: 12), Self.muted, x: pad, y: footerY, width: inner, draw: true)
+        drawLine("Counted while Mochi is open", .systemFont(ofSize: 11), Self.muted, x: pad, y: footerY + 16, width: inner, draw: true)
+    }
+
+    private static let tileFill = NSColor.labelColor.withAlphaComponent(0.06)
 
     private func drawThisWeek() {
         let days = weekDates(containing: now)
@@ -3012,6 +3084,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
         firstLook = false
 
         refreshChatList()
+        // Each second a chat is working or waiting for you counts toward today, while Mochi is open
+        for chat in chats where chat.status == .running || chat.status == .needsInput {
+            recordSecond(&dayLog, day: dayKey(Date()), chatID: chat.id, title: chat.title, waiting: chat.status == .needsInput)
+            dayLogDirty = true
+        }
         // Each new finished turn counts toward its day, for "This week"
         for (event, chat) in fresh where event.kind == "turn" {
             let when = Date(timeIntervalSince1970: (event.at ?? Date().timeIntervalSince1970 * 1000) / 1000)

@@ -272,4 +272,13 @@ check("a chat that stopped a minute ago is still stopped", settledStatus(.blocke
 check("a chat that stopped ten minutes ago is back to normal", settledStatus(.blocked, updated: 0, now: 600_000) == .ready)
 check("other statuses are not changed by the timeout", settledStatus(.running, updated: 0, now: 9_000_000) == .running)
 
+// Time per chat per day: each second counts as working or waiting for you, and reads as words
+check("no time reads as 0m, and under a minute reads in words", clockText(0) == "0m" && clockText(30) == "under a minute")
+check("minutes and hours read as words", clockText(22 * 60) == "22m" && clockText(3 * 3600 + 40 * 60) == "3h 40m")
+var timeLog: DayLog = [:]
+recordSecond(&timeLog, day: "2026-10-21", chatID: "a", title: "Redo the search", waiting: false)
+recordSecond(&timeLog, day: "2026-10-21", chatID: "a", title: "Redo the search", waiting: false)
+recordSecond(&timeLog, day: "2026-10-21", chatID: "a", title: "Redo the search", waiting: true)
+check("a working second and a waiting second are counted apart", timeLog["2026-10-21"]?.chats["a"]?.working == 2 && timeLog["2026-10-21"]?.chats["a"]?.waiting == 1)
+
 print("ALL PASSED")
