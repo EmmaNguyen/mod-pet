@@ -1392,6 +1392,42 @@ final class UsagePanelView: NSView {
     }
 }
 
+/// The morning brief or the 8 PM wrap-up: a title, its lines, and a cross to close it
+final class BriefView: NSView {
+    static let width: CGFloat = 340
+    var title = ""
+    var lines: [(String, NSColor)] = []
+    var onClose: (() -> Void)?
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func fittingHeight() -> CGFloat { 50 + CGFloat(lines.count) * 22 + 16 }
+
+    private var closeRect: NSRect { NSRect(x: bounds.width - 30, y: 14, width: 16, height: 16) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawLine(title, .systemFont(ofSize: 15, weight: .semibold), .labelColor, x: 18, y: 14, width: bounds.width - 60, draw: true)
+        let cross = closeRect.insetBy(dx: 3, dy: 3)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
+        path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
+        path.lineWidth = 1.6
+        NSColor.secondaryLabelColor.setStroke()
+        path.stroke()
+        var y: CGFloat = 46
+        for (text, color) in lines {
+            drawLine(text, .systemFont(ofSize: 13), color, x: 18, y: y, width: bounds.width - 36, draw: true)
+            y += 22
+        }
+    }
+
+    // Only the cross closes it: nothing else does, so it stays until you close it
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?() }
+    }
+}
+
 /// Her chat list, laid out like the mock: a summary, the two limits as cards, and each chat as a box under the group it
 /// belongs to, with Allow and Deny under the chat that waits for you
 final class ChatListView: NSView {
@@ -2016,6 +2052,45 @@ func recordSecond(_ log: inout DayLog, day: String, chatID: String, title: Strin
     if waiting { chat.waiting = (chat.waiting ?? 0) + 1 } else { chat.working = (chat.working ?? 0) + 1 }
     record.chats[chatID] = chat
     log[day] = record
+}
+
+/// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 8:00 PM, once per slot. Nil otherwise
+func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> String? {
+    let parts = calendar.dateComponents([.hour, .minute], from: now)
+    guard parts.minute == 0, parts.hour == 8 || parts.hour == 20 else { return nil }
+    let slot = dayKey(now) + (parts.hour == 8 ? " AM" : " PM")
+    return slot == lastShown ? nil : slot
+}
+
+/// The lines of the morning brief ("morning") or the 8 PM wrap-up ("evening"), from the chats and the day record
+func briefLines(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?) -> [(String, NSColor)] {
+    var lines: [(String, NSColor)] = []
+    let waiting = chats.filter { $0.status == .needsInput }.map { clip($0.title, 30) }
+    let running = chats.filter { $0.status == .running }.map { clip($0.title, 30) }
+    if kind == "morning" {
+        lines.append(waiting.isEmpty ? ("Nothing needs you", Status.ready.color)
+                     : ("Needs you: " + waiting.joined(separator: ", "), Status.needsInput.color))
+        if !running.isEmpty { lines.append(("Still running: " + running.joined(separator: ", "), Status.running.color)) }
+        let yesterday = log[dayKey(now.addingTimeInterval(-86_400))] ?? DayRecord()
+        let working = yesterday.chats.values.reduce(0) { $0 + ($1.working ?? 0) }
+        lines.append(("Yesterday: \(yesterday.turns) finished · \(clockText(working)) working · \(yesterday.allowed) approvals", .labelColor))
+    } else {
+        let today = log[dayKey(now)] ?? DayRecord()
+        let working = today.chats.values.reduce(0) { $0 + ($1.working ?? 0) }
+        let waited = today.chats.values.reduce(0) { $0 + ($1.waiting ?? 0) }
+        lines.append(("Today: \(clockText(working)) working · \(clockText(waited)) waiting", .labelColor))
+        lines.append(("Finished: \(today.turns) · approvals: \(today.allowed)", .labelColor))
+        if let top = today.chats.values.max(by: { ($0.working ?? 0) < ($1.working ?? 0) }), (top.working ?? 0) > 0 {
+            lines.append(("Top chat: \(clip(top.title, 30)), \(clockText(top.working ?? 0))", .labelColor))
+        }
+        if !running.isEmpty { lines.append(("Still running: " + running.joined(separator: ", "), Status.running.color)) }
+    }
+    if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
+        let day = DateFormatter()
+        day.dateFormat = "EEE d MMM"
+        lines.append(("Reset offer: \(offer.count) left, use by \(day.string(from: offer.useBy)) · \(days) day\(days == 1 ? "" : "s")", .labelColor))
+    }
+    return lines
 }
 
 /// A time as words: "3h 40m", "22m", or "under a minute"
@@ -2884,6 +2959,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var previouslyRunning = Set<String>()
     /// When a chat last finished, for the green ring
     var lastFinishedAt: Date?
+    /// The morning brief and the 8 PM wrap-up, under her until you close them
+    lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
     /// Her usage status box, shown in the bubble above her
@@ -3156,6 +3233,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if chats.contains(where: { stopped.contains($0.id) && $0.status == .ready }) { lastFinishedAt = Date() }
         previouslyRunning = running
         view.finishedAt = lastFinishedAt
+        // The morning brief at 8:00 AM and the wrap-up at 8:00 PM, once each
+        if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
+            UserDefaults.standard.set(slot, forKey: "lastBriefSlot")
+            showBrief(slot.hasSuffix("AM") ? "morning" : "evening", now: Date())
+        }
         // A countdown that is up: say so once, then forget it. While one runs, its minutes take the circle
         for (id, countdown) in countdowns where countdown.end <= Date() {
             countdowns[id] = nil
@@ -3925,6 +4007,25 @@ final class NotePanel: NSPanel {
     func setRecording(_ on: Bool) {
         view.recording = on
         view.needsDisplay = true
+    }
+
+    /// Shows the brief under her, centred, kept on screen, until you close it with its cross
+    func showBrief(_ kind: String, now: Date) {
+        let brief = BriefView(frame: NSRect(x: 0, y: 0, width: BriefView.width, height: 120))
+        brief.title = kind == "morning" ? "Good morning" : "Today's wrap-up"
+        brief.lines = briefLines(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer)
+        let height = brief.fittingHeight()
+        brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
+        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil) }
+        briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 18)
+        briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let x = min(max(window.frame.midX - BriefView.width / 2, screen.minX + 4), screen.maxX - BriefView.width - 4)
+        var y = window.frame.minY - height - 6
+        if y < screen.minY + 4 { y = window.frame.maxY + 6 }
+        briefPanel.setFrameOrigin(NSPoint(x: x, y: y))
+        briefPanel.orderFrontRegardless()
+        mochiLog("brief: \(kind) shown")
     }
 
     /// Sends the note as a new Claude Code session; Claude opens with it written in

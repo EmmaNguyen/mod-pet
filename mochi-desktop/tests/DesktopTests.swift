@@ -308,4 +308,25 @@ check("a busy chat that the plugin reports as ready is running", liveStatus(.rea
 check("a chat waiting for you stays waiting", liveStatus(.needsInput, activeNow: true) == .needsInput)
 check("a quiet chat keeps its reported status", liveStatus(.ready, activeNow: false) == .ready)
 
+// The brief shows at 8:00 AM and 8:00 PM, once each, and says what needs you
+var briefCal = Calendar(identifier: .gregorian)
+briefCal.timeZone = TimeZone.current
+func briefAt(_ hour: Int, _ minute: Int) -> Date { briefCal.date(from: DateComponents(year: 2026, month: 10, day: 22, hour: hour, minute: minute))! }
+check("the morning brief is due at 8:00 AM", briefSlot(now: briefAt(8, 0), lastShown: nil, calendar: briefCal)?.hasSuffix("AM") == true)
+check("the wrap-up is due at 8:00 PM", briefSlot(now: briefAt(20, 0), lastShown: nil, calendar: briefCal)?.hasSuffix("PM") == true)
+check("a brief is not due at other times", briefSlot(now: briefAt(8, 1), lastShown: nil, calendar: briefCal) == nil)
+check("a brief shows once per slot", briefSlot(now: briefAt(8, 0), lastShown: briefSlot(now: briefAt(8, 0), lastShown: nil, calendar: briefCal), calendar: briefCal) == nil)
+let briefChats = [
+    Chat(id: "a", title: "Mod pet", status: .needsInput, log: [], updatedAt: 100, link: nil, waiting: "Run: ls", isRecent: true, requestId: "r", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
+    Chat(id: "b", title: "Redo the search", status: .running, log: [], updatedAt: 200, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
+]
+let briefLog: DayLog = [:]
+let morningLines = briefLines(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil).map { $0.0 }
+check("the morning brief names the chat that needs you", morningLines.first == "Needs you: Mod pet")
+check("the morning brief names the chats still running", morningLines.contains("Still running: Redo the search"))
+let quietLines = briefLines(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil).map { $0.0 }
+check("with nothing waiting, the brief says so", quietLines.first == "Nothing needs you")
+let offerLines = briefLines(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23))).map { $0.0 }
+check("the brief shows an open reset offer", offerLines.contains { $0.hasPrefix("Reset offer: 1 left") })
+
 print("ALL PASSED")
