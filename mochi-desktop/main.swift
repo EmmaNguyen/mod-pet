@@ -1211,7 +1211,8 @@ func chatNamed(_ name: String, in chats: [Chat]) -> Chat? {
 
 /// How long a chat's last finished turn took, in seconds: the estimate for its next run. Nil when none is known
 func taskEstimate(_ log: [Event]) -> Int? {
-    log.filter { $0.seconds != nil }.max { ($0.at ?? 0) < ($1.at ?? 0) }?.seconds
+    let recent = log.filter { $0.seconds != nil }.sorted { ($0.at ?? 0) > ($1.at ?? 0) }.prefix(5)
+    return recent.compactMap(\.seconds).max()
 }
 
 /// The timer line for a running chat: how long it has run, and the time left on its estimate
@@ -1221,7 +1222,7 @@ func taskTimerText(elapsed: Int, estimate: Int?) -> String {
     if elapsed <= estimate {
         return "Running for \(ran) min · about \(max(1, Int(ceil(Double(estimate - elapsed) / 60)))) min left"
     }
-    return "Running for \(ran) min · past the \(max(1, estimate / 60)) min estimate"
+    return "Running for \(ran) min"
 }
 
 /// How far through its estimate a run is, from 0 to 1
@@ -1622,8 +1623,7 @@ final class ChatListView: NSView {
                 let track = NSRect(x: textX, y: cy + 2, width: textWidth, height: 4)
                 NSColor.labelColor.withAlphaComponent(0.1).setFill()
                 NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                let past = estimate.map { elapsed > $0 } ?? false
-                (past ? NSColor(hex: 0xF08C00) : Self.runningInk).setFill()
+                Self.runningInk.setFill()
                 let filled = track.width * CGFloat(taskProgress(elapsed: elapsed, estimate: estimate))
                 NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
             }
