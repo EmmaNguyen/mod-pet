@@ -294,4 +294,11 @@ check("a week line with a reset time reads both", usageReading(in: usageAfterRes
 check("a session line with a reset time reads both", usageReading(in: "Current session: 58% used · resets Oct 19 at 6:40pm (Asia/Saigon)", line: "Current session")?.percent == 58)
 check("text with no usage line reads nothing", usageReading(in: "nothing here", line: "Current session") == nil)
 
+// The ring round her badge fills with progress, and goes green for a minute after a chat finishes
+check("the ring fills to 60 percent at 216 degrees", ringSweepDegrees(0.6) == 216)
+check("the ring never goes past a full circle or below nothing", ringSweepDegrees(1.5) == 360 && ringSweepDegrees(-0.2) == 0)
+check("the ring is green for a minute after a chat finishes", ringShowsFinished(finishedAt: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1030)))
+check("the ring stops being green after a minute", !ringShowsFinished(finishedAt: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1061)))
+check("the ring is not green when nothing has finished", !ringShowsFinished(finishedAt: nil, now: Date()))
+
 print("ALL PASSED")

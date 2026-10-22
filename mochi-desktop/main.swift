@@ -589,6 +589,10 @@ final class MochiView: NSView {
     var autoMode = false
     /// Minutes left on a running chat's estimate, for the circle on her left
     var taskMinutesLeft: Int?
+    /// How far a running chat is through its estimate, for the ring round her status badge; nil when none
+    var ringFraction: Double?
+    /// When a chat last finished, for the green ring
+    var finishedAt: Date?
     /// Plan usage, shown as a small label under her
     var usage: Usage?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
@@ -654,6 +658,7 @@ final class MochiView: NSView {
         if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        drawProgressRing(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
         if let taskMinutesLeft {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
@@ -870,6 +875,36 @@ final class MochiView: NSView {
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
         text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
+    }
+
+    /// A ring round the status badge: blue as a running chat fills its estimate, and green for a minute after one finishes
+    private func drawProgressRing(at center: NSPoint) {
+        let r: CGFloat = 13
+        let circle = NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
+        if ringShowsFinished(finishedAt: finishedAt, now: Date()) {
+            let ring = NSBezierPath(ovalIn: circle)
+            ring.lineWidth = 3
+            NSColor(hex: 0x2F9E44).setStroke()
+            ring.stroke()
+            return
+        }
+        guard let fraction = ringFraction else { return }
+        let track = NSBezierPath(ovalIn: circle)
+        track.lineWidth = 3
+        NSColor.labelColor.withAlphaComponent(0.12).setStroke()
+        track.stroke()
+        // Points round the circle from the top, clockwise on screen (the view is flipped, so y grows downward)
+        let arc = NSBezierPath()
+        let steps = max(2, Int(ringSweepDegrees(fraction) / 4))
+        for i in 0...steps {
+            let angle = (-90 + ringSweepDegrees(fraction) * Double(i) / Double(steps)) * .pi / 180
+            let point = NSPoint(x: center.x + r * CGFloat(cos(angle)), y: center.y + r * CGFloat(sin(angle)))
+            if i == 0 { arc.move(to: point) } else { arc.line(to: point) }
+        }
+        arc.lineWidth = 3
+        arc.lineCapStyle = .round
+        NSColor(hex: 0x0A6CF0).setStroke()
+        arc.stroke()
     }
 
     /// The countdown to the end of the 5-hour window: a small circle, orange then red, with the minutes left
@@ -1187,6 +1222,17 @@ func taskTimerText(elapsed: Int, estimate: Int?) -> String {
 func taskProgress(elapsed: Int, estimate: Int?) -> Double {
     guard let estimate, estimate > 0 else { return 0 }
     return min(1, Double(elapsed) / Double(estimate))
+}
+
+/// How far round the ring a fraction goes, in degrees: 0 to 360
+func ringSweepDegrees(_ fraction: Double) -> Double {
+    min(360, max(0, fraction * 360))
+}
+
+/// Whether the ring shows the green "done" state: for a minute after a chat finishes
+func ringShowsFinished(finishedAt: Date?, now: Date) -> Bool {
+    guard let finishedAt else { return false }
+    return now.timeIntervalSince(finishedAt) < 60
 }
 
 /// Minutes left on the estimate for Mochi's circle. Nil when there is no estimate, or it has passed
@@ -2828,6 +2874,10 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     let chatList = ChatListView()
     /// The countdowns started from a mochi:// link, by chat
     var countdowns: [String: ChatTimer] = [:]
+    /// The chats running at the last check, to tell when one stops
+    var previouslyRunning = Set<String>()
+    /// When a chat last finished, for the green ring
+    var lastFinishedAt: Date?
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
     /// Her usage status box, shown in the bubble above her
@@ -3088,6 +3138,18 @@ func playAtTwoThirds(_ sound: NSSound?) {
             guard chat.status == .running, let started = self.runningSince[chat.id] else { return nil }
             return taskCircleMinutes(elapsed: Int(Date().timeIntervalSince(started)), estimate: taskEstimate(chat.log))
         }.first
+        // The ring round her badge: how far the first running chat with an estimate has got, and green when one finishes
+        var fraction: Double?
+        for chat in chats where chat.status == .running {
+            guard let started = runningSince[chat.id], let estimate = taskEstimate(chat.log) else { continue }
+            fraction = taskProgress(elapsed: Int(Date().timeIntervalSince(started)), estimate: estimate)
+            break
+        }
+        view.ringFraction = fraction
+        let stopped = previouslyRunning.subtracting(running)
+        if chats.contains(where: { stopped.contains($0.id) && $0.status == .ready }) { lastFinishedAt = Date() }
+        previouslyRunning = running
+        view.finishedAt = lastFinishedAt
         // A countdown that is up: say so once, then forget it. While one runs, its minutes take the circle
         for (id, countdown) in countdowns where countdown.end <= Date() {
             countdowns[id] = nil
