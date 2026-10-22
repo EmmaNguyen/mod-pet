@@ -301,4 +301,9 @@ check("the ring is green for a minute after a chat finishes", ringShowsFinished(
 check("the ring stops being green after a minute", !ringShowsFinished(finishedAt: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1061)))
 check("the ring is not green when nothing has finished", !ringShowsFinished(finishedAt: nil, now: Date()))
 
+// A chat with the plugin loaded counts as running while an agent keeps it busy, unless it waits for you
+check("a busy chat that the plugin reports as ready is running", liveStatus(.ready, activeNow: true) == .running)
+check("a chat waiting for you stays waiting", liveStatus(.needsInput, activeNow: true) == .needsInput)
+check("a quiet chat keeps its reported status", liveStatus(.ready, activeNow: false) == .ready)
+
 print("ALL PASSED")

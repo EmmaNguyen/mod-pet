@@ -239,6 +239,11 @@ func effectiveMode(app: String?, report: String?) -> String {
 /// Whether a chat in the Claude app had activity in the last two minutes, so it counts as running
 func isActiveNow(updated: Double, now: Double) -> Bool { now - updated < 2 * 60 * 1000 }
 
+/// A chat with the plugin loaded: running when it was active just now, unless it is waiting for you; otherwise its own status
+func liveStatus(_ reported: Status, activeNow: Bool) -> Status {
+    reported != .needsInput && activeNow ? .running : reported
+}
+
 /// A chat that stopped goes back to normal after ten minutes, so Mochi does not stay grey for a chat nobody is watching
 func settledStatus(_ status: Status, updated: Double, now: Double) -> Status {
     status == .blocked && now - updated >= 10 * 60 * 1000 ? .ready : status
@@ -435,7 +440,8 @@ func readChats() -> [Chat] {
 
         // A chat with the mod loaded: its live status, under the app's title
         if let cli = session.cliSessionId, let mine = live.removeValue(forKey: cli) {
-            chats.append(Chat(id: mine.id, title: title, status: mine.status, log: mine.log,
+            // A busy agent may not report "working", so a chat active just now counts as running, unless it waits for you
+            chats.append(Chat(id: mine.id, title: title, status: liveStatus(mine.status, activeNow: isActiveNow(updated: updated, now: now)), log: mine.log,
                               updatedAt: max(mine.updatedAt, updated), link: mine.link ?? link,
                               waiting: mine.waiting, isRecent: mine.isRecent,
                               requestId: mine.requestId, askedAt: mine.askedAt, detail: mine.detail,
