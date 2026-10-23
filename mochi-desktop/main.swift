@@ -595,6 +595,11 @@ final class MochiView: NSView {
     var autoMode = false
     /// Minutes left on a running chat's estimate, for the circle on her left
     var taskMinutesLeft: Int?
+    /// The agents running now, for the dots on her left, and where each dot is so a click can find it
+    var activeAgents: [AgentRun] = []
+    var agentRects: [NSRect] = []
+    var originYForDots: CGFloat = 0
+    var onAgentsClick: (() -> Void)?
     /// How far a running chat is through its estimate, for the ring round her status badge; nil when none
     var ringFraction: Double?
     /// When a chat last finished, for the green ring
@@ -665,6 +670,8 @@ final class MochiView: NSView {
 
         drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
         drawProgressRing(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        originYForDots = originY
+        drawAgentDots()
         badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
         if let taskMinutesLeft {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
@@ -883,6 +890,20 @@ final class MochiView: NSView {
         text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
     }
 
+    /// A blue dot for each agent running now, in a column on her left; a click on them opens the list
+    private func drawAgentDots() {
+        agentRects = []
+        for (i, _) in activeAgents.prefix(4).enumerated() {
+            let center = NSPoint(x: 9, y: originYForDots + 14 + CGFloat(i) * 16)
+            let pulse = CGFloat(abs(sin(Double(tick) / 6))) * 4
+            NSColor(hex: 0x1C7ED6).withAlphaComponent(0.25).setFill()
+            NSBezierPath(ovalIn: NSRect(x: center.x - 6 - pulse, y: center.y - 6 - pulse, width: 12 + pulse * 2, height: 12 + pulse * 2)).fill()
+            NSColor(hex: 0x1C7ED6).setFill()
+            NSBezierPath(ovalIn: NSRect(x: center.x - 5, y: center.y - 5, width: 10, height: 10)).fill()
+            agentRects.append(NSRect(x: center.x - 10, y: center.y - 10, width: 20, height: 20))
+        }
+    }
+
     /// A ring round the status badge: blue as a running chat fills its estimate, and green for a minute after one finishes
     private func drawProgressRing(at center: NSPoint) {
         let r: CGFloat = 13
@@ -965,6 +986,7 @@ final class MochiView: NSView {
             else if talkRect.insetBy(dx: -4, dy: -4).contains(point) { onTalk?() }
             else if scrollRect.insetBy(dx: -4, dy: -4).contains(point) { onScroll?() }
             else if usagePill.insetBy(dx: -4, dy: -4).contains(point) { onUsageClick?() }
+            else if agentRects.contains(where: { $0.contains(point) }) { onAgentsClick?() }
             else if status == .needsInput, badgeRect.insetBy(dx: -3, dy: -3).contains(point), let onBadgeClick { onBadgeClick() }
             else { onClick?() }
         }
@@ -2054,6 +2076,65 @@ func recordSecond(_ log: inout DayLog, day: String, chatID: String, title: Strin
     log[day] = record
 }
 
+/// One agent Claude has run: its task, when it started, and when it last did something
+struct AgentRun {
+    let id: String
+    let task: String
+    let started: Date
+    let lastActivity: Date
+}
+
+/// Reads an agent's first line: the task it was given, and when that was. Nil if the line does not read
+func agentTask(fromLine line: String) -> (task: String, at: Date)? {
+    guard let data = line.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let message = object["message"] as? [String: Any],
+          let stamp = object["timestamp"] as? String else { return nil }
+    let text: String?
+    if let plain = message["content"] as? String {
+        text = plain
+    } else if let parts = message["content"] as? [[String: Any]] {
+        text = parts.compactMap { $0["text"] as? String }.first
+    } else {
+        text = nil
+    }
+    let format = ISO8601DateFormatter()
+    format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let text, let at = format.date(from: stamp) else { return nil }
+    let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+    return (clip(firstLine, 60), at)
+}
+
+/// Whether an agent counts as running: it did something in the last two minutes
+func agentActive(lastActivity: Date, now: Date) -> Bool {
+    now.timeIntervalSince(lastActivity) < 120
+}
+
+/// Finds the agents Claude has run in the last six hours, newest first, from their own transcripts
+func readAgents(now: Date) -> [AgentRun] {
+    let fm = FileManager.default
+    let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+    var runs: [AgentRun] = []
+    for project in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+        for session in (try? fm.contentsOfDirectory(at: project, includingPropertiesForKeys: nil)) ?? [] {
+            let folder = session.appendingPathComponent("subagents")
+            let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            for file in files where file.pathExtension == "jsonl" {
+                let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                guard now.timeIntervalSince(modified) < 6 * 3600,
+                      let handle = FileHandle(forReadingAtPath: file.path) else { continue }
+                let head = String(data: handle.readData(ofLength: 8192), encoding: .utf8) ?? ""
+                handle.closeFile()
+                guard let firstLine = head.split(separator: "\n", maxSplits: 1).first,
+                      let found = agentTask(fromLine: String(firstLine)) else { continue }
+                let id = file.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "agent-", with: "")
+                runs.append(AgentRun(id: id, task: found.task, started: found.at, lastActivity: modified))
+            }
+        }
+    }
+    return Array(runs.sorted { $0.lastActivity > $1.lastActivity }.prefix(8))
+}
+
 /// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 8:00 PM, once per slot. Nil otherwise
 func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> String? {
     // Due from 8 AM, and the wrap-up from 8 PM; each once a day, so a missed minute (asleep, paused) still shows it later
@@ -2960,6 +3041,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var previouslyRunning = Set<String>()
     /// When a chat last finished, for the green ring
     var lastFinishedAt: Date?
+    /// Every agent read recently, running or not
+    var allAgents: [AgentRun] = []
     /// The morning brief and the 8 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
     /// When each running chat was first seen running, for its timer
@@ -3154,6 +3237,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         window.orderFrontRegardless()
 
         view.onClick = { [weak self] in self?.toggleNotifications() }
+        view.onAgentsClick = { [weak self] in self?.showAgents() }
         view.onUsageClick = { [weak self] in
             mochiLog("usage pill clicked")
             self?.showUsageDetails()
@@ -3234,6 +3318,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if chats.contains(where: { stopped.contains($0.id) && $0.status == .ready }) { lastFinishedAt = Date() }
         previouslyRunning = running
         view.finishedAt = lastFinishedAt
+        // The agents running now, read every few seconds from their own transcripts
+        if Int(Date().timeIntervalSince1970) % 5 == 0 {
+            allAgents = readAgents(now: Date())
+        }
+        view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
         // The morning brief at 8:00 AM and the wrap-up at 8:00 PM, once each
         if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
             UserDefaults.standard.set(slot, forKey: "lastBriefSlot")
@@ -4012,9 +4101,28 @@ final class NotePanel: NSPanel {
 
     /// Shows the brief under her, centred, kept on screen, until you close it with its cross
     func showBrief(_ kind: String, now: Date) {
+        presentUnderHer(title: kind == "morning" ? "Good morning" : "Today's wrap-up",
+                        lines: briefLines(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer))
+        mochiLog("brief: \(kind) shown")
+    }
+
+    /// The agents running now, each with its task, how long it has run and when it last did something
+    func showAgents() {
+        let now = Date()
+        let lines: [(String, NSColor)] = view.activeAgents.map { run in
+            let minutes = Int(now.timeIntervalSince(run.started) / 60)
+            let quiet = Int(now.timeIntervalSince(run.lastActivity))
+            return ("\(run.task) · \(max(1, minutes)) min · active \(quiet) s ago", Status.running.color)
+        }
+        presentUnderHer(title: "Agents running", lines: lines.isEmpty ? [("No agent is running right now", .labelColor)] : lines)
+        mochiLog("agents: \(lines.count) shown")
+    }
+
+    /// Puts a card under her, centred and kept on screen, until its cross closes it
+    func presentUnderHer(title: String, lines: [(String, NSColor)]) {
         let brief = BriefView(frame: NSRect(x: 0, y: 0, width: BriefView.width, height: 120))
-        brief.title = kind == "morning" ? "Good morning" : "Today's wrap-up"
-        brief.lines = briefLines(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer)
+        brief.title = title
+        brief.lines = lines
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil) }
@@ -4026,7 +4134,6 @@ final class NotePanel: NSPanel {
         if y < screen.minY + 4 { y = window.frame.maxY + 6 }
         briefPanel.setFrameOrigin(NSPoint(x: x, y: y))
         briefPanel.orderFrontRegardless()
-        mochiLog("brief: \(kind) shown")
     }
 
     /// Sends the note as a new Claude Code session; Claude opens with it written in

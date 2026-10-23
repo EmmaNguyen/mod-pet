@@ -330,4 +330,15 @@ check("with nothing waiting, the brief says so", quietLines.first == "Nothing ne
 let offerLines = briefLines(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23))).map { $0.0 }
 check("the brief shows an open reset offer", offerLines.contains { $0.hasPrefix("Reset offer: 1 left") })
 
+// Agents are read from their own transcripts: the task is the first user message, and an agent is running if it was active in the last two minutes
+let agentLine = #"{"isSidechain":true,"agentId":"ac7c","type":"user","message":{"role":"user","content":"Run the find-roles task with the saved filters\nand report back"},"timestamp":"2026-10-23T03:08:49.401Z"}"#
+let readAgent = agentTask(fromLine: agentLine)
+check("an agent's task is its first line of the first user message", readAgent?.task == "Run the find-roles task with the saved filters")
+let agentFormat = ISO8601DateFormatter()
+agentFormat.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+check("an agent's task has its exact start time", readAgent?.at == agentFormat.date(from: "2026-10-23T03:08:49.401Z"))
+check("a line that is not a user message gives no task", agentTask(fromLine: #"{"type":"api-request"}"#) == nil)
+check("an agent active a minute ago is running", agentActive(lastActivity: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1060)))
+check("an agent quiet for three minutes is not running", !agentActive(lastActivity: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1180)))
+
 print("ALL PASSED")
