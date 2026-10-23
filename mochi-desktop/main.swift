@@ -2056,9 +2056,10 @@ func recordSecond(_ log: inout DayLog, day: String, chatID: String, title: Strin
 
 /// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 8:00 PM, once per slot. Nil otherwise
 func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> String? {
-    let parts = calendar.dateComponents([.hour, .minute], from: now)
-    guard parts.minute == 0, parts.hour == 8 || parts.hour == 20 else { return nil }
-    let slot = dayKey(now) + (parts.hour == 8 ? " AM" : " PM")
+    // Due from 8 AM, and the wrap-up from 8 PM; each once a day, so a missed minute (asleep, paused) still shows it later
+    let hour = calendar.component(.hour, from: now)
+    guard hour >= 8 else { return nil }
+    let slot = dayKey(now) + (hour >= 20 ? " PM" : " AM")
     return slot == lastShown ? nil : slot
 }
 
