@@ -1414,33 +1414,126 @@ final class UsagePanelView: NSView {
     }
 }
 
-/// The morning brief or the 8 PM wrap-up: a title, its lines, and a cross to close it
+/// The morning brief, the 8 PM wrap-up or the agent list: big-number tiles, rows, a week chart and top chats, with a cross to close it
 final class BriefView: NSView {
-    static let width: CGFloat = 340
-    var title = ""
-    var lines: [(String, NSColor)] = []
+    static let width: CGFloat = 380
+    var content = BriefContent()
     var onClose: (() -> Void)?
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    func fittingHeight() -> CGFloat { 50 + CGFloat(lines.count) * 22 + 16 }
+    func fittingHeight() -> CGFloat { render(draw: false) }
+    override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
-    private var closeRect: NSRect { NSRect(x: bounds.width - 30, y: 14, width: 16, height: 16) }
+    private var closeRect: NSRect { NSRect(x: bounds.width - 32, y: 16, width: 16, height: 16) }
 
-    override func draw(_ dirtyRect: NSRect) {
-        drawLine(title, .systemFont(ofSize: 15, weight: .semibold), .labelColor, x: 18, y: 14, width: bounds.width - 60, draw: true)
-        let cross = closeRect.insetBy(dx: 3, dy: 3)
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
-        path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
-        path.lineWidth = 1.6
-        NSColor.secondaryLabelColor.setStroke()
-        path.stroke()
-        var y: CGFloat = 46
-        for (text, color) in lines {
-            drawLine(text, .systemFont(ofSize: 13), color, x: 18, y: y, width: bounds.width - 36, draw: true)
+    @discardableResult
+    private func render(draw: Bool) -> CGFloat {
+        let pad: CGFloat = 18
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 16
+        drawLine(content.title, .systemFont(ofSize: 17, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 120, draw: draw)
+        drawLine(content.date, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 30, align: .right, draw: draw)
+        if draw {
+            let cross = closeRect.insetBy(dx: 3, dy: 3)
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
+            path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
+            path.lineWidth = 1.6
+            NSColor.secondaryLabelColor.setStroke()
+            path.stroke()
+        }
+        y += 34
+
+        if let headline = content.headline {
+            drawLine(headline.big, .systemFont(ofSize: 34, weight: .semibold), .labelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 42
+            drawLine(headline.sub, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 26
+        }
+
+        // The big-number tiles
+        if !content.stats.isEmpty {
+            let gap: CGFloat = 8
+            let width = (inner - gap * CGFloat(content.stats.count - 1)) / CGFloat(content.stats.count)
+            for (i, stat) in content.stats.enumerated() {
+                let x = pad + CGFloat(i) * (width + gap)
+                if draw {
+                    stat.fill.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: width, height: 62), xRadius: 14, yRadius: 14).fill()
+                }
+                drawLine(stat.value, .systemFont(ofSize: 24, weight: .semibold), stat.ink, x: x + 12, y: y + 8, width: width - 16, draw: draw)
+                drawLine(stat.label, .systemFont(ofSize: 12), stat.ink, x: x + 12, y: y + 38, width: width - 16, draw: draw)
+            }
+            y += 62 + 14
+        }
+
+        // Chats that need you
+        if !content.rows.isEmpty {
+            drawLine(content.rowsTitle, .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            for row in content.rows {
+                if draw {
+                    row.dot.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
+                }
+                drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                drawLine(row.right, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
+                y += 22
+            }
+            y += 8
+        }
+
+        for (text, color) in content.lines {
+            drawLine(text, .systemFont(ofSize: 13), color, x: pad, y: y, width: inner, draw: draw)
             y += 22
         }
+
+        // The week, one bar for each day, today dark
+        if !content.week.isEmpty {
+            drawLine("This week", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            let slot = inner / CGFloat(content.week.count)
+            let peak = max(1, content.week.map(\.seconds).max() ?? 1)
+            let baseY = y + 56
+            for (i, bar) in content.week.enumerated() {
+                let x = pad + CGFloat(i) * slot
+                let height = max(3, CGFloat(bar.seconds) / CGFloat(peak) * 56)
+                if draw {
+                    (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259)).setFill()
+                    NSBezierPath(roundedRect: NSRect(x: x + slot * 0.2, y: baseY - height, width: slot * 0.6, height: height), xRadius: 4, yRadius: 4).fill()
+                }
+                drawLine(bar.label, .systemFont(ofSize: 11, weight: bar.isToday ? .semibold : .regular),
+                         bar.isToday ? .labelColor : .secondaryLabelColor, x: x, y: baseY + 4, width: slot, align: .center, draw: draw)
+            }
+            y += 56 + 28
+        }
+
+        // The top chats by working time
+        if !content.top.isEmpty {
+            drawLine("Top chats", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            let longest = max(1, content.top.map(\.seconds).max() ?? 1)
+            for chat in content.top {
+                drawLine(chat.name, .systemFont(ofSize: 13), .labelColor, x: pad, y: y, width: inner - 70, draw: draw)
+                drawLine(clockText(chat.seconds), .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
+                if draw {
+                    let track = NSRect(x: pad, y: y + 22, width: inner, height: 5)
+                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                    NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
+                    NSColor(hex: 0x1C7ED6).setFill()
+                    NSBezierPath(roundedRect: NSRect(x: pad, y: track.minY, width: inner * CGFloat(chat.seconds) / CGFloat(longest), height: 5), xRadius: 2.5, yRadius: 2.5).fill()
+                }
+                y += 36
+            }
+        }
+
+        if let footer = content.footer {
+            y += 4
+            drawLine(footer, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+        }
+        return y + 12
     }
 
     // Only the cross closes it: nothing else does, so it stays until you close it
@@ -2144,35 +2237,76 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
     return slot == lastShown ? nil : slot
 }
 
-/// The lines of the morning brief ("morning") or the 8 PM wrap-up ("evening"), from the chats and the day record
-func briefLines(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?) -> [(String, NSColor)] {
+/// One big number in a tile: its value, label, and the two colours it is drawn in
+struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
+/// A row with a coloured dot: a chat on the left and what it needs on the right
+struct BriefRow { let left: String; let right: String; let dot: NSColor }
+/// One day's bar in the week chart
+struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
+/// A chat in the top list, with its working time today
+struct BriefTop { let name: String; let seconds: Int }
+
+/// Everything a brief card shows; the card draws whichever parts are filled
+struct BriefContent {
+    var title = ""
+    var date = ""
+    var headline: (big: String, sub: String)?
+    var stats: [BriefStat] = []
+    var rowsTitle = ""
+    var rows: [BriefRow] = []
     var lines: [(String, NSColor)] = []
-    let waiting = chats.filter { $0.status == .needsInput }.map { clip($0.title, 30) }
-    let running = chats.filter { $0.status == .running }.map { clip($0.title, 30) }
+    var week: [BriefBar] = []
+    var top: [BriefTop] = []
+    var footer: String?
+}
+
+/// The morning brief ("morning") or the 8 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
+func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, usagePercent: Int?) -> BriefContent {
+    let red = (ink: NSColor(hex: 0xA32D2D), fill: NSColor(hex: 0xFCEBEB))
+    let blue = (ink: NSColor(hex: 0x0A4FA8), fill: NSColor(hex: 0xDCE9FA))
+    let green = (ink: NSColor(hex: 0x1F7A3A), fill: NSColor(hex: 0xEAF3DE))
+    let plain = (ink: NSColor(hex: 0x1D1D1F), fill: NSColor(hex: 0xFFFFFF))
+    func working(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.working ?? 0) } }
+    func waited(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.waiting ?? 0) } }
+    let day = DateFormatter()
+    day.dateFormat = "EEE d MMM"
+    var content = BriefContent()
+    content.date = day.string(from: now)
+    let waiting = chats.filter { $0.status == .needsInput }
+    let running = chats.filter { $0.status == .running }
     if kind == "morning" {
-        lines.append(waiting.isEmpty ? ("Nothing needs you", Status.ready.color)
-                     : ("Needs you: " + waiting.joined(separator: ", "), Status.needsInput.color))
-        if !running.isEmpty { lines.append(("Still running: " + running.joined(separator: ", "), Status.running.color)) }
+        content.title = "Good morning"
         let yesterday = log[dayKey(now.addingTimeInterval(-86_400))] ?? DayRecord()
-        let working = yesterday.chats.values.reduce(0) { $0 + ($1.working ?? 0) }
-        lines.append(("Yesterday: \(yesterday.turns) finished · \(clockText(working)) working · \(yesterday.allowed) approvals", .labelColor))
+        content.stats = [
+            BriefStat(value: "\(waiting.count)", label: "Waiting", ink: red.ink, fill: red.fill),
+            BriefStat(value: "\(running.count)", label: "Running", ink: blue.ink, fill: blue.fill),
+            BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
+        ]
+        content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
+        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: Status.needsInput.color) }
+        if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
+        content.title = "Today's wrap-up"
         let today = log[dayKey(now)] ?? DayRecord()
-        let working = today.chats.values.reduce(0) { $0 + ($1.working ?? 0) }
-        let waited = today.chats.values.reduce(0) { $0 + ($1.waiting ?? 0) }
-        lines.append(("Today: \(clockText(working)) working · \(clockText(waited)) waiting", .labelColor))
-        lines.append(("Finished: \(today.turns) · approvals: \(today.allowed)", .labelColor))
-        if let top = today.chats.values.max(by: { ($0.working ?? 0) < ($1.working ?? 0) }), (top.working ?? 0) > 0 {
-            lines.append(("Top chat: \(clip(top.title, 30)), \(clockText(top.working ?? 0))", .labelColor))
+        content.headline = (clockText(working(today)), "working today · \(clockText(waited(today))) waiting for you")
+        content.stats = [
+            BriefStat(value: "\(today.turns)", label: "Finished", ink: plain.ink, fill: plain.fill),
+            BriefStat(value: "\(today.allowed)", label: "Approvals", ink: plain.ink, fill: plain.fill),
+            BriefStat(value: usagePercent.map { "\($0)%" } ?? "–", label: "Usage", ink: plain.ink, fill: plain.fill),
+        ]
+        let names = DateFormatter()
+        names.dateFormat = "EEE"
+        content.week = weekDates(containing: now).map { date in
+            BriefBar(label: names.string(from: date), seconds: working(log[dayKey(date)] ?? DayRecord()), isToday: dayKey(date) == dayKey(now))
         }
-        if !running.isEmpty { lines.append(("Still running: " + running.joined(separator: ", "), Status.running.color)) }
+        content.top = today.chats.values.filter { ($0.working ?? 0) > 0 }
+            .sorted { ($0.working ?? 0) > ($1.working ?? 0) }.prefix(2)
+            .map { BriefTop(name: clip($0.title, 28), seconds: $0.working ?? 0) }
     }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
-        let day = DateFormatter()
-        day.dateFormat = "EEE d MMM"
-        lines.append(("Reset offer: \(offer.count) left, use by \(day.string(from: offer.useBy)) · \(days) day\(days == 1 ? "" : "s")", .labelColor))
+        content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"
     }
-    return lines
+    return content
 }
 
 /// A time as words: "3h 40m", "22m", or "under a minute"
@@ -4101,8 +4235,7 @@ final class NotePanel: NSPanel {
 
     /// Shows the brief under her, centred, kept on screen, until you close it with its cross
     func showBrief(_ kind: String, now: Date) {
-        presentUnderHer(title: kind == "morning" ? "Good morning" : "Today's wrap-up",
-                        lines: briefLines(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer))
+        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, usagePercent: usage?.fiveHour))
         mochiLog("brief: \(kind) shown")
     }
 
@@ -4114,19 +4247,21 @@ final class NotePanel: NSPanel {
             let quiet = Int(now.timeIntervalSince(run.lastActivity))
             return ("\(run.task) · \(max(1, minutes)) min · active \(quiet) s ago", Status.running.color)
         }
-        presentUnderHer(title: "Agents running", lines: lines.isEmpty ? [("No agent is running right now", .labelColor)] : lines)
+        var content = BriefContent()
+        content.title = "Agents running"
+        content.lines = lines.isEmpty ? [("No agent is running right now", .labelColor)] : lines
+        presentUnderHer(content)
         mochiLog("agents: \(lines.count) shown")
     }
 
     /// Puts a card under her, centred and kept on screen, until its cross closes it
-    func presentUnderHer(title: String, lines: [(String, NSColor)]) {
+    func presentUnderHer(_ content: BriefContent) {
         let brief = BriefView(frame: NSRect(x: 0, y: 0, width: BriefView.width, height: 120))
-        brief.title = title
-        brief.lines = lines
+        brief.content = content
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil) }
-        briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 18)
+        briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let x = min(max(window.frame.midX - BriefView.width / 2, screen.minX + 4), screen.maxX - BriefView.width - 4)

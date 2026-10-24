@@ -322,13 +322,27 @@ let briefChats = [
     Chat(id: "b", title: "Redo the search", status: .running, log: [], updatedAt: 200, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
 ]
 let briefLog: DayLog = [:]
-let morningLines = briefLines(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil).map { $0.0 }
-check("the morning brief names the chat that needs you", morningLines.first == "Needs you: Mod pet")
-check("the morning brief names the chats still running", morningLines.contains("Still running: Redo the search"))
-let quietLines = briefLines(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil).map { $0.0 }
-check("with nothing waiting, the brief says so", quietLines.first == "Nothing needs you")
-let offerLines = briefLines(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23))).map { $0.0 }
-check("the brief shows an open reset offer", offerLines.contains { $0.hasPrefix("Reset offer: 1 left") })
+let morning = briefContent(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
+check("the morning brief counts the chats waiting and running", morning.stats.map { $0.value }.prefix(2) == ["1", "1"])
+check("the morning brief lists the chat that needs you first", morning.rows.first?.left == "Mod pet")
+let quietMorning = briefContent(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
+check("with nothing waiting, the brief says so", quietMorning.lines.first?.0 == "Nothing needs you" && quietMorning.rows.isEmpty)
+var dayWork: DayLog = [:]
+dayWork[dayKey(briefAt(20, 0))] = {
+    var record = DayRecord()
+    record.turns = 5
+    record.allowed = 12
+    record.chats["a"] = ChatDay(title: "Redo the search", turns: 3, working: 7800, waiting: 600)
+    record.chats["b"] = ChatDay(title: "Build the report", turns: 2, working: 3900, waiting: 480)
+    return record
+}()
+let evening = briefContent(kind: "evening", chats: [], log: dayWork, now: briefAt(20, 0), offer: nil, usagePercent: 38)
+check("the wrap-up headline is today's working time", evening.headline?.big == "3h 15m")
+check("the wrap-up counts finished chats, approvals and usage", evening.stats.map { $0.value } == ["5", "12", "38%"])
+check("the wrap-up lists the top chat first", evening.top.first?.name == "Redo the search" && evening.top.count == 2)
+check("the wrap-up chart has a bar for each day with today marked", evening.week.count == 7 && evening.week.filter { $0.isToday }.count == 1)
+let offerContent = briefContent(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23)), usagePercent: nil)
+check("the brief shows an open reset offer", offerContent.footer?.hasPrefix("Reset offer: 1 left") == true)
 
 // Agents are read from their own transcripts: the task is the first user message, and an agent is running if it was active in the last two minutes
 let agentLine = #"{"isSidechain":true,"agentId":"ac7c","type":"user","message":{"role":"user","content":"Run the find-roles task with the saved filters\nand report back"},"timestamp":"2026-10-23T03:08:49.401Z"}"#
