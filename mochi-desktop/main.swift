@@ -1439,18 +1439,17 @@ final class BriefView: NSView {
 
     private var closeRect: NSRect { NSRect(x: bounds.width - 32, y: 16, width: 16, height: 16) }
 
+    /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
+    private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
+
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
         let pad: CGFloat = 18
         let inner = Self.width - pad * 2
-        if draw && content.duet {
-            NSColor(hex: 0xFBF4EE).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 20, yRadius: 20).fill()
-        }
         var y: CGFloat = 16
         if content.duet {
-            drawLine(content.date.uppercased(), .systemFont(ofSize: 11, weight: .semibold), NSColor(hex: 0x9C6B84), x: pad, y: y, width: inner - 30, draw: draw)
-            drawLine(content.title, .systemFont(ofSize: 26, weight: .semibold), NSColor(hex: 0x3D2C3A), x: pad, y: y + 16, width: inner - 30, draw: draw)
+            drawLine(content.date.uppercased(), .systemFont(ofSize: 11, weight: .semibold), duetPlum, x: pad, y: y, width: inner - 30, draw: draw)
+            drawLine(content.title, .systemFont(ofSize: 26, weight: .semibold), .labelColor, x: pad, y: y + 16, width: inner - 30, draw: draw)
             y += 58
         } else {
             drawLine(content.title, .systemFont(ofSize: 17, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 120, draw: draw)
@@ -1463,7 +1462,7 @@ final class BriefView: NSView {
             path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
             path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
             path.lineWidth = 1.6
-            (content.duet ? NSColor(hex: 0x9C6B84) : NSColor.secondaryLabelColor).setStroke()
+            (content.duet ? duetPlum : NSColor.secondaryLabelColor).setStroke()
             path.stroke()
         }
 
@@ -1555,10 +1554,10 @@ final class BriefView: NSView {
             y += 4
             if content.duet {
                 if draw {
-                    NSColor(hex: 0xF3E9EE).setFill()
+                    adaptiveColor(NSColor(hex: 0xF3E9EE), NSColor.white.withAlphaComponent(0.08)).setFill()
                     NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 34), xRadius: 17, yRadius: 17).fill()
                 }
-                drawLine(footer, .systemFont(ofSize: 13), NSColor(hex: 0x6E5566), x: pad + 14, y: y + 8, width: inner - 28, draw: draw)
+                drawLine(footer, .systemFont(ofSize: 13), adaptiveColor(NSColor(hex: 0x6E5566), NSColor(hex: 0xD6C6D0)), x: pad + 14, y: y + 8, width: inner - 28, draw: draw)
                 y += 42
             } else {
                 drawLine(footer, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
@@ -2297,10 +2296,11 @@ struct BriefContent {
 /// The morning brief ("morning") or the 8 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
 func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, usagePercent: Int?) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
-    let red = (ink: NSColor(hex: 0x7A4658), fill: NSColor(hex: 0xF6D9D5))
-    let blue = (ink: NSColor(hex: 0x3E5A70), fill: NSColor(hex: 0xDCE8F2))
-    let green = (ink: NSColor(hex: 0x4F6B3C), fill: NSColor(hex: 0xE4EDD9))
-    let plain = (ink: NSColor(hex: 0x3D2C3A), fill: NSColor(hex: 0xFFFFFF))
+    // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
+    let red = (ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)), fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)))
+    let blue = (ink: adaptiveColor(NSColor(hex: 0x3E5A70), NSColor(hex: 0xBCD6EA)), fill: adaptiveColor(NSColor(hex: 0xDCE8F2), NSColor(hex: 0x2A3A48)))
+    let green = (ink: adaptiveColor(NSColor(hex: 0x4F6B3C), NSColor(hex: 0xC9E0B4)), fill: adaptiveColor(NSColor(hex: 0xE4EDD9), NSColor(hex: 0x2F3D28)))
+    let plain = (ink: NSColor.labelColor, fill: adaptiveColor(NSColor(hex: 0xFFFFFF).withAlphaComponent(0.6), NSColor.white.withAlphaComponent(0.08)))
     func working(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.working ?? 0) } }
     func waited(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.waiting ?? 0) } }
     let day = DateFormatter()
