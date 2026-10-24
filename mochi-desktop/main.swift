@@ -1258,6 +1258,14 @@ func ringSweepDegrees(_ fraction: Double) -> Double {
     min(360, max(0, fraction * 360))
 }
 
+/// Where a card goes under Mochi: centred on her, below her when there is room, above otherwise, and kept on screen
+func briefOrigin(under mochi: NSRect, width: CGFloat, height: CGFloat, screen: NSRect) -> NSPoint {
+    let x = min(max(mochi.midX - width / 2, screen.minX + 4), screen.maxX - width - 4)
+    var y = mochi.minY - height - 6
+    if y < screen.minY + 4 { y = mochi.maxY + 6 }
+    return NSPoint(x: x, y: y)
+}
+
 /// Whether the ring shows the green "done" state: for a minute after a chat finishes
 func ringShowsFinished(finishedAt: Date?, now: Date) -> Bool {
     guard let finishedAt else { return false }
@@ -3408,6 +3416,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
             self?.placeCards()
+            self?.placeBrief()
+            if self?.note.isVisible == true { self?.placeNote() }
         }
 
         Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
@@ -4263,12 +4273,15 @@ final class NotePanel: NSPanel {
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil) }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
-        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let x = min(max(window.frame.midX - BriefView.width / 2, screen.minX + 4), screen.maxX - BriefView.width - 4)
-        var y = window.frame.minY - height - 6
-        if y < screen.minY + 4 { y = window.frame.maxY + 6 }
-        briefPanel.setFrameOrigin(NSPoint(x: x, y: y))
+        placeBrief()
         briefPanel.orderFrontRegardless()
+    }
+
+    /// Keeps the brief card centred under her, so it moves with her
+    func placeBrief() {
+        guard briefPanel.isVisible else { return }
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        briefPanel.setFrameOrigin(briefOrigin(under: window.frame, width: BriefView.width, height: briefPanel.frame.height, screen: screen))
     }
 
     /// Sends the note as a new Claude Code session; Claude opens with it written in

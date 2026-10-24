@@ -355,4 +355,13 @@ check("a line that is not a user message gives no task", agentTask(fromLine: #"{
 check("an agent active a minute ago is running", agentActive(lastActivity: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1060)))
 check("an agent quiet for three minutes is not running", !agentActive(lastActivity: Date(timeIntervalSince1970: 1000), now: Date(timeIntervalSince1970: 1180)))
 
+// The brief card follows Mochi: centred under her, above her when there is no room below, and kept on screen
+let briefScreen = NSRect(x: 0, y: 0, width: 1000, height: 800)
+let underHer = briefOrigin(under: NSRect(x: 400, y: 500, width: 130, height: 162), width: 380, height: 200, screen: briefScreen)
+check("the brief sits centred under her", underHer.x == 400 + 65 - 190 && underHer.y == 500 - 200 - 6)
+let nearBottom = briefOrigin(under: NSRect(x: 400, y: 10, width: 130, height: 162), width: 380, height: 200, screen: briefScreen)
+check("with no room below her, the brief goes above her", nearBottom.y == 10 + 162 + 6)
+let nearEdge = briefOrigin(under: NSRect(x: 0, y: 500, width: 130, height: 162), width: 380, height: 200, screen: briefScreen)
+check("the brief stays on screen at the left edge", nearEdge.x == 4)
+
 print("ALL PASSED")
