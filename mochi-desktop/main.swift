@@ -3446,7 +3446,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         NotificationCenter.default.addObserver(forName: .mochiMoved, object: nil, queue: .main) { [weak self] _ in
             self?.placeBubble()
             self?.placeCards()
-            self?.placeBrief()
+            if self?.briefPanel.isVisible == true { self?.placeBrief() }
             if self?.note.isVisible == true { self?.placeNote() }
         }
 
@@ -4309,9 +4309,10 @@ final class NotePanel: NSPanel {
 
     /// Keeps the brief card centred under her, so it moves with her
     func placeBrief() {
-        guard briefPanel.isVisible else { return }
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        briefPanel.setFrameOrigin(briefOrigin(under: window.frame, width: BriefView.width, height: briefPanel.frame.height, screen: screen))
+        let origin = briefOrigin(under: window.frame, width: BriefView.width, height: briefPanel.frame.height, screen: screen)
+        briefPanel.setFrameOrigin(origin)
+        mochiLog("brief: placed at \(origin) under mochi \(window.frame) on \(screen)")
     }
 
     /// Sends the note as a new Claude Code session; Claude opens with it written in
