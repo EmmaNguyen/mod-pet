@@ -1439,19 +1439,29 @@ final class BriefView: NSView {
     private func render(draw: Bool) -> CGFloat {
         let pad: CGFloat = 18
         let inner = Self.width - pad * 2
+        if draw && content.duet {
+            NSColor(hex: 0xFBF4EE).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 20, yRadius: 20).fill()
+        }
         var y: CGFloat = 16
-        drawLine(content.title, .systemFont(ofSize: 17, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 120, draw: draw)
-        drawLine(content.date, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 30, align: .right, draw: draw)
+        if content.duet {
+            drawLine(content.date.uppercased(), .systemFont(ofSize: 11, weight: .semibold), NSColor(hex: 0x9C6B84), x: pad, y: y, width: inner - 30, draw: draw)
+            drawLine(content.title, .systemFont(ofSize: 26, weight: .semibold), NSColor(hex: 0x3D2C3A), x: pad, y: y + 16, width: inner - 30, draw: draw)
+            y += 58
+        } else {
+            drawLine(content.title, .systemFont(ofSize: 17, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 120, draw: draw)
+            drawLine(content.date, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 30, align: .right, draw: draw)
+            y += 34
+        }
         if draw {
             let cross = closeRect.insetBy(dx: 3, dy: 3)
             let path = NSBezierPath()
             path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
             path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
             path.lineWidth = 1.6
-            NSColor.secondaryLabelColor.setStroke()
+            (content.duet ? NSColor(hex: 0x9C6B84) : NSColor.secondaryLabelColor).setStroke()
             path.stroke()
         }
-        y += 34
 
         if let headline = content.headline {
             drawLine(headline.big, .systemFont(ofSize: 34, weight: .semibold), .labelColor, x: pad, y: y, width: inner, draw: draw)
@@ -1466,14 +1476,15 @@ final class BriefView: NSView {
             let width = (inner - gap * CGFloat(content.stats.count - 1)) / CGFloat(content.stats.count)
             for (i, stat) in content.stats.enumerated() {
                 let x = pad + CGFloat(i) * (width + gap)
+                let tileHeight: CGFloat = content.duet ? 66 : 62
                 if draw {
                     stat.fill.setFill()
-                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: width, height: 62), xRadius: 14, yRadius: 14).fill()
+                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: width, height: tileHeight), xRadius: content.duet ? 22 : 14, yRadius: content.duet ? 22 : 14).fill()
                 }
                 drawLine(stat.value, .systemFont(ofSize: 24, weight: .semibold), stat.ink, x: x + 12, y: y + 8, width: width - 16, draw: draw)
                 drawLine(stat.label, .systemFont(ofSize: 12), stat.ink, x: x + 12, y: y + 38, width: width - 16, draw: draw)
             }
-            y += 62 + 14
+            y += (content.duet ? 66 : 62) + 14
         }
 
         // Chats that need you
@@ -1508,7 +1519,7 @@ final class BriefView: NSView {
                 let x = pad + CGFloat(i) * slot
                 let height = max(3, CGFloat(bar.seconds) / CGFloat(peak) * 56)
                 if draw {
-                    (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259)).setFill()
+                    (content.duet ? (bar.isToday ? NSColor(hex: 0x3D2C3A) : NSColor(hex: 0xC97A8F)) : (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259))).setFill()
                     NSBezierPath(roundedRect: NSRect(x: x + slot * 0.2, y: baseY - height, width: slot * 0.6, height: height), xRadius: 4, yRadius: 4).fill()
                 }
                 drawLine(bar.label, .systemFont(ofSize: 11, weight: bar.isToday ? .semibold : .regular),
@@ -1529,7 +1540,7 @@ final class BriefView: NSView {
                     let track = NSRect(x: pad, y: y + 22, width: inner, height: 5)
                     NSColor.labelColor.withAlphaComponent(0.1).setFill()
                     NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
-                    NSColor(hex: 0x1C7ED6).setFill()
+                    (content.duet ? NSColor(hex: 0xC97A8F) : NSColor(hex: 0x1C7ED6)).setFill()
                     NSBezierPath(roundedRect: NSRect(x: pad, y: track.minY, width: inner * CGFloat(chat.seconds) / CGFloat(longest), height: 5), xRadius: 2.5, yRadius: 2.5).fill()
                 }
                 y += 36
@@ -1538,8 +1549,17 @@ final class BriefView: NSView {
 
         if let footer = content.footer {
             y += 4
-            drawLine(footer, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
-            y += 22
+            if content.duet {
+                if draw {
+                    NSColor(hex: 0xF3E9EE).setFill()
+                    NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 34), xRadius: 17, yRadius: 17).fill()
+                }
+                drawLine(footer, .systemFont(ofSize: 13), NSColor(hex: 0x6E5566), x: pad + 14, y: y + 8, width: inner - 28, draw: draw)
+                y += 42
+            } else {
+                drawLine(footer, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+                y += 22
+            }
         }
         return y + 12
     }
@@ -2256,6 +2276,8 @@ struct BriefTop { let name: String; let seconds: Int }
 
 /// Everything a brief card shows; the card draws whichever parts are filled
 struct BriefContent {
+    /// Drawn in the Duet look: cream, a large greeting, soft pastel tiles
+    var duet = false
     var title = ""
     var date = ""
     var headline: (big: String, sub: String)?
@@ -2270,20 +2292,22 @@ struct BriefContent {
 
 /// The morning brief ("morning") or the 8 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
 func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, usagePercent: Int?) -> BriefContent {
-    let red = (ink: NSColor(hex: 0xA32D2D), fill: NSColor(hex: 0xFCEBEB))
-    let blue = (ink: NSColor(hex: 0x0A4FA8), fill: NSColor(hex: 0xDCE9FA))
-    let green = (ink: NSColor(hex: 0x1F7A3A), fill: NSColor(hex: 0xEAF3DE))
-    let plain = (ink: NSColor(hex: 0x1D1D1F), fill: NSColor(hex: 0xFFFFFF))
+    // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
+    let red = (ink: NSColor(hex: 0x7A4658), fill: NSColor(hex: 0xF6D9D5))
+    let blue = (ink: NSColor(hex: 0x3E5A70), fill: NSColor(hex: 0xDCE8F2))
+    let green = (ink: NSColor(hex: 0x4F6B3C), fill: NSColor(hex: 0xE4EDD9))
+    let plain = (ink: NSColor(hex: 0x3D2C3A), fill: NSColor(hex: 0xFFFFFF))
     func working(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.working ?? 0) } }
     func waited(_ record: DayRecord) -> Int { record.chats.values.reduce(0) { $0 + ($1.waiting ?? 0) } }
     let day = DateFormatter()
     day.dateFormat = "EEE d MMM"
     var content = BriefContent()
+    content.duet = true
     content.date = day.string(from: now)
     let waiting = chats.filter { $0.status == .needsInput }
     let running = chats.filter { $0.status == .running }
     if kind == "morning" {
-        content.title = "Good morning"
+        content.title = "Good morning."
         let yesterday = log[dayKey(now.addingTimeInterval(-86_400))] ?? DayRecord()
         content.stats = [
             BriefStat(value: "\(waiting.count)", label: "Waiting", ink: red.ink, fill: red.fill),
@@ -2291,10 +2315,10 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
         content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
-        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: Status.needsInput.color) }
+        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F)) }
         if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
-        content.title = "Today's wrap-up"
+        content.title = "Today's wrap-up."
         let today = log[dayKey(now)] ?? DayRecord()
         content.headline = (clockText(working(today)), "working today · \(clockText(waited(today))) waiting for you")
         content.stats = [

@@ -364,4 +364,9 @@ check("with no room below her, the brief goes above her", nearBottom.y == 10 + 1
 let nearEdge = briefOrigin(under: NSRect(x: 0, y: 500, width: 130, height: 162), width: 380, height: 200, screen: briefScreen)
 check("the brief stays on screen at the left edge", nearEdge.x == 4)
 
+// The morning brief and the wrap-up use the Duet look; the agent list keeps the plain card
+check("the morning brief is drawn in the Duet look with a greeting", morning.duet && morning.title == "Good morning.")
+check("the wrap-up is drawn in the Duet look", evening.duet && evening.title == "Today's wrap-up.")
+check("the agent list keeps the plain card", !BriefContent().duet)
+
 print("ALL PASSED")
