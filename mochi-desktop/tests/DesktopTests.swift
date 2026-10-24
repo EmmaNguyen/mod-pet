@@ -369,4 +369,8 @@ check("the morning brief is drawn in the Duet look with a greeting", morning.due
 check("the wrap-up is drawn in the Duet look", evening.duet && evening.title == "Today's wrap-up.")
 check("the agent list keeps the plain card", !BriefContent().duet)
 
+// A mochi://brief link shows the morning brief, or the wrap-up when asked
+check("a brief link shows the morning brief by default", parseMochiLink(URL(string: "mochi://brief")!) == .brief(kind: "morning"))
+check("a brief link can ask for the wrap-up", parseMochiLink(URL(string: "mochi://brief?kind=evening")!) == .brief(kind: "evening"))
+
 print("ALL PASSED")

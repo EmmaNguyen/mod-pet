@@ -1207,6 +1207,7 @@ struct ChatTimer {
 enum MochiLink: Equatable {
     case countdown(chat: String, minutes: Int)
     case stop(chat: String?)
+    case brief(kind: String)
 }
 
 /// Reads "mochi://countdown?chat=Redo%20the%20search&minutes=47" or "mochi://stop?chat=..." into a request
@@ -1220,6 +1221,9 @@ func parseMochiLink(_ url: URL) -> MochiLink? {
         return .countdown(chat: chat, minutes: minutes)
     case "stop":
         return .stop(chat: value("chat"))
+    case "brief":
+        // "mochi://brief?kind=morning" or "mochi://brief?kind=evening"; morning when none is given
+        return .brief(kind: value("kind") == "evening" ? "evening" : "morning")
     default:
         return nil
     }
@@ -3355,6 +3359,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
             countdowns[chat.id] = ChatTimer(title: chat.title, start: now, end: now.addingTimeInterval(Double(minutes) * 60))
             mochiLog("countdown: \(minutes) min for \(chat.title)")
             showCard(title: "Countdown: \(chat.title)", body: "\(minutes) min. I\'ll tell you when it\'s up.", color: Status.running.color, link: chat.link, dot: chatColor(chat.id))
+        case .brief(let kind):
+            showBrief(kind, now: Date())
         case .stop(let name):
             let key = name?.lowercased() ?? ""
             guard let entry = countdowns.first(where: { key.isEmpty || $0.value.title.lowercased().contains(key) }) else {
