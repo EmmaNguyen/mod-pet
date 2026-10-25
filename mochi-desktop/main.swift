@@ -2528,9 +2528,9 @@ func diaryStats(_ log: DayLog, now: Date) -> DiaryStats {
 /// usage, and the busiest chats. "Diary": twelve weeks as squares, the darker the busier.
 final class WeekView: NSView {
     static let size = NSSize(width: 380, height: 540)
-    private let log: DayLog
-    private let usage: Usage?
-    private let now: Date
+    private(set) var log: DayLog
+    private(set) var usage: Usage?
+    private(set) var now: Date
     private let colorFor: (String) -> NSColor
     var tab = 0 // 0 is "This week", 1 is "Diary", 2 is "Time"
     var onClose: (() -> Void)?
@@ -2545,6 +2545,14 @@ final class WeekView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Takes the newest day record, usage and time, so the chart moves while the panel is open
+    func update(log: DayLog, usage: Usage?, now: Date) {
+        self.log = log
+        self.usage = usage
+        self.now = now
+        needsDisplay = true
+    }
 
     private var closeBox: NSRect { NSRect(x: bounds.width - 30, y: 12, width: 16, height: 16) }
     private var tabBoxes: [NSRect] {
@@ -3319,6 +3327,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var dayLogSavedAt = Date.distantPast
     /// The open "This week" panel, if any
     var weekPanel: NSPanel?
+    weak var weekView: WeekView?
     /// Her thought bubble, when one is up, and when she may next think out loud
     var thoughtPanel: NSPanel?
     var nextThoughtAt = Date().addingTimeInterval(5 * 60)
@@ -3571,6 +3580,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
         refreshBrief()
+        refreshWeek()
         // The morning brief at 8:00 AM and the wrap-up at 8:00 PM, once each
         if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
             UserDefaults.standard.set(slot, forKey: "lastBriefSlot")
@@ -4021,6 +4031,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             return
         }
         let content = WeekView(log: dayLog, usage: usage, now: Date(), colorFor: { chatColor($0) })
+        weekView = content
         content.onClose = { [weak self] in
             self?.weekPanel?.orderOut(nil)
             self?.weekPanel = nil
@@ -4395,6 +4406,12 @@ final class NotePanel: NSPanel {
             placeBrief()
         }
         brief.needsDisplay = true
+    }
+
+    /// Keeps the week panel's chart in step with the day record while it is open
+    func refreshWeek() {
+        guard let weekView, let weekPanel, weekPanel.isVisible else { return }
+        weekView.update(log: dayLog, usage: usage, now: Date())
     }
 
     /// Keeps the brief card centred under her, so it moves with her

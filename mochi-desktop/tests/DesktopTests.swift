@@ -384,4 +384,11 @@ check("the brief carries the latest sessions", briefContent(kind: "evening", cha
 let linked = [Chat(id: "L", title: "Linked session", status: .ready, log: [], updatedAt: 5, link: "claude://code/continue?session=abc", waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
 check("a session row carries its chat link", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.link == "claude://code/continue?session=abc")
 
+// The week panel takes a new day record while it is open, so its chart moves live
+let liveWeek = WeekView(log: [:], usage: nil, now: Date(), colorFor: { _ in .gray })
+var newerLog: DayLog = [:]
+recordTurn(&newerLog, day: "2026-10-25", chatID: "W", title: "Week chat")
+liveWeek.update(log: newerLog, usage: nil, now: Date())
+check("the week chart takes a newer day record", liveWeek.log["2026-10-25"]?.turns == 1)
+
 print("ALL PASSED")
