@@ -2337,12 +2337,12 @@ func readAgents(now: Date) -> [AgentRun] {
     return Array(runs.sorted { $0.lastActivity > $1.lastActivity }.prefix(8))
 }
 
-/// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 8:00 PM, once per slot. Nil otherwise
+/// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 6:00 PM, once per slot. Nil otherwise
 func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> String? {
-    // Due from 8 AM, and the wrap-up from 8 PM; each once a day, so a missed minute (asleep, paused) still shows it later
+    // Due from 8 AM, and the wrap-up from 6 PM; each once a day, so a missed minute (asleep, paused) still shows it later
     let hour = calendar.component(.hour, from: now)
     guard hour >= 8 else { return nil }
-    let slot = dayKey(now) + (hour >= 20 ? " PM" : " AM")
+    let slot = dayKey(now) + (hour >= 18 ? " PM" : " AM")
     return slot == lastShown ? nil : slot
 }
 
@@ -2378,7 +2378,7 @@ func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
     Array(chats.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
 }
 
-/// The morning brief ("morning") or the 8 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
+/// The morning brief ("morning") or the 6 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
 func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, usagePercent: Int?) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
     // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
@@ -3313,7 +3313,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var lastFinishedAt: Date?
     /// Every agent read recently, running or not
     var allAgents: [AgentRun] = []
-    /// The morning brief and the 8 PM wrap-up, under her until you close them
+    /// The morning brief and the 6 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
     /// The card now open, and which brief it shows ("morning" or "evening") so it can keep itself current
     var currentBrief: BriefView?
@@ -3603,7 +3603,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
         refreshBrief()
         refreshWeek()
-        // The morning brief at 8:00 AM and the wrap-up at 8:00 PM, once each
+        // The morning brief at 8:00 AM and the wrap-up at 6:00 PM, once each
         if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
             UserDefaults.standard.set(slot, forKey: "lastBriefSlot")
             showBrief(slot.hasSuffix("AM") ? "morning" : "evening", now: Date())

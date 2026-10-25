@@ -313,7 +313,8 @@ var briefCal = Calendar(identifier: .gregorian)
 briefCal.timeZone = TimeZone.current
 func briefAt(_ hour: Int, _ minute: Int) -> Date { briefCal.date(from: DateComponents(year: 2026, month: 10, day: 22, hour: hour, minute: minute))! }
 check("the morning brief is due at 8:00 AM", briefSlot(now: briefAt(8, 0), lastShown: nil, calendar: briefCal)?.hasSuffix("AM") == true)
-check("the wrap-up is due at 8:00 PM", briefSlot(now: briefAt(20, 0), lastShown: nil, calendar: briefCal)?.hasSuffix("PM") == true)
+check("the wrap-up is due at 6:00 PM", briefSlot(now: briefAt(18, 0), lastShown: nil, calendar: briefCal)?.hasSuffix("PM") == true)
+check("the wrap-up is not due at 5:59 PM", briefSlot(now: briefAt(17, 59), lastShown: nil, calendar: briefCal)?.hasSuffix("PM") != true)
 check("a brief is not due before 8:00 AM", briefSlot(now: briefAt(7, 30), lastShown: nil, calendar: briefCal) == nil)
 check("a missed 8:00 AM brief is due later that morning", briefSlot(now: briefAt(9, 18), lastShown: nil, calendar: briefCal)?.hasSuffix("AM") == true)
 check("a brief shows once per slot", briefSlot(now: briefAt(8, 0), lastShown: briefSlot(now: briefAt(8, 0), lastShown: nil, calendar: briefCal), calendar: briefCal) == nil)
