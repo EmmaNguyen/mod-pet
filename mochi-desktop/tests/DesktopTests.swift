@@ -373,4 +373,11 @@ check("the agent list keeps the plain card", !BriefContent().duet)
 check("a brief link shows the morning brief by default", parseMochiLink(URL(string: "mochi://brief")!) == .brief(kind: "morning"))
 check("a brief link can ask for the wrap-up", parseMochiLink(URL(string: "mochi://brief?kind=evening")!) == .brief(kind: "evening"))
 
+// The brief lists the seven most recently active sessions, newest first
+let manySessions = (0..<10).map { Chat(id: "s\($0)", title: "Session \($0)", status: .ready, log: [], updatedAt: Double($0), link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false) }
+let newestSeven = latestSessions(manySessions)
+check("the latest sessions are the seven most recently active", newestSeven.count == 7 && newestSeven.first?.id == "s9" && newestSeven.last?.id == "s3")
+check("with fewer than seven sessions, all of them are listed", latestSessions(Array(manySessions.prefix(3))).count == 3)
+check("the brief carries the latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.count == 7)
+
 print("ALL PASSED")

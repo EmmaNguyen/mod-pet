@@ -1511,6 +1511,22 @@ final class BriefView: NSView {
             y += 22
         }
 
+        // The latest sessions, newest first
+        if !content.latest.isEmpty {
+            drawLine("Latest sessions", .systemFont(ofSize: 12, weight: .semibold), content.duet ? duetPlum : .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            for row in content.latest {
+                if draw {
+                    row.dot.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
+                }
+                drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                drawLine(row.right, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 1, width: inner, align: .right, draw: draw)
+                y += 22
+            }
+            y += 8
+        }
+
         // The week, one bar for each day, today dark
         if !content.week.isEmpty {
             drawLine("This week", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
@@ -2287,10 +2303,17 @@ struct BriefContent {
     var stats: [BriefStat] = []
     var rowsTitle = ""
     var rows: [BriefRow] = []
+    /// The seven most recently active sessions, newest first
+    var latest: [BriefRow] = []
     var lines: [(String, NSColor)] = []
     var week: [BriefBar] = []
     var top: [BriefTop] = []
     var footer: String?
+}
+
+/// The most recently active sessions, newest first, up to the limit
+func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
+    Array(chats.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
 }
 
 /// The morning brief ("morning") or the 8 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
@@ -2338,6 +2361,9 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         content.top = today.chats.values.filter { ($0.working ?? 0) > 0 }
             .sorted { ($0.working ?? 0) > ($1.working ?? 0) }.prefix(2)
             .map { BriefTop(name: clip($0.title, 28), seconds: $0.working ?? 0) }
+    }
+    content.latest = latestSessions(chats).map { chat in
+        BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color)
     }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
         content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"
