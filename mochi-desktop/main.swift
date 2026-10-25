@@ -3241,6 +3241,9 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var allAgents: [AgentRun] = []
     /// The morning brief and the 8 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
+    /// The card now open, and which brief it shows ("morning" or "evening") so it can keep itself current
+    var currentBrief: BriefView?
+    var briefLiveKind: String?
     /// When each running chat was first seen running, for its timer
     var runningSince: [String: Date] = [:]
     /// Her usage status box, shown in the bubble above her
@@ -3523,6 +3526,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             allAgents = readAgents(now: Date())
         }
         view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
+        refreshBrief()
         // The morning brief at 8:00 AM and the wrap-up at 8:00 PM, once each
         if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
             UserDefaults.standard.set(slot, forKey: "lastBriefSlot")
@@ -4301,7 +4305,7 @@ final class NotePanel: NSPanel {
 
     /// Shows the brief under her, centred, kept on screen, until you close it with its cross
     func showBrief(_ kind: String, now: Date) {
-        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, usagePercent: usage?.fiveHour))
+        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, usagePercent: usage?.fiveHour), live: kind)
         mochiLog("brief: \(kind) shown")
     }
 
@@ -4321,16 +4325,31 @@ final class NotePanel: NSPanel {
     }
 
     /// Puts a card under her, centred and kept on screen, until its cross closes it
-    func presentUnderHer(_ content: BriefContent) {
+    func presentUnderHer(_ content: BriefContent, live kind: String? = nil) {
         let brief = BriefView(frame: NSRect(x: 0, y: 0, width: BriefView.width, height: 120))
         brief.content = content
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
-        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil) }
+        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
+        currentBrief = brief
+        briefLiveKind = kind
         placeBrief()
         briefPanel.orderFrontRegardless()
+    }
+
+    /// While the morning brief or the wrap-up is open, its numbers and lists update every second
+    func refreshBrief() {
+        guard let kind = briefLiveKind, briefPanel.isVisible, let brief = currentBrief else { return }
+        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, usagePercent: usage?.fiveHour)
+        let height = brief.fittingHeight()
+        if height != briefPanel.frame.height {
+            brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
+            briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
+            placeBrief()
+        }
+        brief.needsDisplay = true
     }
 
     /// Keeps the brief card centred under her, so it moves with her
