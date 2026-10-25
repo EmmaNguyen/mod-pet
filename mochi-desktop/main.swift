@@ -3513,12 +3513,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Shortcuts.add(9, key: kVK_ANSI_2, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("deny") }
         Shortcuts.add(10, key: kVK_ANSI_3, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("acceptEdits") }
         Shortcuts.add(11, key: kVK_ANSI_4, modifiers: controlKey | optionKey) { [weak self] in self?.answerWaiting("auto") }
-        // Control-Option-B opens the morning brief, the same card as at 8:00 AM
-        Shortcuts.add(12, key: kVK_ANSI_B, modifiers: controlKey | optionKey) { [weak self] in self?.showBrief("morning", now: Date()) }
         // Which shortcuts macOS accepted, in shortcuts.json: 0 is accepted, anything else is an error code
         let names = ["1": "quick note F5", "2": "talk F6", "3": "jump Option-J", "4": "allow F7",
                      "5": "deny F8", "6": "accept edits F9", "7": "auto F10", "8": "allow Control-Option-1",
-                     "9": "deny Control-Option-2", "10": "accept edits Control-Option-3", "11": "auto Control-Option-4", "12": "morning brief Control-Option-B"]
+                     "9": "deny Control-Option-2", "10": "accept edits Control-Option-3", "11": "auto Control-Option-4"]
         writeJSON(Dictionary(uniqueKeysWithValues: Shortcuts.results.map { (names[$0.key] ?? $0.key, $0.value as Any) }),
                   to: mochiFolder.appendingPathComponent("shortcuts.json"))
         view.onBadgeClick = { [weak self] in self?.jumpToWaiting() }
@@ -3948,6 +3946,9 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// Starts the pretend request: her real Allow and Deny card appears for 20 seconds, and the keys answer it
+    /// Opens the morning brief on demand, the same card as at 8:00 AM
+    @objc func menuMorningBrief() { showBrief("morning", now: Date()) }
+
     @objc func menuTestApproval() {
         mochiLog("test request started from the menu")
         let now = Date().timeIntervalSince1970 * 1000
@@ -4470,6 +4471,8 @@ final class NotePanel: NSPanel {
             if let back = usage.backText { menu.addItem(withTitle: "⏳ \(back)", action: nil, keyEquivalent: "").isEnabled = false }
             menu.addItem(.separator())
         }
+        menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
         let onlyItem = menu.addItem(withTitle: "Only tell me when something needs my approval", action: #selector(menuToggleOnlyApprovals), keyEquivalent: "")
         onlyItem.target = self
