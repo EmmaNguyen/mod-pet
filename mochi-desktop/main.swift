@@ -530,12 +530,22 @@ var skinIndex: Int {
     get { min(max(UserDefaults.standard.integer(forKey: "skinIndex"), 0), skins.count - 1) }
     set { UserDefaults.standard.set(newValue, forKey: "skinIndex") }
 }
+/// Set when a skin is picked from the right-click menu. Then that skin's colours win over a body colour painted in Mochi Studio
+var skinPicked: Bool {
+    get { UserDefaults.standard.bool(forKey: "skinPicked") }
+    set { UserDefaults.standard.set(newValue, forKey: "skinPicked") }
+}
+/// Her body colour: the picked skin's, unless Mochi Studio paints a body and no skin was picked since
+func bodyColour(look: MochiLook, skin: Skin, picked: Bool) -> NSColor {
+    if !picked, let body = look.bodyColor { return body }
+    return skin.face
+}
 var palette: [Character: NSColor] {
     var colours = skins[skinIndex].palette
-    if let body = currentLook.bodyColor { colours["B"] = body }
+    colours["B"] = bodyColour(look: currentLook, skin: skins[skinIndex], picked: skinPicked)
     return colours
 }
-var face: NSColor { currentLook.bodyColor ?? skins[skinIndex].face }
+var face: NSColor { bodyColour(look: currentLook, skin: skins[skinIndex], picked: skinPicked) }
 var eye: NSColor { skins[skinIndex].eye }
 
 /// How Mochi Studio has dressed her. Missing or unreadable means the defaults.
@@ -4555,6 +4565,7 @@ final class NotePanel: NSPanel {
     /// Puts on the chosen skin at once and remembers it
     @objc func menuPickSkin(_ item: NSMenuItem) {
         skinIndex = item.tag
+        skinPicked = true
         view.needsDisplay = true
     }
 

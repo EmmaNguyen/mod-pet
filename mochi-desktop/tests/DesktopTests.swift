@@ -395,4 +395,10 @@ check("the week chart takes a newer day record", liveWeek.log["2026-10-25"]?.tur
 let waitingChat = [Chat(id: "W1", title: "Waiting session", status: .needsInput, log: [], updatedAt: 5, link: "claude://code/continue?session=wait", waiting: "Approve: ls", isRecent: true, requestId: "r", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
 check("a waiting row carries its chat link", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.link == "claude://code/continue?session=wait")
 
+// A skin picked from the right-click menu shows, even when Mochi Studio paints a body colour
+var studioLook = MochiLook()
+studioLook.body = "F5F7FA"
+check("a picked skin beats the Studio body colour", bodyColour(look: studioLook, skin: skins[1], picked: true) == skins[1].face)
+check("Studio's body shows until a skin is picked", bodyColour(look: studioLook, skin: skins[1], picked: false) == studioLook.bodyColor)
+
 print("ALL PASSED")
