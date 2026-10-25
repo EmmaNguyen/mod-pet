@@ -1444,6 +1444,9 @@ final class BriefView: NSView {
     /// The top-chat rows that open a chat, and the one under the pointer
     private var topHits: [(NSRect, String)] = []
     private var topHovered: Int?
+    /// The waiting rows that open a chat, and the one under the pointer
+    private var rowHits: [(NSRect, String)] = []
+    private var rowHovered: Int?
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
     private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
@@ -1500,12 +1503,18 @@ final class BriefView: NSView {
         if !content.rows.isEmpty {
             drawLine(content.rowsTitle, .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
             y += 22
-            for row in content.rows {
+            rowHits = []
+            for (i, row) in content.rows.enumerated() {
                 if draw {
                     row.dot.setFill()
                     NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
                 }
-                drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                // A waiting chat opens its real session, and underlines under the pointer like the latest sessions
+                if draw, rowHovered == i, row.link != nil {
+                    underline(from: pad + 16, width: nameWidth, y: y + 18, color: .labelColor)
+                }
+                if let link = row.link { rowHits.append((NSRect(x: pad, y: y, width: inner, height: 20), link)) }
                 drawLine(row.right, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
                 y += 22
             }
@@ -1609,9 +1618,11 @@ final class BriefView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         let row = latestHits.firstIndex { $0.0.contains(point) }
         let top = topHits.firstIndex { $0.0.contains(point) }
-        if row != hovered || top != topHovered {
+        let waitingRow = rowHits.firstIndex { $0.0.contains(point) }
+        if row != hovered || top != topHovered || waitingRow != rowHovered {
             hovered = row
             topHovered = top
+            rowHovered = waitingRow
             needsDisplay = true
         }
     }
@@ -1619,6 +1630,7 @@ final class BriefView: NSView {
     override func mouseExited(with event: NSEvent) {
         hovered = nil
         topHovered = nil
+        rowHovered = nil
         needsDisplay = true
     }
 
@@ -1626,7 +1638,7 @@ final class BriefView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
-        if let hit = (latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
+        if let hit = (rowHits + latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
     }
 }
 
@@ -2382,7 +2394,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
         content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
-        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F)) }
+        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link) }
         if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
         content.title = "Today's wrap-up."

@@ -391,4 +391,8 @@ recordTurn(&newerLog, day: "2026-10-25", chatID: "W", title: "Week chat")
 liveWeek.update(log: newerLog, usage: nil, now: Date())
 check("the week chart takes a newer day record", liveWeek.log["2026-10-25"]?.turns == 1)
 
+// A waiting chat in the morning brief carries its real chat link, so a click opens it
+let waitingChat = [Chat(id: "W1", title: "Waiting session", status: .needsInput, log: [], updatedAt: 5, link: "claude://code/continue?session=wait", waiting: "Approve: ls", isRecent: true, requestId: "r", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
+check("a waiting row carries its chat link", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.link == "claude://code/continue?session=wait")
+
 print("ALL PASSED")
