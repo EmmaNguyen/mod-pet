@@ -380,4 +380,8 @@ check("the latest sessions are the seven most recently active", newestSeven.coun
 check("with fewer than seven sessions, all of them are listed", latestSessions(Array(manySessions.prefix(3))).count == 3)
 check("the brief carries the latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.count == 7)
 
+// Each latest session carries its real chat link, so a click opens that chat
+let linked = [Chat(id: "L", title: "Linked session", status: .ready, log: [], updatedAt: 5, link: "claude://code/continue?session=abc", waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
+check("a session row carries its chat link", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.link == "claude://code/continue?session=abc")
+
 print("ALL PASSED")

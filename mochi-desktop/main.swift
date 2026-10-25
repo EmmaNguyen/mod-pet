@@ -1438,6 +1438,9 @@ final class BriefView: NSView {
     override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
     private var closeRect: NSRect { NSRect(x: bounds.width - 32, y: 16, width: 16, height: 16) }
+    /// The latest-session rows that open a chat, with their links, and the one under the pointer
+    private var latestHits: [(NSRect, String)] = []
+    private var hovered: Int?
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
     private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
@@ -1515,12 +1518,17 @@ final class BriefView: NSView {
         if !content.latest.isEmpty {
             drawLine("Latest sessions", .systemFont(ofSize: 12, weight: .semibold), content.duet ? duetPlum : .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
             y += 22
-            for row in content.latest {
+            latestHits = []
+            for (i, row) in content.latest.enumerated() {
                 if draw {
                     row.dot.setFill()
                     NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
                 }
-                drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                if draw, hovered == i, row.link != nil {
+                    underline(from: pad + 16, width: nameWidth, y: y + 18, color: .labelColor)
+                }
+                if row.link != nil { latestHits.append((NSRect(x: pad, y: y, width: inner, height: 20), row.link!)) }
                 drawLine(row.right, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 1, width: inner, align: .right, draw: draw)
                 y += 22
             }
@@ -1583,10 +1591,31 @@ final class BriefView: NSView {
         return y + 12
     }
 
-    // Only the cross closes it: nothing else does, so it stays until you close it
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackHover(self)
+    }
+
+    // Underlines the session under the pointer, so it reads as a link
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = latestHits.firstIndex { $0.0.contains(point) }
+        if row != hovered {
+            hovered = row
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = nil
+        needsDisplay = true
+    }
+
+    // The cross closes the card; a session row opens that real chat in Claude; nothing else closes it
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?() }
+        if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
+        if let hit = latestHits.first(where: { $0.0.contains(point) }) { openChat(hit.1) }
     }
 }
 
@@ -2287,7 +2316,7 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 /// One big number in a tile: its value, label, and the two colours it is drawn in
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
-struct BriefRow { let left: String; let right: String; let dot: NSColor }
+struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil }
 /// One day's bar in the week chart
 struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
 /// A chat in the top list, with its working time today
@@ -2363,7 +2392,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             .map { BriefTop(name: clip($0.title, 28), seconds: $0.working ?? 0) }
     }
     content.latest = latestSessions(chats).map { chat in
-        BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color)
+        BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link)
     }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
         content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"
@@ -4333,6 +4362,7 @@ final class NotePanel: NSPanel {
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
+        briefPanel.acceptsMouseMovedEvents = true
         currentBrief = brief
         briefLiveKind = kind
         placeBrief()
