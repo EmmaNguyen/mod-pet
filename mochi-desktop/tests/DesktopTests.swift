@@ -402,4 +402,8 @@ studioLook.body = "F5F7FA"
 check("a picked skin beats the Studio body colour", bodyColour(look: studioLook, skin: skins[1], picked: true) == skins[1].face)
 check("Studio's body shows until a skin is picked", bodyColour(look: studioLook, skin: skins[1], picked: false) == studioLook.bodyColor)
 
+// A pinned brief sits above the other floating windows
+check("a pinned brief sits above floating windows", briefLevel(pinned: true) == .statusBar)
+check("an unpinned brief keeps the usual floating level", briefLevel(pinned: false) == .floating)
+
 print("ALL PASSED")

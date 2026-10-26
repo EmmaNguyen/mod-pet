@@ -1272,6 +1272,15 @@ func ringSweepDegrees(_ fraction: Double) -> Double {
     min(360, max(0, fraction * 360))
 }
 
+/// The window level for the brief: pinned sits above the other floating windows, otherwise the usual floating level
+func briefLevel(pinned: Bool) -> NSWindow.Level { pinned ? .statusBar : .floating }
+
+/// Whether the brief stays on top of other windows; remembered between launches
+var briefOnTop: Bool {
+    get { UserDefaults.standard.bool(forKey: "briefOnTop") }
+    set { UserDefaults.standard.set(newValue, forKey: "briefOnTop") }
+}
+
 /// Where a card goes under Mochi: centred on her, below her when there is room, above otherwise, and kept on screen
 func briefOrigin(under mochi: NSRect, width: CGFloat, height: CGFloat, screen: NSRect) -> NSPoint {
     let x = min(max(mochi.midX - width / 2, screen.minX + 4), screen.maxX - width - 4)
@@ -3971,6 +3980,12 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// Opens the morning brief on demand, the same card as at 8:00 AM
     @objc func menuMorningBrief() { showBrief("morning", now: Date()) }
 
+    /// Pins the brief above other windows, or lets it sit at the usual level again
+    @objc func menuToggleBriefOnTop() {
+        briefOnTop.toggle()
+        briefPanel.level = briefLevel(pinned: briefOnTop)
+    }
+
     @objc func menuTestApproval() {
         mochiLog("test request started from the menu")
         let now = Date().timeIntervalSince1970 * 1000
@@ -4418,6 +4433,7 @@ final class NotePanel: NSPanel {
         briefPanel.acceptsMouseMovedEvents = true
         currentBrief = brief
         briefLiveKind = kind
+        briefPanel.level = briefLevel(pinned: briefOnTop)
         briefPanel.orderFrontRegardless()
         placeCards() // the brief joins the stack, so the cards move aside for it
     }
@@ -4494,6 +4510,9 @@ final class NotePanel: NSPanel {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
+        let onTop = menu.addItem(withTitle: "Keep the brief on top", action: #selector(menuToggleBriefOnTop), keyEquivalent: "")
+        onTop.target = self
+        onTop.state = briefOnTop ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
         let onlyItem = menu.addItem(withTitle: "Only tell me when something needs my approval", action: #selector(menuToggleOnlyApprovals), keyEquivalent: "")
