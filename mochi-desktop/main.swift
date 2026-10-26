@@ -1457,6 +1457,10 @@ final class BriefView: NSView {
     override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
     private var closeRect: NSRect { NSRect(x: bounds.width - 32, y: 16, width: 16, height: 16) }
+    /// The pin sits just left of the cross; a pinned brief stays above other windows
+    private var pinRect: NSRect { NSRect(x: bounds.width - 56, y: 16, width: 16, height: 16) }
+    var pinned = false
+    var onPin: (() -> Void)?
     /// The latest-session rows that open a chat, with their links, and the one under the pointer
     private var latestHits: [(NSRect, String)] = []
     private var hovered: Int?
@@ -1481,10 +1485,15 @@ final class BriefView: NSView {
             y += 58
         } else {
             drawLine(content.title, .systemFont(ofSize: 17, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 120, draw: draw)
-            drawLine(content.date, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 30, align: .right, draw: draw)
+            drawLine(content.date, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 60, align: .right, draw: draw)
             y += 34
         }
         if draw {
+            let pinColour = pinned ? (content.duet ? duetPlum : NSColor.labelColor) : NSColor.tertiaryLabelColor
+            let pinSymbol = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin", accessibilityDescription: "Keep on top")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [pinColour])))
+            pinSymbol?.draw(in: pinRect.insetBy(dx: 1, dy: 1))
             let cross = closeRect.insetBy(dx: 3, dy: 3)
             let path = NSBezierPath()
             path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
@@ -1657,6 +1666,7 @@ final class BriefView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
+        if pinRect.insetBy(dx: -6, dy: -6).contains(point) { onPin?(); return }
         if let hit = (rowHits + latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
     }
 }
@@ -3980,10 +3990,12 @@ func playAtTwoThirds(_ sound: NSSound?) {
     /// Opens the morning brief on demand, the same card as at 8:00 AM
     @objc func menuMorningBrief() { showBrief("morning", now: Date()) }
 
-    /// Pins the brief above other windows, or lets it sit at the usual level again
-    @objc func menuToggleBriefOnTop() {
+    /// The pin on the brief card: pins it above other windows, or lets it sit at the usual level again
+    func toggleBriefOnTop() {
         briefOnTop.toggle()
         briefPanel.level = briefLevel(pinned: briefOnTop)
+        currentBrief?.pinned = briefOnTop
+        currentBrief?.needsDisplay = true
     }
 
     @objc func menuTestApproval() {
@@ -4428,6 +4440,8 @@ final class NotePanel: NSPanel {
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.placeCards() }
+        brief.pinned = briefOnTop
+        brief.onPin = { [weak self] in self?.toggleBriefOnTop() }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
         briefPanel.acceptsMouseMovedEvents = true
@@ -4510,9 +4524,6 @@ final class NotePanel: NSPanel {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
-        let onTop = menu.addItem(withTitle: "Keep the brief on top", action: #selector(menuToggleBriefOnTop), keyEquivalent: "")
-        onTop.target = self
-        onTop.state = briefOnTop ? .on : .off
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
         let onlyItem = menu.addItem(withTitle: "Only tell me when something needs my approval", action: #selector(menuToggleOnlyApprovals), keyEquivalent: "")
