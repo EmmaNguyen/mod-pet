@@ -2404,7 +2404,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
         content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
-        content.rows = waiting.prefix(4).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link) }
+        content.rows = waiting.prefix(5).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link) }
         if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
         content.title = "Today's wrap-up."
