@@ -4078,6 +4078,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if bubble.isVisible { stack.insert(bubble, at: 0) }
         if let thoughtPanel { stack.insert(thoughtPanel, at: 0) }
         if let weekPanel, weekPanel.isVisible { stack.insert(weekPanel, at: 0) }
+        // The morning brief or wrap-up takes the place nearest her, so it never covers the cards
+        if briefPanel.isVisible { stack.insert(briefPanel, at: 0) }
         guard !stack.isEmpty else { return }
         let heights = stack.map { $0.frame.height }
         let stackHeight = heights.reduce(0, +) + CGFloat(stack.count - 1) * gap
@@ -4410,14 +4412,14 @@ final class NotePanel: NSPanel {
         brief.content = content
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
-        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil }
+        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.placeCards() }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
         briefPanel.acceptsMouseMovedEvents = true
         currentBrief = brief
         briefLiveKind = kind
-        placeBrief()
         briefPanel.orderFrontRegardless()
+        placeCards() // the brief joins the stack, so the cards move aside for it
     }
 
     /// While the morning brief or the wrap-up is open, its numbers and lists update every second
@@ -4441,10 +4443,8 @@ final class NotePanel: NSPanel {
 
     /// Keeps the brief card centred under her, so it moves with her
     func placeBrief() {
-        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let origin = briefOrigin(under: window.frame, width: BriefView.width, height: briefPanel.frame.height, screen: screen)
-        briefPanel.setFrameOrigin(origin)
-        mochiLog("brief: placed at \(origin) under mochi \(window.frame) on \(screen)")
+        placeCards()
+        mochiLog("brief: placed at \(briefPanel.frame.origin) under mochi \(window.frame)")
     }
 
     /// Sends the note as a new Claude Code session; Claude opens with it written in
