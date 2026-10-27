@@ -452,4 +452,9 @@ check("a top chat in the wrap-up carries its chat id and link", { () -> Bool in
     return top?.chatID == "L" && top?.link == "claude://code/continue?session=abc"
 }())
 
+// A card's title starts after its chat's cat, or its dot, or at the edge
+check("a card's title makes room for the cat", cardTitleX(hasCat: true, hasDot: true) == 46)
+check("a card's title makes room for the dot", cardTitleX(hasCat: false, hasDot: true) == 34)
+check("a card with neither starts at the edge", cardTitleX(hasCat: false, hasDot: false) == 22)
+
 print("ALL PASSED")

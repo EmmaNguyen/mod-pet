@@ -2267,6 +2267,15 @@ func floatingPanel(size: NSSize) -> NSPanel {
 
 /// One notification beside Mochi: a coloured edge, a bold title, one line of
 /// detail, and a small ✕. Clicking the card opens the chat; the ✕ just closes it.
+/// Where a card's title starts: after the chat's pixel cat, or its colour dot, or at the edge when it has neither
+func cardTitleX(hasCat: Bool, hasDot: Bool) -> CGFloat { hasCat ? 46 : hasDot ? 34 : 22 }
+
+/// Draws the cat a chat wears, in a square, for the cards
+func drawChatCat(_ id: String, in rect: NSRect) {
+    let look = chatLooks[id] ?? ChatLook()
+    drawCatAvatar(chatSkin(id: id, look: look), look: look, in: rect, resting: false)
+}
+
 final class CardView: NSView {
     let title: String
     let body: String
@@ -2277,6 +2286,8 @@ final class CardView: NSView {
     var hovering = false
     /// The chat's own colour, as a dot before the title; usage cards have none
     var dot: NSColor?
+    /// The chat whose cat, with its skin, shows before the title
+    var chatID: String?
     override var isFlipped: Bool { true }
 
     static let size = NSSize(width: 300, height: 56)
@@ -2299,8 +2310,8 @@ final class CardView: NSView {
 
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
-        let titleX: CGFloat = dot == nil ? 22 : 34
-        if let dot { drawDot(dot, at: NSPoint(x: 26, y: 19)) }
+        let titleX = cardTitleX(hasCat: chatID != nil, hasDot: dot != nil)
+        if let chatID { drawChatCat(chatID, in: NSRect(x: 14, y: 14, width: 26, height: 26)) } else if let dot { drawDot(dot, at: NSPoint(x: 26, y: 19)) }
         NSAttributedString(string: title, attributes: [
             .font: Self.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ]).draw(in: NSRect(x: titleX, y: 10, width: bounds.width - 30 - titleX, height: 18))
@@ -2310,7 +2321,7 @@ final class CardView: NSView {
         }
         NSAttributedString(string: body, attributes: [
             .font: Self.bodyFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
-        ]).draw(in: NSRect(x: 22, y: 29, width: bounds.width - 34, height: 17))
+        ]).draw(in: NSRect(x: titleX, y: 29, width: bounds.width - 12 - titleX, height: 17))
         NSAttributedString(string: "✕", attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.tertiaryLabelColor,
         ]).draw(at: NSPoint(x: closeBox.minX + 4, y: closeBox.minY + 2))
@@ -2369,6 +2380,8 @@ final class ApprovalView: NSView {
     var onAnswer: ((String) -> Void)?
     /// The chat's own colour, as a dot before the title
     var dot: NSColor?
+    /// The chat whose cat, with its skin, shows before the question
+    var chatID: String?
     override var isFlipped: Bool { true }
 
     static let size = NSSize(width: 420, height: 214)
@@ -2396,8 +2409,8 @@ final class ApprovalView: NSView {
         // The question, in up to two lines, then a line under it
         let wrap = NSMutableParagraphStyle()
         wrap.lineBreakMode = .byWordWrapping
-        let titleX: CGFloat = dot == nil ? 22 : 36
-        if let dot { drawDot(dot, at: NSPoint(x: 27, y: 21)) }
+        let titleX = cardTitleX(hasCat: chatID != nil, hasDot: dot != nil)
+        if let chatID { drawChatCat(chatID, in: NSRect(x: 14, y: 14, width: 28, height: 28)) } else if let dot { drawDot(dot, at: NSPoint(x: 27, y: 21)) }
         NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 13.5, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: wrap,
         ]).draw(in: NSRect(x: titleX, y: 12, width: bounds.width - 34 - titleX, height: 36))
@@ -3738,7 +3751,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             let now = Date()
             countdowns[chat.id] = ChatTimer(title: chat.title, start: now, end: now.addingTimeInterval(Double(minutes) * 60))
             mochiLog("countdown: \(minutes) min for \(chat.title)")
-            showCard(title: "Countdown: \(chat.title)", body: "\(minutes) min. I\'ll tell you when it\'s up.", color: Status.running.color, link: chat.link, dot: chatColor(chat.id))
+            showCard(title: "Countdown: \(chat.title)", body: "\(minutes) min. I\'ll tell you when it\'s up.", color: Status.running.color, link: chat.link, dot: chatColor(chat.id), chatID: chat.id)
         case .brief(let kind):
             showBrief(kind, now: Date())
         case .stop(let name):
@@ -3890,7 +3903,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         for (id, countdown) in countdowns where countdown.end <= Date() {
             countdowns[id] = nil
             let minutes = Int(countdown.end.timeIntervalSince(countdown.start) / 60)
-            showCard(title: "Time\'s up: \(countdown.title)", body: "Your \(minutes) min countdown has finished.", color: Status.ready.color, link: nil, dot: chatColor(id))
+            showCard(title: "Time\'s up: \(countdown.title)", body: "Your \(minutes) min countdown has finished.", color: Status.ready.color, link: nil, dot: chatColor(id), chatID: id)
             playNeedsSound()
         }
         if let next = countdowns.values.min(by: { $0.end < $1.end }) {
@@ -3911,7 +3924,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 // With Allow and Deny to answer on, their card carries the question instead
                 if !approveHere || chat.requestId.isEmpty {
                     showCard(title: "⏰ \(chat.title) needs you", body: why, color: Status.needsInput.color,
-                             link: chat.link, dot: chatColor(chat.id))
+                             link: chat.link, dot: chatColor(chat.id), chatID: chat.id)
                 }
                 notify(title: "⏰ \(chat.title) needs you", body: why, link: chat.link, silent: true)
                 playNeedsSound()
@@ -3948,7 +3961,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             for (event, chat) in fresh.sorted(by: { ($0.0.at ?? 0) < ($1.0.at ?? 0) }) where finishedShows {
                 let color = event.text == "Stopped" ? Status.blocked.color : chat.status.color
                 showCard(title: event.headline(chat.title), body: event.summary, color: color, link: chat.link,
-                         dot: chatColor(chat.id))
+                         dot: chatColor(chat.id), chatID: chat.id)
             }
             if finishedShows { playAtTwoThirds(NSSound(named: "Pop")) }
         }
@@ -4064,7 +4077,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// A notification card beside Mochi; it fades out on its own after a while
-    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5, dot: NSColor? = nil) {
+    func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5, dot: NSColor? = nil, chatID: String? = nil) {
         guard cardMayShow(hidden: notificationsHidden) else { return }
         mochiLog("card: \(title) | \(body)")
         let panel = floatingPanel(size: CardView.size)
@@ -4072,6 +4085,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         panel.hasShadow = false // the glass draws its own soft edge
         let card = CardView(title: title, body: body, accent: color)
         card.dot = dot
+        card.chatID = chatID
         let glass = glassBackground(for: card, tint: color)
         card.onOpen = { [weak self, weak panel] in
             openChat(link)
@@ -4185,6 +4199,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                                 subtitle: "Answer in 7 seconds, or Claude asks you itself.",
                                 body: why, accent: Status.needsInput.color, offersModes: chat.canSwitchMode)
         card.dot = chatColor(chat.id)
+        card.chatID = chat.id
         card.onOpen = { openChat(chat.link) } // the card stays, so you can read the chat and then answer
         card.onClose = { [weak self] in self?.closeApproval(id) }
         card.onAnswer = { [weak self] decision in
