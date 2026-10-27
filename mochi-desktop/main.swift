@@ -1281,6 +1281,11 @@ var briefOnTop: Bool {
     set { UserDefaults.standard.set(newValue, forKey: "briefOnTop") }
 }
 
+/// Whether the pointer is close enough to Mochi, or on the brief, to keep the brief showing
+func pointerNearBrief(pointer: NSPoint, mochi: NSRect, brief: NSRect, margin: CGFloat) -> Bool {
+    mochi.insetBy(dx: -margin, dy: -margin).contains(pointer) || brief.contains(pointer)
+}
+
 /// Where a card goes under Mochi: centred on her, below her when there is room, above otherwise, and kept on screen
 func briefOrigin(under mochi: NSRect, width: CGFloat, height: CGFloat, screen: NSRect) -> NSPoint {
     let x = min(max(mochi.midX - width / 2, screen.minX + 4), screen.maxX - width - 4)
@@ -3621,6 +3626,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
         refreshBrief()
+        refreshBriefVisibility()
         refreshWeek()
         // The morning brief at 8:00 AM and the wrap-up at 6:00 PM, once each
         if let slot = briefSlot(now: Date(), lastShown: UserDefaults.standard.string(forKey: "lastBriefSlot")) {
@@ -4473,6 +4479,20 @@ final class NotePanel: NSPanel {
             placeBrief()
         }
         brief.needsDisplay = true
+    }
+
+    /// The brief hides on its own until the pointer comes near Mochi or the brief; closing it with the cross ends this
+    func refreshBriefVisibility() {
+        guard briefLiveKind != nil else { return }
+        let near = pointerNearBrief(pointer: NSEvent.mouseLocation, mochi: window.frame,
+                                    brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 80)
+        if near, !briefPanel.isVisible {
+            briefPanel.orderFrontRegardless()
+            placeCards()
+        } else if !near, briefPanel.isVisible {
+            briefPanel.orderOut(nil)
+            placeCards()
+        }
     }
 
     /// Keeps the week panel's chart in step with the day record while it is open

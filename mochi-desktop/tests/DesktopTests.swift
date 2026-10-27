@@ -406,4 +406,11 @@ check("Studio's body shows until a skin is picked", bodyColour(look: studioLook,
 check("a pinned brief sits above floating windows", briefLevel(pinned: true) == .statusBar)
 check("an unpinned brief keeps the usual floating level", briefLevel(pinned: false) == .floating)
 
+// The brief shows while the pointer is near Mochi or on the brief, and hides otherwise
+let nearMochi = NSRect(x: 1000, y: 300, width: 130, height: 162)
+let briefFrame = NSRect(x: 900, y: 470, width: 380, height: 400)
+check("the brief shows when the pointer is near Mochi", pointerNearBrief(pointer: NSPoint(x: 1060, y: 380), mochi: nearMochi, brief: .zero, margin: 80))
+check("the brief shows when the pointer is on the brief", pointerNearBrief(pointer: NSPoint(x: 1000, y: 600), mochi: nearMochi, brief: briefFrame, margin: 80))
+check("the brief hides when the pointer is away", !pointerNearBrief(pointer: NSPoint(x: 100, y: 100), mochi: nearMochi, brief: .zero, margin: 80))
+
 print("ALL PASSED")
