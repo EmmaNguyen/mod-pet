@@ -4574,6 +4574,7 @@ final class NotePanel: NSPanel {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Close all boxes", action: #selector(menuCloseAllBoxes), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
         let hideItem = menu.addItem(withTitle: "Hide notifications", action: #selector(menuToggleHideNotifications), keyEquivalent: "")
@@ -4706,6 +4707,19 @@ final class NotePanel: NSPanel {
     }
 
     @objc func menuNotifications() { if !bubble.isVisible { toggleNotifications() } }
+
+    /// Closes every open box: the brief, the week panel, the chat list, her thoughts and the cards
+    @objc func menuCloseAllBoxes() {
+        briefPanel.orderOut(nil)
+        briefLiveKind = nil
+        weekPanel?.orderOut(nil)
+        weekPanel = nil
+        bubble.orderOut(nil)
+        thoughtPanel?.orderOut(nil)
+        for panel in cards { panel.orderOut(nil) }
+        cards.removeAll()
+        placeCards()
+    }
 
     /// Hides every notification card, the chat list and her thoughts; hiding closes the ones on screen now
     @objc func menuToggleHideNotifications() {
