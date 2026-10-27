@@ -1655,14 +1655,11 @@ final class BriefView: NSView {
             y += 22
             rowHits = []
             for (i, row) in content.rows.enumerated() {
-                if draw {
-                    row.dot.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
-                }
-                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                if draw { drawRowMarker(row, x: pad, y: y) }
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 24, y: y, width: inner - 24, draw: draw)
                 // A waiting chat opens its real session, and underlines under the pointer like the latest sessions
                 if draw, rowHovered == i, row.link != nil {
-                    underline(from: pad + 16, width: nameWidth, y: y + 18, color: .labelColor)
+                    underline(from: pad + 24, width: nameWidth, y: y + 18, color: .labelColor)
                 }
                 if let link = row.link { rowHits.append((NSRect(x: pad, y: y, width: inner, height: 20), link)) }
                 drawLine(row.right, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
@@ -1682,13 +1679,10 @@ final class BriefView: NSView {
             y += 22
             latestHits = []
             for (i, row) in content.latest.enumerated() {
-                if draw {
-                    row.dot.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: pad, y: y + 6, width: 8, height: 8)).fill()
-                }
-                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 16, y: y, width: inner - 16, draw: draw)
+                if draw { drawRowMarker(row, x: pad, y: y) }
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 24, y: y, width: inner - 24, draw: draw)
                 if draw, hovered == i, row.link != nil {
-                    underline(from: pad + 16, width: nameWidth, y: y + 18, color: .labelColor)
+                    underline(from: pad + 24, width: nameWidth, y: y + 18, color: .labelColor)
                 }
                 if row.link != nil { latestHits.append((NSRect(x: pad, y: y, width: inner, height: 20), row.link!)) }
                 drawLine(row.right, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 1, width: inner, align: .right, draw: draw)
@@ -1756,6 +1750,17 @@ final class BriefView: NSView {
             }
         }
         return y + 12
+    }
+
+    /// A row's marker: the chat's own pixel cat with its skin, or a coloured dot when the row has no chat
+    private func drawRowMarker(_ row: BriefRow, x: CGFloat, y: CGFloat) {
+        if let id = row.chatID {
+            let look = chatLooks[id] ?? ChatLook()
+            drawCatAvatar(chatSkin(id: id, look: look), look: look, in: NSRect(x: x, y: y + 1, width: 18, height: 18), resting: false)
+        } else {
+            row.dot.setFill()
+            NSBezierPath(ovalIn: NSRect(x: x, y: y + 6, width: 8, height: 8)).fill()
+        }
     }
 
     override func updateTrackingAreas() {
@@ -2611,7 +2616,7 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 /// One big number in a tile: its value, label, and the two colours it is drawn in
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
-struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil }
+struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil }
 /// One day's bar in the week chart
 struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
 /// A chat in the top list, with its working time today
@@ -2666,7 +2671,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
         content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
-        content.rows = waiting.prefix(5).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link) }
+        content.rows = waiting.prefix(5).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link, chatID: $0.id) }
         if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
         content.title = "Today's wrap-up."
@@ -2691,7 +2696,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         }
     }
     content.latest = latestSessions(chats).map { chat in
-        BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link)
+        BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link, chatID: chat.id)
     }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
         content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"

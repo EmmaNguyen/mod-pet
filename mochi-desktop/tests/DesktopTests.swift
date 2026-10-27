@@ -440,4 +440,8 @@ check("saved chat looks are read back", readChatLooks(from: looksFile)["chat-1"]
 check("a missing looks file reads as none", readChatLooks(from: looksFile.appendingPathExtension("missing")).isEmpty)
 try? FileManager.default.removeItem(at: looksFile)
 
+// The brief's rows carry the chat id, so each row can wear that chat's skin
+check("a waiting row carries its chat id", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.chatID == "W1")
+check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.chatID == "L")
+
 print("ALL PASSED")
