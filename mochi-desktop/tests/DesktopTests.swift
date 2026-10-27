@@ -421,4 +421,8 @@ check("the wrap-up shows from 6:00 PM", wrapUpDue(now: briefAt(18, 0), calendar:
 check("notifications show when not hidden", cardMayShow(hidden: false))
 check("notifications stay off when hidden", !cardMayShow(hidden: true))
 
+// Each chat wears the same skin every launch, always one of the skins
+check("a chat keeps its skin", chatSkinIndex("session-1", count: skins.count) == chatSkinIndex("session-1", count: skins.count))
+check("a chat's skin is one of the skins", (0..<50).allSatisfy { (0..<skins.count).contains(chatSkinIndex("chat-\($0)", count: skins.count)) })
+
 print("ALL PASSED")

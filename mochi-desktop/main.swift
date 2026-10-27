@@ -593,6 +593,33 @@ func pixelColor(_ cell: Character, _ status: Status, blinking: Bool) -> NSColor?
     }
 }
 
+/// Which of the skins a chat wears: the same on every launch, from its id
+func chatSkinIndex(_ id: String, count: Int) -> Int {
+    guard count > 0 else { return 0 }
+    var hash: UInt32 = 2166136261
+    for byte in id.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+    return Int(hash % UInt32(count))
+}
+
+/// A chat's small pixel cat for the list: the chat's own skin, eyes shut while it rests
+func drawCatAvatar(_ skin: Skin, in rect: NSRect, resting: Bool) {
+    let cell = rect.width / 16
+    for (y, row) in grid.enumerated() {
+        for (x, ch) in row.enumerated() {
+            let color: NSColor?
+            switch ch {
+            case ".": color = nil
+            case "E", "e": color = resting ? skin.face : skin.eye
+            case "W": color = resting ? skin.face : .white
+            default: color = skin.palette[ch]
+            }
+            guard let color else { continue }
+            color.setFill()
+            NSRect(x: rect.minX + CGFloat(x) * cell, y: rect.minY + CGFloat(y) * cell, width: cell, height: cell).insetBy(dx: -0.15, dy: -0.15).fill()
+        }
+    }
+}
+
 // MARK: - Mochi's window
 
 let scale: CGFloat = 5
@@ -1687,6 +1714,8 @@ final class ChatListView: NSView {
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .medium)
     /// The blue for running text and its chip: deep on light glass, bright on dark glass
     static let runningInk = adaptiveColor(NSColor(hex: 0x0A4FA8), NSColor(hex: 0x9CC9FF))
+    /// The orange for a chat that is working now, like the reference's "Drafting"
+    static let workingInk = adaptiveColor(NSColor(hex: 0xC4500A), NSColor(hex: 0xFFA94D))
     static let runningChip = adaptiveColor(NSColor(hex: 0x0A6CF0).withAlphaComponent(0.14), NSColor(hex: 0x0A6CF0).withAlphaComponent(0.3))
     /// Each chat sits on a faint glass card, with a light edge
     static let glassCard = adaptiveColor(NSColor.white.withAlphaComponent(0.42), NSColor.white.withAlphaComponent(0.09))
@@ -1788,7 +1817,7 @@ final class ChatListView: NSView {
                 y += 24
             }
             for chat in members {
-                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw) + 8
+                y = box(chat, accent: group.color, top: y, pad: pad, inner: inner, draw: draw)
             }
         }
 
@@ -1843,13 +1872,9 @@ final class ChatListView: NSView {
             let saved = hits
             let bottom = layoutBox(chat, accent: accent, top: top, pad: pad, inner: inner, draw: false)
             hits = saved
-            let card = NSRect(x: pad, y: top, width: inner, height: bottom - top)
-            Self.glassCard.setFill()
-            NSBezierPath(roundedRect: card, xRadius: 16, yRadius: 16).fill()
-            Self.glassEdge.setStroke()
-            let edge = NSBezierPath(roundedRect: card.insetBy(dx: 0.25, dy: 0.25), xRadius: 16, yRadius: 16)
-            edge.lineWidth = 0.5
-            edge.stroke()
+            // An inbox row: a hairline under it, starting at the text
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
+            NSRect(x: pad + 62, y: bottom - 0.5, width: inner - 62 - 10, height: 0.5).fill()
         }
         return layoutBox(chat, accent: accent, top: top, pad: pad, inner: inner, draw: draw)
     }
@@ -1857,29 +1882,28 @@ final class ChatListView: NSView {
     private func layoutBox(_ chat: Chat, accent: NSColor, top: CGFloat, pad: CGFloat, inner: CGFloat, draw: Bool) -> CGFloat {
         let boxIndex = hits.count
         let contentRight = pad + inner - 10
-        let textX = pad + 24
+        let textX = pad + 62
         let textWidth = contentRight - textX
         var cy = top + 10
 
-        // The name first, then the state and time at the right
-        // An open chat in Auto mode says so, so you can tell which ones approve on their own
-        let stateName = chat.isOpen ? (chat.mode == "auto" ? "Auto · " : "") + listStateLabel(chat.status) : "Closed"
-        let state = stateName + " · " + ago(chat.updatedAt)
-        let stateWidth = label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
-                               x: contentRight - 200, y: cy, width: 200, align: .right, draw: false)
-        if draw, chat.isOpen, chat.status == .running {
-            Self.runningChip.setFill()
-            NSBezierPath(roundedRect: NSRect(x: contentRight - stateWidth - 8, y: cy - 2, width: stateWidth + 16, height: 22),
-                         xRadius: 8, yRadius: 8).fill()
-        }
-        label(state, .systemFont(ofSize: 13, weight: .medium), chat.isOpen ? accent : .secondaryLabelColor,
-              x: contentRight - 200, y: cy, width: 200, align: .right, draw: draw)
+        // Her pixel cat on the left, then the name with the time at the right, like an inbox row
         if draw {
-            chatColor(chat.id).setFill()
-            NSBezierPath(ovalIn: NSRect(x: pad + 10, y: cy + 5, width: 8, height: 8)).fill()
+            drawCatAvatar(skins[chatSkinIndex(chat.id, count: skins.count)], in: NSRect(x: pad + 10, y: top + 10, width: 40, height: 40),
+                          resting: !chat.isOpen || chat.status == .idle)
         }
-        label(chat.title, Self.titleFont, .labelColor, x: textX, y: cy, width: max(40, textWidth - stateWidth - 10), draw: draw)
-        cy += 24
+        let timeText = ago(chat.updatedAt)
+        let timeWidth = label(timeText, .systemFont(ofSize: 13), .secondaryLabelColor, x: contentRight - 120, y: cy, width: 120, align: .right, draw: draw)
+        label(chat.title, .systemFont(ofSize: 15, weight: .semibold), .labelColor, x: textX, y: cy, width: max(40, textWidth - timeWidth - 10), draw: draw)
+        cy += 22
+
+        // The state under the name: orange while it works, rose when it needs you; an Auto chat says so
+        let auto = chat.isOpen && chat.mode == "auto"
+        if chat.isOpen, chat.status == .running || chat.status == .needsInput || auto {
+            let word = chat.status == .running ? "✦ Working…" : chat.status == .needsInput ? "Needs you" : "Ready"
+            let colour = chat.status == .running ? Self.workingInk : chat.status == .needsInput ? Status.needsInput.color : NSColor.secondaryLabelColor
+            label((auto ? "Auto · " : "") + word, .systemFont(ofSize: 13, weight: .medium), colour, x: textX, y: cy, width: textWidth, draw: draw)
+            cy += 20
+        }
 
         // A countdown you started: the minutes left, and a bar that fills to the end
         if let countdown = countdowns[chat.id] {
@@ -1932,7 +1956,7 @@ final class ChatListView: NSView {
         for event in latest.prefix(listShownEvents(total: latest.count, expanded: expandedNow)) {
             let took = event.seconds.map { " · \($0)s" } ?? ""
             label("\(icons[event.kind] ?? "•") \(clip(event.summary, 70))\(took) · \(ago(event.at))",
-                  .systemFont(ofSize: 13), .labelColor, x: textX, y: cy, width: textWidth, draw: draw)
+                  .systemFont(ofSize: 13), .secondaryLabelColor, x: textX, y: cy, width: textWidth, draw: draw)
             cy += 20
         }
         if latest.count > 1 {
