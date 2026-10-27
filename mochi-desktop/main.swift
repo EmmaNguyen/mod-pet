@@ -1718,9 +1718,13 @@ final class BriefView: NSView {
             y += 22
             let longest = max(1, content.top.map(\.seconds).max() ?? 1)
             for (i, chat) in content.top.enumerated() {
-                let nameWidth = drawLine(chat.name, .systemFont(ofSize: 13), .labelColor, x: pad, y: y, width: inner - 70, draw: draw)
+                if draw, let id = chat.chatID {
+                    let look = chatLooks[id] ?? ChatLook()
+                    drawCatAvatar(chatSkin(id: id, look: look), look: look, in: NSRect(x: pad, y: y + 1, width: 18, height: 18), resting: false)
+                }
+                let nameWidth = drawLine(chat.name, .systemFont(ofSize: 13), .labelColor, x: pad + 24, y: y, width: inner - 94, draw: draw)
                 if draw, topHovered == i, chat.link != nil {
-                    underline(from: pad, width: nameWidth, y: y + 18, color: .labelColor)
+                    underline(from: pad + 24, width: nameWidth, y: y + 18, color: .labelColor)
                 }
                 if let link = chat.link { topHits.append((NSRect(x: pad, y: y, width: inner, height: 20), link)) }
                 drawLine(clockText(chat.seconds), .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
@@ -2620,7 +2624,7 @@ struct BriefRow { let left: String; let right: String; let dot: NSColor; var lin
 /// One day's bar in the week chart
 struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
 /// A chat in the top list, with its working time today
-struct BriefTop { let name: String; let seconds: Int; var link: String? = nil }
+struct BriefTop { let name: String; let seconds: Int; var link: String? = nil; var chatID: String? = nil }
 
 /// Everything a brief card shows; the card draws whichever parts are filled
 struct BriefContent {
@@ -2687,12 +2691,12 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         content.week = weekDates(containing: now).map { date in
             BriefBar(label: names.string(from: date), seconds: working(log[dayKey(date)] ?? DayRecord()), isToday: dayKey(date) == dayKey(now))
         }
-        content.top = today.chats.values.filter { ($0.working ?? 0) > 0 }
-            .sorted { ($0.working ?? 0) > ($1.working ?? 0) }.prefix(2)
-            .map { BriefTop(name: clip($0.title, 28), seconds: $0.working ?? 0) }
-        // Top chats carry their real links: the day record keeps no link, so match each by its title
+        content.top = today.chats.filter { ($0.value.working ?? 0) > 0 }
+            .sorted { ($0.value.working ?? 0) > ($1.value.working ?? 0) }.prefix(2)
+            .map { BriefTop(name: clip($0.value.title, 28), seconds: $0.value.working ?? 0, chatID: $0.key) }
+        // Top chats carry their real links: the day record keeps none, so find each chat by its id
         for i in content.top.indices {
-            content.top[i].link = chats.first { clip($0.title, 28) == content.top[i].name }?.link
+            content.top[i].link = chats.first { $0.id == content.top[i].chatID }?.link
         }
     }
     content.latest = latestSessions(chats).map { chat in

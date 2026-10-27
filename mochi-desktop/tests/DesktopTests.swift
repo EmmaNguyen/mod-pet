@@ -444,4 +444,12 @@ try? FileManager.default.removeItem(at: looksFile)
 check("a waiting row carries its chat id", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.chatID == "W1")
 check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.chatID == "L")
 
+// The wrap-up's top chats carry the chat id too, so each wears its skin and opens its own chat
+var topLog: DayLog = [:]
+recordSecond(&topLog, day: dayKey(Date()), chatID: "L", title: "Linked session", waiting: false)
+check("a top chat in the wrap-up carries its chat id and link", { () -> Bool in
+    let top = briefContent(kind: "evening", chats: linked, log: topLog, now: Date(), offer: nil, usagePercent: nil).top.first
+    return top?.chatID == "L" && top?.link == "claude://code/continue?session=abc"
+}())
+
 print("ALL PASSED")
