@@ -1275,6 +1275,9 @@ func ringSweepDegrees(_ fraction: Double) -> Double {
 /// The window level for the brief: pinned sits above the other floating windows, otherwise the usual floating level
 func briefLevel(pinned: Bool) -> NSWindow.Level { pinned ? .statusBar : .floating }
 
+/// Notification cards, the chat list and her thoughts show only while notifications are not hidden
+func cardMayShow(hidden: Bool) -> Bool { !hidden }
+
 /// Whether the brief stays on top of other windows; remembered between launches
 var briefOnTop: Bool {
     get { UserDefaults.standard.bool(forKey: "briefOnTop") }
@@ -3403,6 +3406,10 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     /// On by default: she only pops up for a chat that needs your OK. Finished work, usage warnings and her
     /// thoughts still go to her list and her pill, not to a card, sound or Mac notification.
+    var notificationsHidden: Bool {
+        get { UserDefaults.standard.bool(forKey: "notificationsHidden") }
+        set { UserDefaults.standard.set(newValue, forKey: "notificationsHidden") }
+    }
     var onlyApprovals: Bool {
         get { UserDefaults.standard.object(forKey: "onlyApprovals") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "onlyApprovals") }
@@ -3817,6 +3824,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// A notification card beside Mochi; it fades out on its own after a while
     func showCard(title: String, body: String, color: NSColor, link: String?, seconds: Double = 5, dot: NSColor? = nil) {
+        guard cardMayShow(hidden: notificationsHidden) else { return }
         mochiLog("card: \(title) | \(body)")
         let panel = floatingPanel(size: CardView.size)
         panel.acceptsMouseMovedEvents = true // so the title underlines under the pointer
@@ -4060,6 +4068,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// Her bubble: it fades in above her, stays about six seconds, and goes when you click it
     func showThought(_ thought: Thought) {
+        guard cardMayShow(hidden: notificationsHidden) else { return }
         mochiLog("thought: \(thought.big) | \(thought.small)")
         let content = ThoughtView(thought: thought)
         content.onDismiss = { [weak self] in self?.hideThought() }
@@ -4271,6 +4280,7 @@ final class NotePanel: NSPanel {
 
     /// Click Mochi: every project and chat, what it is doing, and its latest news; click the list to close it
     func toggleNotifications() {
+        guard cardMayShow(hidden: notificationsHidden) else { return }
         if bubble.isVisible { bubble.orderOut(nil); placeCards(); return }
         hideBubble?.invalidate()
         view.unread = 0
@@ -4566,6 +4576,9 @@ final class NotePanel: NSPanel {
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
+        let hideItem = menu.addItem(withTitle: "Hide notifications", action: #selector(menuToggleHideNotifications), keyEquivalent: "")
+        hideItem.target = self
+        hideItem.state = notificationsHidden ? .on : .off
         let onlyItem = menu.addItem(withTitle: "Only tell me when something needs my approval", action: #selector(menuToggleOnlyApprovals), keyEquivalent: "")
         onlyItem.target = self
         onlyItem.state = onlyApprovals ? .on : .off
@@ -4693,6 +4706,16 @@ final class NotePanel: NSPanel {
     }
 
     @objc func menuNotifications() { if !bubble.isVisible { toggleNotifications() } }
+
+    /// Hides every notification card, the chat list and her thoughts; hiding closes the ones on screen now
+    @objc func menuToggleHideNotifications() {
+        notificationsHidden.toggle()
+        guard notificationsHidden else { return }
+        for panel in cards { panel.orderOut(nil) }
+        cards.removeAll()
+        bubble.orderOut(nil)
+        placeCards()
+    }
 
     @objc func menuReset() {
         let screen = NSScreen.main?.visibleFrame ?? .zero

@@ -417,4 +417,8 @@ check("the brief hides when the pointer is away", !pointerNearBrief(pointer: NSP
 check("the wrap-up is held at 5:59 PM", !wrapUpDue(now: briefAt(17, 59), calendar: briefCal))
 check("the wrap-up shows from 6:00 PM", wrapUpDue(now: briefAt(18, 0), calendar: briefCal))
 
+// Hiding notifications stops the cards, the chat list and her thoughts
+check("notifications show when not hidden", cardMayShow(hidden: false))
+check("notifications stay off when hidden", !cardMayShow(hidden: true))
+
 print("ALL PASSED")
