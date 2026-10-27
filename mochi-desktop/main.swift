@@ -4106,21 +4106,31 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let thoughtPanel { stack.insert(thoughtPanel, at: 0) }
         if let weekPanel, weekPanel.isVisible { stack.insert(weekPanel, at: 0) }
         // The morning brief or wrap-up takes the place nearest her, so it never covers the cards
-        if briefPanel.isVisible { stack.insert(briefPanel, at: 0) }
+        let briefShown = briefPanel.isVisible
+        if briefShown { stack.insert(briefPanel, at: 0) }
+        func stackHeight(_ panels: [NSPanel]) -> CGFloat {
+            panels.map { $0.frame.height }.reduce(0, +) + CGFloat(max(panels.count - 1, 0)) * gap
+        }
+        // A stack taller than the screen cannot fit, and the brief would be pushed off it: the brief then sits under her alone
+        let briefAlone = briefShown && stackHeight(stack) > screen.height - 8
+        if briefAlone { stack.removeAll { $0 === briefPanel } }
+        if briefAlone {
+            briefPanel.setFrameOrigin(briefOrigin(under: window.frame, width: briefPanel.frame.width, height: briefPanel.frame.height, screen: screen))
+        }
         guard !stack.isEmpty else { return }
         let heights = stack.map { $0.frame.height }
-        let stackHeight = heights.reduce(0, +) + CGFloat(stack.count - 1) * gap
+        let total = stackHeight(stack)
 
         // Above Mochi when there is room, otherwise below; the one with more room wins
         let roomAbove = screen.maxY - window.frame.maxY - 4
         let roomBelow = window.frame.minY - screen.minY - 4
-        let goAbove = roomAbove >= stackHeight || roomAbove >= roomBelow
+        let goAbove = roomAbove >= total || roomAbove >= roomBelow
 
-        var bottom = goAbove ? window.frame.maxY + 2 : window.frame.minY - 2 - stackHeight
-        bottom = min(max(bottom, screen.minY + 4), screen.maxY - 4 - stackHeight)
+        var bottom = goAbove ? window.frame.maxY + 2 : window.frame.minY - 2 - total
+        bottom = min(max(bottom, screen.minY + 4), screen.maxY - 4 - total)
 
         // Above Mochi the nearest item sits lowest; below her it sits highest
-        var cursor = goAbove ? bottom : bottom + stackHeight
+        var cursor = goAbove ? bottom : bottom + total
         for (panel, height) in zip(stack, heights) {
             let width = panel.frame.width
             let x = min(max(window.frame.midX - width / 2, screen.minX + 4), screen.maxX - width - 4)
