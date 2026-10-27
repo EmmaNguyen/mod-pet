@@ -601,8 +601,92 @@ func chatSkinIndex(_ id: String, count: Int) -> Int {
     return Int(hash % UInt32(count))
 }
 
-/// A chat's small pixel cat for the list: the chat's own skin, eyes shut while it rests
-func drawCatAvatar(_ skin: Skin, in rect: NSRect, resting: Bool) {
+/// What a chat's cat wears, chosen in the skin editor. Shell -1 means the skin picked from the chat's id
+struct ChatLook: Codable, Equatable {
+    var shell = -1
+    var hat = 0
+    var eyewear = 0
+    var extra = 0
+}
+
+let shellColours: [(name: String, hex: Int)] = [
+    ("Amber", 0xF4A259), ("Coral", 0xEF6F6C), ("Rose", 0xF28DB2), ("Plum", 0x9B5DE5), ("Indigo", 0x5C6BC0),
+    ("Sky", 0x4DA8DA), ("Teal", 0x2EC4B6), ("Mint", 0x8FD9B6), ("Lime", 0xA3C94A), ("Slate", 0x7B8494),
+]
+let hatNames = ["None", "Top hat", "Party hat", "Crown"]
+let eyewearNames = ["None", "Glasses", "Sunglasses", "Monocle"]
+let extraNames = ["None", "Bow tie", "Scarf", "Bell"]
+
+/// Pieces drawn over the cat, 16 by 16 like her face. K ink, R red, Y gold, P pink; a dot is empty
+let hatArt: [[String]] = [
+    [],
+    ["......KKKK......", "......KKKK......", "......KRRK......", "....KKKKKKKK...."] + Array(repeating: "................", count: 12),
+    ["................", ".......YY.......", "......YPPY......", ".....YPYYPY.....", "....YYYYYYYY...."] + Array(repeating: "................", count: 11),
+    ["................", "................", "....Y..YY..Y....", "....YYYYYYYY...."] + Array(repeating: "................", count: 12),
+]
+let eyewearArt: [[String]] = [
+    [],
+    Array(repeating: "................", count: 6) + ["..KKKK....KKKK..", "..K..KKKKKK..K..", "..K..K....K..K..", "..KKKK....KKKK.."] + Array(repeating: "................", count: 6),
+    Array(repeating: "................", count: 6) + ["..KKKK....KKKK..", "..KKKKKKKKKKKK..", "..KKKK....KKKK..", "................"] + Array(repeating: "................", count: 6),
+    Array(repeating: "................", count: 6) + ["..........YYYY..", ".........Y....Y.", ".........Y....Y.", "..........YYYY.."] + Array(repeating: "................", count: 6),
+]
+let extraArt: [[String]] = [
+    [],
+    Array(repeating: "................", count: 12) + [".....RR....RR...", "......RRKRR....."] + ["................", "................"],
+    Array(repeating: "................", count: 12) + ["..KKRRRRRRRRKK..", "..KBRR.......K.."] + ["................", "................"],
+    Array(repeating: "................", count: 12) + [".......YY.......", ".......YY......."] + ["................", "................"],
+]
+
+/// The skin a chat wears: the one its id picks, with the editor's shell colour over it when one is chosen
+func chatSkin(id: String, look: ChatLook) -> Skin {
+    let base = skins[chatSkinIndex(id, count: skins.count)]
+    guard look.shell >= 0, look.shell < shellColours.count else { return base }
+    let shell = NSColor(hex: shellColours[look.shell].hex)
+    var palette = base.palette
+    palette["B"] = shell
+    palette["L"] = shell.blended(withFraction: 0.45, of: .white) ?? shell
+    palette["D"] = shell.blended(withFraction: 0.2, of: .black) ?? shell
+    palette["K"] = shell.blended(withFraction: 0.65, of: .black) ?? base.palette["K"]
+    return Skin(name: base.name, palette: palette, face: shell, eye: NSColor(hex: 0x2B2118))
+}
+
+/// A random look for the "Surprise me" button; the same seed gives the same look
+func randomChatLook(seed: Int) -> ChatLook {
+    var state = UInt64(truncatingIfNeeded: seed) &* 6364136223846793005 &+ 1442695040888963407
+    func next(_ count: Int) -> Int {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return Int((state >> 33) % UInt64(count))
+    }
+    return ChatLook(shell: next(shellColours.count), hat: next(hatNames.count), eyewear: next(eyewearNames.count), extra: next(extraNames.count))
+}
+
+let chatLooksURL = mochiFolder.appendingPathComponent("chatskins.json")
+func readChatLooks(from url: URL = chatLooksURL) -> [String: ChatLook] {
+    guard let data = try? Data(contentsOf: url), let looks = try? JSONDecoder().decode([String: ChatLook].self, from: data) else { return [:] }
+    return looks
+}
+func saveChatLooks(_ looks: [String: ChatLook], to url: URL = chatLooksURL) {
+    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let data = try? JSONEncoder().encode(looks) { try? data.write(to: url, options: .atomic) }
+}
+/// What every chat wears, loaded at launch and saved on each change
+var chatLooks: [String: ChatLook] = readChatLooks()
+
+/// Draws 16 by 16 art over a square
+private func drawOverlay(_ art: [String], in rect: NSRect) {
+    let cell = rect.width / 16
+    let ink: [Character: NSColor] = ["K": NSColor(hex: 0x2B2118), "R": NSColor(hex: 0xE5484D), "Y": NSColor(hex: 0xF5C84C), "P": NSColor(hex: 0xFF8FAB)]
+    for (y, row) in art.enumerated() {
+        for (x, ch) in row.enumerated() {
+            guard let color = ink[ch] else { continue }
+            color.setFill()
+            NSRect(x: rect.minX + CGFloat(x) * cell, y: rect.minY + CGFloat(y) * cell, width: cell, height: cell).insetBy(dx: -0.15, dy: -0.15).fill()
+        }
+    }
+}
+
+/// A chat's small pixel cat: its skin, then its hat, eyewear and extra on top; eyes shut while it rests
+func drawCatAvatar(_ skin: Skin, look: ChatLook = ChatLook(), in rect: NSRect, resting: Bool) {
     let cell = rect.width / 16
     for (y, row) in grid.enumerated() {
         for (x, ch) in row.enumerated() {
@@ -618,6 +702,9 @@ func drawCatAvatar(_ skin: Skin, in rect: NSRect, resting: Bool) {
             NSRect(x: rect.minX + CGFloat(x) * cell, y: rect.minY + CGFloat(y) * cell, width: cell, height: cell).insetBy(dx: -0.15, dy: -0.15).fill()
         }
     }
+    if look.extra > 0, look.extra < extraArt.count { drawOverlay(extraArt[look.extra], in: rect) }
+    if look.eyewear > 0, look.eyewear < eyewearArt.count { drawOverlay(eyewearArt[look.eyewear], in: rect) }
+    if look.hat > 0, look.hat < hatArt.count { drawOverlay(hatArt[look.hat], in: rect) }
 }
 
 // MARK: - Mochi's window
@@ -1747,7 +1834,9 @@ final class ChatListView: NSView {
     /// Asked when the list must be sized again, such as after "Show earlier"
     var onRelayout: (() -> Void)?
 
-    enum Hit { case open(String), answer(Chat, String), expand(String) }
+    enum Hit { case open(String), answer(Chat, String), expand(String), skin(Chat) }
+    /// Asked to open the skin editor for a chat
+    var onEditSkin: ((Chat) -> Void)?
     /// Where each click goes, in drawing order; the last one under the pointer wins, so a button beats the box around it
     private var hits: [(rect: NSRect, hit: Hit)] = []
 
@@ -1888,9 +1977,12 @@ final class ChatListView: NSView {
 
         // Her pixel cat on the left, then the name with the time at the right, like an inbox row
         if draw {
-            drawCatAvatar(skins[chatSkinIndex(chat.id, count: skins.count)], in: NSRect(x: pad + 10, y: top + 10, width: 40, height: 40),
+            let look = chatLooks[chat.id] ?? ChatLook()
+            drawCatAvatar(chatSkin(id: chat.id, look: look), look: look, in: NSRect(x: pad + 10, y: top + 10, width: 40, height: 40),
                           resting: !chat.isOpen || chat.status == .idle)
         }
+        // Clicking her cat opens the skin editor for this chat
+        hits.append((rect: NSRect(x: pad + 8, y: top + 8, width: 44, height: 44), hit: .skin(chat)))
         let timeText = ago(chat.updatedAt)
         let timeWidth = label(timeText, .systemFont(ofSize: 13), .secondaryLabelColor, x: contentRight - 120, y: cy, width: 120, align: .right, draw: draw)
         label(chat.title, .systemFont(ofSize: 15, weight: .semibold), .labelColor, x: textX, y: cy, width: max(40, textWidth - timeWidth - 10), draw: draw)
@@ -2012,7 +2104,121 @@ final class ChatListView: NSView {
         case .expand(let id):
             if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
             onRelayout?()
+        case .skin(let chat):
+            onEditSkin?(chat)
         }
+    }
+}
+
+/// The skin editor for one chat: a big preview, then shell, hat, eyewear and extras to pick from
+final class SkinEditorView: NSView {
+    static let size = NSSize(width: 380, height: 640)
+    private let chatID: String
+    private let chatTitle: String
+    var onChange: (() -> Void)?
+    var onClose: (() -> Void)?
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    enum Action { case shell(Int), hat(Int), eyewear(Int), extra(Int), surprise, done }
+    private var hits: [(NSRect, Action)] = []
+    private var look: ChatLook { chatLooks[chatID] ?? ChatLook() }
+
+    init(chatID: String, title: String) {
+        self.chatID = chatID
+        self.chatTitle = title
+        super.init(frame: NSRect(origin: .zero, size: Self.size))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    private static let accent = NSColor(hex: 0xE8651A)
+    private static let tile = adaptiveColor(NSColor.white.withAlphaComponent(0.55), NSColor.white.withAlphaComponent(0.1))
+
+    override func draw(_ dirtyRect: NSRect) {
+        hits = []
+        let pad: CGFloat = 22
+        let inner = Self.size.width - pad * 2
+        drawLine("Chat skin", .systemFont(ofSize: 15, weight: .semibold), .labelColor, x: pad, y: 18, width: inner, align: .center, draw: true)
+
+        // The big preview
+        let card = NSRect(x: pad, y: 52, width: inner, height: 150)
+        Self.tile.setFill()
+        NSBezierPath(roundedRect: card, xRadius: 20, yRadius: 20).fill()
+        drawCatAvatar(chatSkin(id: chatID, look: look), look: look, in: NSRect(x: card.midX - 55, y: card.minY + 20, width: 110, height: 110), resting: false)
+        drawLine(chatTitle, .systemFont(ofSize: 18, weight: .semibold), .labelColor, x: pad, y: 212, width: inner, align: .center, draw: true)
+
+        // Shell colours: the chat's own first, then the ten colours
+        drawLine("Shell", .systemFont(ofSize: 13, weight: .medium), .secondaryLabelColor, x: pad, y: 250, width: inner, draw: true)
+        let base = chatSkin(id: chatID, look: ChatLook()).face
+        let colours = [base] + shellColours.map { NSColor(hex: $0.hex) }
+        let step = inner / CGFloat(colours.count)
+        for (i, colour) in colours.enumerated() {
+            let rect = NSRect(x: pad + CGFloat(i) * step + (step - 22) / 2, y: 274, width: 22, height: 22)
+            colour.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            if look.shell == i - 1 { ring(NSBezierPath(ovalIn: rect.insetBy(dx: -3, dy: -3))) }
+            hits.append((rect.insetBy(dx: -3, dy: -3), .shell(i - 1)))
+        }
+
+        optionRow("Hat", names: hatNames, selected: look.hat, top: 316, pad: pad, inner: inner,
+                  variant: { ChatLook(shell: self.look.shell, hat: $0) }, action: { .hat($0) })
+        optionRow("Eyewear", names: eyewearNames, selected: look.eyewear, top: 408, pad: pad, inner: inner,
+                  variant: { ChatLook(shell: self.look.shell, eyewear: $0) }, action: { .eyewear($0) })
+        optionRow("Extras", names: extraNames, selected: look.extra, top: 500, pad: pad, inner: inner,
+                  variant: { ChatLook(shell: self.look.shell, extra: $0) }, action: { .extra($0) })
+
+        let surprise = NSRect(x: pad, y: 596, width: inner - 96, height: 32)
+        let done = NSRect(x: pad + inner - 88, y: 596, width: 88, height: 32)
+        drawButton(surprise, "Surprise me", filled: false, draw: true)
+        drawButton(done, "Done", filled: true, draw: true)
+        hits.append((surprise, .surprise))
+        hits.append((done, .done))
+    }
+
+    private func ring(_ path: NSBezierPath) {
+        Self.accent.setStroke()
+        path.lineWidth = 2
+        path.stroke()
+    }
+
+    /// A row of tiles, each showing her cat with that one piece on
+    private func optionRow(_ heading: String, names: [String], selected: Int, top: CGFloat, pad: CGFloat, inner: CGFloat,
+                           variant: (Int) -> ChatLook, action: (Int) -> Action) {
+        drawLine(heading, .systemFont(ofSize: 13, weight: .medium), .secondaryLabelColor, x: pad, y: top, width: inner, draw: true)
+        let gap: CGFloat = 8
+        let width = (inner - gap * CGFloat(names.count - 1)) / CGFloat(names.count)
+        for i in names.indices {
+            let rect = NSRect(x: pad + CGFloat(i) * (width + gap), y: top + 24, width: width, height: 56)
+            Self.tile.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12).fill()
+            if i == 0 {
+                drawLine("None", .systemFont(ofSize: 12), .secondaryLabelColor, x: rect.minX, y: rect.midY - 8, width: rect.width, align: .center, draw: true)
+            } else {
+                let look = variant(i)
+                drawCatAvatar(chatSkin(id: chatID, look: look), look: look, in: NSRect(x: rect.midX - 20, y: rect.midY - 20, width: 40, height: 40), resting: false)
+            }
+            if i == selected { ring(NSBezierPath(roundedRect: rect.insetBy(dx: -1, dy: -1), xRadius: 13, yRadius: 13)) }
+            hits.append((rect, action(i)))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let action = hits.last(where: { $0.0.contains(point) })?.1 else { return }
+        var now = look
+        switch action {
+        case .shell(let i): now.shell = i
+        case .hat(let i): now.hat = i
+        case .eyewear(let i): now.eyewear = i
+        case .extra(let i): now.extra = i
+        case .surprise: now = randomChatLook(seed: Int.random(in: 0..<1_000_000))
+        case .done: onClose?(); return
+        }
+        chatLooks[chatID] = now == ChatLook() ? nil : now
+        saveChatLooks(chatLooks)
+        needsDisplay = true
+        onChange?()
     }
 }
 
@@ -3405,6 +3611,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var dayLogSavedAt = Date.distantPast
     /// The open "This week" panel, if any
     var weekPanel: NSPanel?
+    var skinPanel: NSPanel?
     weak var weekView: WeekView?
     /// Her thought bubble, when one is up, and when she may next think out loud
     var thoughtPanel: NSPanel?
@@ -3558,6 +3765,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         bubbleFrame.scroll.documentView = bubbleView
         chatList.onAnswer = { [weak self] chat, decision in self?.answerApproval(chat, decision) }
         chatList.onRelayout = { [weak self] in self?.showList() }
+        chatList.onEditSkin = { [weak self] chat in self?.showSkinEditor(chat) }
         usagePanel.onRefresh = { [weak self] in self?.showUsageDetails() }
         bubbleFrame.autoresizingMask = [.width, .height]
         bubble.contentView = bubbleGlass
@@ -4365,6 +4573,25 @@ final class NotePanel: NSPanel {
     }
 
     /// Shows her chat list in the bubble, sized to fit, scrolling past the cap
+    /// Opens the skin editor for a chat, in the middle of the screen; every pick shows in the list at once
+    func showSkinEditor(_ chat: Chat) {
+        skinPanel?.orderOut(nil)
+        let editor = SkinEditorView(chatID: chat.id, title: chat.title)
+        editor.onChange = { [weak self] in self?.chatList.needsDisplay = true }
+        editor.onClose = { [weak self] in
+            self?.skinPanel?.orderOut(nil)
+            self?.skinPanel = nil
+        }
+        let panel = floatingPanel(size: SkinEditorView.size)
+        panel.contentView = makeGlass(size: SkinEditorView.size, content: editor, radius: 20)
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        panel.setFrameOrigin(NSPoint(x: screen.midX - SkinEditorView.size.width / 2, y: screen.midY - SkinEditorView.size.height / 2))
+        panel.level = .statusBar
+        panel.orderFrontRegardless()
+        skinPanel = panel
+        mochiLog("skin editor: opened for \(chat.title)")
+    }
+
     func showList() {
         presentInBubble(chatList, height: chatList.fittingHeight(), width: ChatListView.width, accent: view.status.color)
     }
