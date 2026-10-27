@@ -413,4 +413,8 @@ check("the brief shows when the pointer is near Mochi", pointerNearBrief(pointer
 check("the brief shows when the pointer is on the brief", pointerNearBrief(pointer: NSPoint(x: 1000, y: 600), mochi: nearMochi, brief: briefFrame, margin: 80))
 check("the brief hides when the pointer is away", !pointerNearBrief(pointer: NSPoint(x: 100, y: 100), mochi: nearMochi, brief: .zero, margin: 80))
 
+// The wrap-up waits for 6:00 PM
+check("the wrap-up is held at 5:59 PM", !wrapUpDue(now: briefAt(17, 59), calendar: briefCal))
+check("the wrap-up shows from 6:00 PM", wrapUpDue(now: briefAt(18, 0), calendar: briefCal))
+
 print("ALL PASSED")

@@ -2361,6 +2361,11 @@ func readAgents(now: Date) -> [AgentRun] {
     return Array(runs.sorted { $0.lastActivity > $1.lastActivity }.prefix(8))
 }
 
+/// Whether the wrap-up may show: from 6:00 PM on
+func wrapUpDue(now: Date, calendar: Calendar = .current) -> Bool {
+    calendar.component(.hour, from: now) >= 18
+}
+
 /// The brief due right now: "2026-10-22 AM" at 8:00 AM, "2026-10-22 PM" at 6:00 PM, once per slot. Nil otherwise
 func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> String? {
     // Due from 8 AM, and the wrap-up from 6 PM; each once a day, so a missed minute (asleep, paused) still shows it later
@@ -4430,6 +4435,11 @@ final class NotePanel: NSPanel {
 
     /// Shows the brief under her, centred, kept on screen, until you close it with its cross
     func showBrief(_ kind: String, now: Date) {
+        // The wrap-up is for the end of the day: before 6:00 PM it stays hidden, even when opened by hand
+        if kind == "evening", !wrapUpDue(now: now) {
+            mochiLog("brief: wrap-up held until 6:00 PM")
+            return
+        }
         presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, usagePercent: usage?.fiveHour), live: kind)
         mochiLog("brief: \(kind) shown")
     }
