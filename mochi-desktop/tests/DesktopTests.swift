@@ -475,4 +475,12 @@ check("the arcs and gaps fill the whole circle", abs(arcs.reduce(0) { $0 + $1.sw
 check("need you takes its share of the ring", abs(arcs[0].sweep - (360 - 24) / 2) < 0.001)
 check("a single state is a full ring with no gap", ringArcs(StatusCounts(needs: 0, working: 3, done: 0)).first?.sweep == 360)
 
+// The menu bar list: needs you, then working, then done, empty groups left out
+let barSections = menuBarSections(ringChats)
+check("the menu bar list puts needs you first", barSections.map(\.title) == ["Needs you", "Working", "Done"])
+check("the menu bar list leaves out closed and old chats", barSections.flatMap(\.chats).count == 4)
+check("an empty group is left out", menuBarSections([countChat("w", .running)]).map(\.title) == ["Working"])
+check("the menu bar picture is only her face with nothing to count", menuBarImage(StatusCounts()).size.width == 16)
+check("the menu bar picture grows with the counts", menuBarImage(StatusCounts(needs: 2, working: 1)).size.width > 40)
+
 print("ALL PASSED")

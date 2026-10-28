@@ -755,6 +755,54 @@ func ringArcs(_ counts: StatusCounts, gap: Double = 8) -> [(state: Status, start
     return arcs
 }
 
+/// The menu bar list: needs you, then working, then done, each newest first; empty groups are left out
+func menuBarSections(_ chats: [Chat]) -> [(title: String, chats: [Chat])] {
+    let open = chats.filter { $0.isOpen && $0.isRecent }
+    let groups: [(String, Status)] = [("Needs you", .needsInput), ("Working", .running), ("Done", .ready)]
+    return groups.compactMap { title, status in
+        let members = open.filter { $0.status == status }.sorted { $0.updatedAt > $1.updatedAt }
+        return members.isEmpty ? nil : (title, Array(members.prefix(6)))
+    }
+}
+
+/// The menu bar picture: her small face, then a rose diamond with the count that needs you and a blue ring with
+/// the count working; with nothing to count, only her face
+func menuBarImage(_ counts: StatusCounts) -> NSImage {
+    let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+    var parts: [(Status, NSAttributedString)] = []
+    if counts.needs > 0 { parts.append((.needsInput, NSAttributedString(string: "\(counts.needs)", attributes: [.font: font, .foregroundColor: NSColor.labelColor]))) }
+    if counts.working > 0 { parts.append((.running, NSAttributedString(string: "\(counts.working)", attributes: [.font: font, .foregroundColor: NSColor.labelColor]))) }
+    let width = 16 + parts.reduce(CGFloat(0)) { $0 + 6 + 10 + 3 + $1.1.size().width }
+    let image = NSImage(size: NSSize(width: width, height: 18), flipped: true) { _ in
+        drawCatAvatar(Skin(name: "", palette: palette, face: face, eye: eye), in: NSRect(x: 0, y: 1, width: 16, height: 16), resting: false)
+        var x: CGFloat = 16
+        for (state, text) in parts {
+            x += 6
+            let icon = NSRect(x: x, y: 4, width: 10, height: 10)
+            if state == .needsInput {
+                let diamond = NSBezierPath()
+                diamond.move(to: NSPoint(x: icon.midX, y: icon.minY))
+                diamond.line(to: NSPoint(x: icon.maxX, y: icon.midY))
+                diamond.line(to: NSPoint(x: icon.midX, y: icon.maxY))
+                diamond.line(to: NSPoint(x: icon.minX, y: icon.midY))
+                diamond.close()
+                needsInk.setFill()
+                diamond.fill()
+            } else {
+                let ring = NSBezierPath(ovalIn: icon.insetBy(dx: 1, dy: 1))
+                ring.lineWidth = 2
+                workingInk.setStroke()
+                ring.stroke()
+            }
+            text.draw(at: NSPoint(x: x + 13, y: 9 - text.size().height / 2))
+            x += 10 + 3 + text.size().width
+        }
+        return true
+    }
+    image.isTemplate = false
+    return image
+}
+
 final class MochiView: NSView {
     var status: Status = .idle
     var unread = 0
@@ -3727,7 +3775,7 @@ enum Shortcuts {
     }
 }
 
-final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
     let window = floatingPanel(size: NSSize(width: 130, height: 178))
     let view = MochiView()
     let bubble = floatingPanel(size: NSSize(width: 260, height: 40))
@@ -4030,6 +4078,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         view.ringFraction = fraction
         view.counts = statusCounts(chats)
+        refreshMenuBar()
         let stopped = previouslyRunning.subtracting(running)
         if chats.contains(where: { stopped.contains($0.id) && $0.status == .ready }) { lastFinishedAt = Date() }
         previouslyRunning = running
@@ -4762,6 +4811,56 @@ final class NotePanel: NSPanel {
         panel.orderFrontRegardless()
         skinPanel = panel
         mochiLog("skin editor: opened for \(chat.title)")
+    }
+
+    /// Her face and two counts in the menu bar; it never gets covered by a window
+    lazy var statusItem: NSStatusItem = {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+        return item
+    }()
+    var menuBarCounts: StatusCounts?
+
+    /// Redraws the menu bar picture, only when the counts change
+    func refreshMenuBar() {
+        let counts = statusCounts(chats)
+        guard counts != menuBarCounts else { return }
+        menuBarCounts = counts
+        statusItem.button?.image = menuBarImage(counts)
+        statusItem.button?.toolTip = "Mochi: \(counts.needs) need you, \(counts.working) working, \(counts.done) done"
+    }
+
+    /// The list under the menu bar item, built fresh each time it opens
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === statusItem.menu else { return }
+        menu.removeAllItems()
+        let sections = menuBarSections(chats)
+        if sections.isEmpty {
+            menu.addItem(withTitle: "Nothing needs you", action: nil, keyEquivalent: "").isEnabled = false
+        }
+        for section in sections {
+            let heading = menu.addItem(withTitle: section.title.uppercased(), action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            for chat in section.chats {
+                let detail = chat.status == .needsInput ? clip(chat.waiting.isEmpty ? "Waiting for you" : chat.waiting, 32)
+                    : chat.status == .running ? "working" : ago(chat.updatedAt)
+                let item = menu.addItem(withTitle: "\(clip(chat.title, 28))  ·  \(detail)", action: #selector(menuBarOpenChat(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = chat.link
+            }
+            menu.addItem(.separator())
+        }
+        menu.addItem(withTitle: "Open the chat box", action: #selector(menuBarOpenList), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Show Mochi", action: #selector(menuBarShowMochi), keyEquivalent: "").target = self
+    }
+
+    @objc func menuBarOpenChat(_ item: NSMenuItem) { openChat(item.representedObject as? String) }
+    @objc func menuBarOpenList() { showList() }
+    @objc func menuBarShowMochi() {
+        window.orderFrontRegardless()
+        placeCards()
     }
 
     func showList() {
