@@ -4829,6 +4829,7 @@ final class NotePanel: NSPanel {
         guard counts != menuBarCounts else { return }
         menuBarCounts = counts
         statusItem.button?.image = menuBarImage(counts)
+        mochiLog("menu bar: \(counts.needs) need you, \(counts.working) working; visible \(statusItem.isVisible), button \(statusItem.button != nil), window \(statusItem.button?.window?.frame ?? .zero)")
         statusItem.button?.toolTip = "Mochi: \(counts.needs) need you, \(counts.working) working, \(counts.done) done"
     }
 
