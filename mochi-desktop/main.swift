@@ -4782,9 +4782,11 @@ final class NotePanel: NSPanel {
         let near = pointerNearBrief(pointer: NSEvent.mouseLocation, mochi: window.frame,
                                     brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 80)
         if near, !briefPanel.isVisible {
+            mochiLog("brief: shown, pointer near Mochi")
             briefPanel.orderFrontRegardless()
             placeCards()
         } else if !near, briefPanel.isVisible {
+            mochiLog("brief: hidden, pointer away")
             briefPanel.orderOut(nil)
             placeCards()
         }
