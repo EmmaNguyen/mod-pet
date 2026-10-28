@@ -462,4 +462,17 @@ check("the brief does not hide at once when the pointer leaves", !briefHideDue(a
 check("the brief hides after three seconds away", briefHideDue(awaySince: Date().addingTimeInterval(-3), now: Date()))
 check("the brief does not hide when the pointer never left", !briefHideDue(awaySince: nil, now: Date()))
 
+// Option A: her ring and pill count the chats by state
+func countChat(_ id: String, _ status: Status, open: Bool = true, recent: Bool = true) -> Chat {
+    Chat(id: id, title: id, status: open ? status : .ended, log: [], updatedAt: 0, link: nil, waiting: "", isRecent: recent, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false)
+}
+let ringChats = [countChat("1", .needsInput), countChat("2", .needsInput), countChat("3", .running), countChat("4", .ready), countChat("5", .idle), countChat("6", .ready, recent: false), countChat("7", .running, open: false)]
+check("the ring counts need you, working and done", statusCounts(ringChats) == StatusCounts(needs: 2, working: 1, done: 1))
+check("no chats means no ring", ringArcs(StatusCounts()).isEmpty)
+let arcs = ringArcs(StatusCounts(needs: 2, working: 1, done: 1))
+check("the most urgent arc starts at 12 o'clock", arcs.first?.state == .needsInput && arcs.first?.start == 0)
+check("the arcs and gaps fill the whole circle", abs(arcs.reduce(0) { $0 + $1.sweep } + 8 * 3 - 360) < 0.001)
+check("need you takes its share of the ring", abs(arcs[0].sweep - (360 - 24) / 2) < 0.001)
+check("a single state is a full ring with no gap", ringArcs(StatusCounts(needs: 0, working: 3, done: 0)).first?.sweep == 360)
+
 print("ALL PASSED")

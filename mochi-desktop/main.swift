@@ -712,6 +712,49 @@ func drawCatAvatar(_ skin: Skin, look: ChatLook = ChatLook(), in rect: NSRect, r
 let scale: CGFloat = 5
 let petSize = CGFloat(16) * scale
 
+/// How many chats need you, are working, and finished lately: what her ring and pill show
+struct StatusCounts: Equatable {
+    var needs = 0
+    var working = 0
+    var done = 0
+    var total: Int { needs + working + done }
+}
+
+/// Counts the open, recent chats by the three states she shows; resting and stopped chats are left out
+func statusCounts(_ chats: [Chat]) -> StatusCounts {
+    var counts = StatusCounts()
+    for chat in chats where chat.isOpen && chat.isRecent {
+        switch chat.status {
+        case .needsInput: counts.needs += 1
+        case .running: counts.working += 1
+        case .ready: counts.done += 1
+        default: break
+        }
+    }
+    return counts
+}
+
+/// The three states' colours, the same on her ring, her pill and the status language
+let needsInk = NSColor(hex: 0xC2255C)
+let workingInk = NSColor(hex: 0xD9480F)
+let doneInk = NSColor(hex: 0x2B8A3E)
+
+/// Her ring as arcs: each state's share of the circle, most urgent first from 12 o'clock, a small gap between them.
+/// Each arc is (state, start, sweep) in degrees, clockwise from the top
+func ringArcs(_ counts: StatusCounts, gap: Double = 8) -> [(state: Status, start: Double, sweep: Double)] {
+    let parts: [(Status, Int)] = [(.needsInput, counts.needs), (.running, counts.working), (.ready, counts.done)].filter { $0.1 > 0 }
+    guard counts.total > 0 else { return [] }
+    let gaps = parts.count > 1 ? gap * Double(parts.count) : 0
+    var start = 0.0
+    var arcs: [(state: Status, start: Double, sweep: Double)] = []
+    for (state, count) in parts {
+        let sweep = (360 - gaps) * Double(count) / Double(counts.total)
+        arcs.append((state, start, sweep))
+        start += sweep + (parts.count > 1 ? gap : 0)
+    }
+    return arcs
+}
+
 final class MochiView: NSView {
     var status: Status = .idle
     var unread = 0
@@ -726,6 +769,8 @@ final class MochiView: NSView {
     var onAgentsClick: (() -> Void)?
     /// How far a running chat is through its estimate, for the ring round her status badge; nil when none
     var ringFraction: Double?
+    /// The chats by state, for the ring round her and the pill under her
+    var counts = StatusCounts()
     /// When a chat last finished, for the green ring
     var finishedAt: Date?
     /// Plan usage, shown as a small label under her
@@ -778,6 +823,7 @@ final class MochiView: NSView {
 
         let originX = (bounds.width - petSize) / 2
         let originY = 46 - lift // the usage label above her, the two buttons below
+        drawStatusRing(at: NSPoint(x: bounds.width / 2, y: 46 + petSize / 2))
         ctx.saveGState()
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
@@ -792,11 +838,15 @@ final class MochiView: NSView {
         ctx.restoreGState()
         if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
-        drawBadge(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
-        drawProgressRing(at: NSPoint(x: originX + petSize - 4, y: originY + 6))
+        // A count badge only when something needs you: no badge means nothing waits on you
+        if counts.needs > 0 {
+            drawNeedsBadge(counts.needs, at: NSPoint(x: originX + petSize - 2, y: originY + 4))
+            badgeRect = NSRect(x: originX + petSize - 13, y: originY - 7, width: 22, height: 22)
+        } else {
+            badgeRect = .zero
+        }
         originYForDots = originY
         drawAgentDots()
-        badgeRect = NSRect(x: originX + petSize - 13, y: originY - 3, width: 18, height: 18)
         if let taskMinutesLeft {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
         }
@@ -806,10 +856,12 @@ final class MochiView: NSView {
         if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
             drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: 16)) // at the right end of the usage bar, on its top edge
         }
-        // The two buttons show only when the cursor is near her, or while the note box is open or listening
+        // The two buttons show only when the cursor is near her, or while the note box is open or listening;
+        // otherwise the summary pill sits in their place
         if nearby || forceShow || recording {
             drawButtons()
         } else {
+            drawSummaryPill()
             quickRect = .zero
             talkRect = .zero
             scrollRect = .zero
@@ -969,6 +1021,93 @@ final class MochiView: NSView {
             star.line(to: NSPoint(x: x - s / 3, y: y - s / 3))
             star.close()
             star.fill()
+        }
+    }
+
+    /// The ring round her: each state's share of your chats, in its colour, most urgent first from the top
+    private func drawStatusRing(at center: NSPoint) {
+        let arcs = ringArcs(counts)
+        guard !arcs.isEmpty else { return }
+        let r: CGFloat = 47
+        let track = NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+        track.lineWidth = 4
+        NSColor.labelColor.withAlphaComponent(0.08).setStroke()
+        track.stroke()
+        for arc in arcs {
+            let path = NSBezierPath()
+            let steps = max(2, Int(arc.sweep / 4))
+            for i in 0...steps {
+                // Clockwise from the top on screen: the view is flipped, so y grows downward
+                let angle = (-90 + arc.start + arc.sweep * Double(i) / Double(steps)) * .pi / 180
+                let point = NSPoint(x: center.x + r * CGFloat(cos(angle)), y: center.y + r * CGFloat(sin(angle)))
+                if i == 0 { path.move(to: point) } else { path.line(to: point) }
+            }
+            path.lineWidth = 4
+            path.lineCapStyle = .round
+            (arc.state == .needsInput ? needsInk : arc.state == .running ? workingInk : doneInk).setStroke()
+            path.stroke()
+        }
+    }
+
+    /// The rose badge with how many chats need you
+    private func drawNeedsBadge(_ count: Int, at center: NSPoint) {
+        let r: CGFloat = 10
+        let dot = NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+        needsInk.setFill()
+        dot.fill()
+        NSColor.white.setStroke()
+        dot.lineWidth = 2
+        dot.stroke()
+        let text = NSAttributedString(string: count > 9 ? "9+" : "\(count)", attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .heavy), .foregroundColor: NSColor.white,
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
+    }
+
+    /// The pill under her: a shape and a number for each state, so it reads at a glance; none when all are zero
+    private func drawSummaryPill() {
+        let items: [(Status, Int)] = [(.needsInput, counts.needs), (.running, counts.working), (.ready, counts.done)].filter { $0.1 > 0 }
+        guard !items.isEmpty else { return }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+        let texts = items.map { NSAttributedString(string: "\($0.1)", attributes: [.font: font, .foregroundColor: NSColor(hex: 0x2B2025)]) }
+        let itemWidths = texts.map { 12 + 3 + $0.size().width }
+        let width = itemWidths.reduce(0, +) + CGFloat(items.count - 1) * 8 + 16
+        let pill = NSRect(x: (bounds.width - width) / 2, y: 134, width: width, height: 20)
+        NSColor.white.withAlphaComponent(0.88).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 10, yRadius: 10).fill()
+        var x = pill.minX + 8
+        for (i, item) in items.enumerated() {
+            let icon = NSRect(x: x, y: pill.midY - 6, width: 12, height: 12)
+            switch item.0 {
+            case .needsInput:
+                let diamond = NSBezierPath()
+                diamond.move(to: NSPoint(x: icon.midX, y: icon.minY))
+                diamond.line(to: NSPoint(x: icon.maxX, y: icon.midY))
+                diamond.line(to: NSPoint(x: icon.midX, y: icon.maxY))
+                diamond.line(to: NSPoint(x: icon.minX, y: icon.midY))
+                diamond.close()
+                needsInk.setFill()
+                diamond.fill()
+            case .running:
+                let ring = NSBezierPath(ovalIn: icon.insetBy(dx: 1.5, dy: 1.5))
+                ring.lineWidth = 2
+                workingInk.setStroke()
+                ring.stroke()
+            default:
+                let check = NSBezierPath()
+                check.move(to: NSPoint(x: icon.minX + 1.5, y: icon.midY + 0.5))
+                check.line(to: NSPoint(x: icon.minX + 4.5, y: icon.maxY - 2))
+                check.line(to: NSPoint(x: icon.maxX - 1, y: icon.minY + 2))
+                check.lineWidth = 2.2
+                check.lineCapStyle = .round
+                check.lineJoinStyle = .round
+                doneInk.setStroke()
+                check.stroke()
+            }
+            let size = texts[i].size()
+            texts[i].draw(at: NSPoint(x: x + 15, y: pill.midY - size.height / 2))
+            x += itemWidths[i] + 8
         }
     }
 
@@ -3890,6 +4029,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             break
         }
         view.ringFraction = fraction
+        view.counts = statusCounts(chats)
         let stopped = previouslyRunning.subtracting(running)
         if chats.contains(where: { stopped.contains($0.id) && $0.status == .ready }) { lastFinishedAt = Date() }
         previouslyRunning = running
