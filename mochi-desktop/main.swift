@@ -885,7 +885,7 @@ final class MochiView: NSView {
 
     /// Two round buttons under her: a quick note to start a session, and talk to Mochi (red while listening)
     private func drawButtons() {
-        let y: CGFloat = 142
+        let y: CGFloat = 160
         let center = bounds.width / 2
         let spread: CGFloat = 36
         quickRect = NSRect(x: center - spread - 13, y: y - 13, width: 26, height: 26)
@@ -1073,7 +1073,7 @@ final class MochiView: NSView {
         let texts = items.map { NSAttributedString(string: "\($0.1)", attributes: [.font: font, .foregroundColor: NSColor(hex: 0x2B2025)]) }
         let itemWidths = texts.map { 12 + 3 + $0.size().width }
         let width = itemWidths.reduce(0, +) + CGFloat(items.count - 1) * 8 + 16
-        let pill = NSRect(x: (bounds.width - width) / 2, y: 140, width: width, height: 20)
+        let pill = NSRect(x: (bounds.width - width) / 2, y: 150, width: width, height: 20)
         NSColor.white.withAlphaComponent(0.88).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 10, yRadius: 10).fill()
         var x = pill.minX + 8
@@ -3728,7 +3728,7 @@ enum Shortcuts {
 }
 
 final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    let window = floatingPanel(size: NSSize(width: 130, height: 162))
+    let window = floatingPanel(size: NSSize(width: 130, height: 178))
     let view = MochiView()
     let bubble = floatingPanel(size: NSSize(width: 260, height: 40))
     let bubbleView = BubbleView()
