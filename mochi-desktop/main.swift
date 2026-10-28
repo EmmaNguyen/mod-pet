@@ -736,7 +736,7 @@ func statusCounts(_ chats: [Chat]) -> StatusCounts {
 
 /// The three states' colours, the same on her ring, her pill and the status language
 let needsInk = NSColor(hex: 0xC2255C)
-let workingInk = NSColor(hex: 0xD9480F)
+let workingInk = NSColor(hex: 0x1C7ED6)
 let doneInk = NSColor(hex: 0x2B8A3E)
 
 /// Her ring as arcs: each state's share of the circle, most urgent first from 12 o'clock, a small gap between them.
@@ -1028,9 +1028,9 @@ final class MochiView: NSView {
     private func drawStatusRing(at center: NSPoint) {
         let arcs = ringArcs(counts)
         guard !arcs.isEmpty else { return }
-        let r: CGFloat = 47
+        let r: CGFloat = 55
         let track = NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
-        track.lineWidth = 4
+        track.lineWidth = 5
         NSColor.labelColor.withAlphaComponent(0.08).setStroke()
         track.stroke()
         for arc in arcs {
@@ -1042,7 +1042,7 @@ final class MochiView: NSView {
                 let point = NSPoint(x: center.x + r * CGFloat(cos(angle)), y: center.y + r * CGFloat(sin(angle)))
                 if i == 0 { path.move(to: point) } else { path.line(to: point) }
             }
-            path.lineWidth = 4
+            path.lineWidth = 5
             path.lineCapStyle = .round
             (arc.state == .needsInput ? needsInk : arc.state == .running ? workingInk : doneInk).setStroke()
             path.stroke()
@@ -1073,7 +1073,7 @@ final class MochiView: NSView {
         let texts = items.map { NSAttributedString(string: "\($0.1)", attributes: [.font: font, .foregroundColor: NSColor(hex: 0x2B2025)]) }
         let itemWidths = texts.map { 12 + 3 + $0.size().width }
         let width = itemWidths.reduce(0, +) + CGFloat(items.count - 1) * 8 + 16
-        let pill = NSRect(x: (bounds.width - width) / 2, y: 134, width: width, height: 20)
+        let pill = NSRect(x: (bounds.width - width) / 2, y: 140, width: width, height: 20)
         NSColor.white.withAlphaComponent(0.88).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 10, yRadius: 10).fill()
         var x = pill.minX + 8
