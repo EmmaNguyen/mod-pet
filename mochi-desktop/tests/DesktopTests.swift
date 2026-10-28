@@ -457,4 +457,9 @@ check("a card's title makes room for the cat", cardTitleX(hasCat: true, hasDot: 
 check("a card's title makes room for the dot", cardTitleX(hasCat: false, hasDot: true) == 34)
 check("a card with neither starts at the edge", cardTitleX(hasCat: false, hasDot: false) == 22)
 
+// The brief waits three seconds after the pointer leaves before it hides
+check("the brief does not hide at once when the pointer leaves", !briefHideDue(awaySince: Date(), now: Date()))
+check("the brief hides after three seconds away", briefHideDue(awaySince: Date().addingTimeInterval(-3), now: Date()))
+check("the brief does not hide when the pointer never left", !briefHideDue(awaySince: nil, now: Date()))
+
 print("ALL PASSED")

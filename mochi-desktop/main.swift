@@ -1398,6 +1398,12 @@ var briefOnTop: Bool {
     set { UserDefaults.standard.set(newValue, forKey: "briefOnTop") }
 }
 
+/// The brief hides once the pointer has been away for three seconds
+func briefHideDue(awaySince: Date?, now: Date) -> Bool {
+    guard let awaySince else { return false }
+    return now.timeIntervalSince(awaySince) >= 3
+}
+
 /// Whether the pointer is close enough to Mochi, or on the brief, to keep the brief showing
 func pointerNearBrief(pointer: NSPoint, mochi: NSRect, brief: NSRect, margin: CGFloat) -> Bool {
     mochi.insetBy(dx: -margin, dy: -margin).contains(pointer) || brief.contains(pointer)
@@ -3599,6 +3605,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var allAgents: [AgentRun] = []
     /// The morning brief and the 6 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
+    /// When the pointer last left the area around Mochi and the brief, while the brief shows
+    var briefAwaySince: Date?
     /// The card now open, and which brief it shows ("morning" or "evening") so it can keep itself current
     var currentBrief: BriefView?
     var briefLiveKind: String?
@@ -4776,19 +4784,27 @@ final class NotePanel: NSPanel {
         brief.needsDisplay = true
     }
 
-    /// The brief hides on its own until the pointer comes near Mochi or the brief; closing it with the cross ends this
+    /// The brief hides on its own until the pointer comes near Mochi or the brief; closing it with the cross ends this.
+    /// Once the pointer leaves, the brief waits a few seconds before it hides, so there is time to reach it
     func refreshBriefVisibility() {
         guard briefLiveKind != nil else { return }
         let near = pointerNearBrief(pointer: NSEvent.mouseLocation, mochi: window.frame,
-                                    brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 80)
-        if near, !briefPanel.isVisible {
-            mochiLog("brief: shown, pointer near Mochi")
-            briefPanel.orderFrontRegardless()
-            placeCards()
-        } else if !near, briefPanel.isVisible {
-            mochiLog("brief: hidden, pointer away")
-            briefPanel.orderOut(nil)
-            placeCards()
+                                    brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 120)
+        if near {
+            briefAwaySince = nil
+            if !briefPanel.isVisible {
+                mochiLog("brief: shown, pointer near Mochi")
+                briefPanel.orderFrontRegardless()
+                placeCards()
+            }
+        } else if briefPanel.isVisible {
+            if briefAwaySince == nil { briefAwaySince = Date() }
+            if briefHideDue(awaySince: briefAwaySince, now: Date()) {
+                mochiLog("brief: hidden, pointer away")
+                briefAwaySince = nil
+                briefPanel.orderOut(nil)
+                placeCards()
+            }
         }
     }
 
