@@ -483,4 +483,7 @@ check("an empty group is left out", menuBarSections([countChat("w", .running)]).
 check("the menu bar picture is only her face with nothing to count", menuBarImage(StatusCounts()).size.width == 16)
 check("the menu bar picture grows with the counts", menuBarImage(StatusCounts(needs: 2, working: 1)).size.width > 40)
 
+check("the ring shows when the pointer is near her", ringShows(nearby: true))
+check("the ring hides when the pointer is away", !ringShows(nearby: false))
+
 print("ALL PASSED")

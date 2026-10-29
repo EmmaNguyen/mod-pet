@@ -803,6 +803,9 @@ func menuBarImage(_ counts: StatusCounts) -> NSImage {
     return image
 }
 
+/// Whether her status ring shows: only while the pointer is near her
+func ringShows(nearby: Bool) -> Bool { nearby }
+
 final class MochiView: NSView {
     var status: Status = .idle
     var unread = 0
@@ -871,7 +874,8 @@ final class MochiView: NSView {
 
         let originX = (bounds.width - petSize) / 2
         let originY = 46 - lift // the usage label above her, the two buttons below
-        drawStatusRing(at: NSPoint(x: bounds.width / 2, y: 46 + petSize / 2))
+        // The ring hides until the pointer comes near her
+        if ringShows(nearby: nearby || forceShow) { drawStatusRing(at: NSPoint(x: bounds.width / 2, y: 46 + petSize / 2)) }
         ctx.saveGState()
         ctx.translateBy(x: originX + petSize / 2, y: originY + petSize / 2)
         ctx.rotate(by: tilt)
