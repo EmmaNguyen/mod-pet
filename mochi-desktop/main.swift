@@ -1627,6 +1627,9 @@ var briefOnTop: Bool {
     set { UserDefaults.standard.set(newValue, forKey: "briefOnTop") }
 }
 
+/// The brief the pointer shows: the morning brief until 6:00 PM, the wrap-up from then on
+func briefHoverKind(now: Date) -> String { wrapUpDue(now: now) ? "evening" : "morning" }
+
 /// The brief hides once the pointer has been away for three seconds
 func briefHideDue(awaySince: Date?, now: Date) -> Bool {
     guard let awaySince else { return false }
@@ -3850,6 +3853,8 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
     /// When the pointer last left the area around Mochi and the brief, while the brief shows
     var briefAwaySince: Date?
+    /// Set when the cross closes the brief: the pointer must leave Mochi before it can show again by hover
+    var briefSuppressed = false
     /// The card now open, and which brief it shows ("morning" or "evening") so it can keep itself current
     var currentBrief: BriefView?
     var briefLiveKind: String?
@@ -5061,7 +5066,7 @@ final class NotePanel: NSPanel {
         brief.content = content
         let height = brief.fittingHeight()
         brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
-        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.placeCards() }
+        brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.briefSuppressed = true; self?.placeCards() }
         brief.pinned = briefOnTop
         brief.onPin = { [weak self] in self?.toggleBriefOnTop() }
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
@@ -5090,9 +5095,16 @@ final class NotePanel: NSPanel {
     /// The brief hides on its own until the pointer comes near Mochi or the brief; closing it with the cross ends this.
     /// Once the pointer leaves, the brief waits a few seconds before it hides, so there is time to reach it
     func refreshBriefVisibility() {
-        guard briefLiveKind != nil else { return }
         let near = pointerNearBrief(pointer: NSEvent.mouseLocation, mochi: window.frame,
                                     brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 120)
+        // Nothing open: the pointer near her shows the brief for now, unless the cross closed it and the pointer has not left since
+        if briefLiveKind == nil {
+            if !near { briefSuppressed = false } else if !briefSuppressed {
+                showBrief(briefHoverKind(now: Date()), now: Date())
+                mochiLog("brief: shown from the pointer near Mochi")
+            }
+            return
+        }
         if near {
             briefAwaySince = nil
             if !briefPanel.isVisible {

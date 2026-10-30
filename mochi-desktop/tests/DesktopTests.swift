@@ -493,4 +493,8 @@ let boxNow = Date()
 let boxRun = AgentRun(id: "a1", task: "Drafting", started: boxNow.addingTimeInterval(-250), lastActivity: boxNow.addingTimeInterval(-5))
 check("an agent's line says how long it ran and how long ago it was active", agentLine(boxRun, now: boxNow) == "running 4m 10s · active 5s ago")
 
+// Hovering Mochi shows the brief that is due now
+check("the pointer shows the morning brief before 6 PM", briefHoverKind(now: briefAt(9, 0)) == "morning")
+check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18, 30)) == "evening")
+
 print("ALL PASSED")
