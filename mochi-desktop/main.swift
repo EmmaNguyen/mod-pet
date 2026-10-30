@@ -712,6 +712,44 @@ func drawCatAvatar(_ skin: Skin, look: ChatLook = ChatLook(), in rect: NSRect, r
 let scale: CGFloat = 5
 let petSize = CGFloat(16) * scale
 
+/// The Agents box: each agent running now, with its task and how long it has run. It redraws as the runs change
+final class AgentsBoxView: NSView {
+    static let width: CGFloat = 340
+    var runs: [AgentRun] = []
+    var now = Date()
+    override var isFlipped: Bool { true }
+
+    func fittingHeight() -> CGFloat { render(draw: false) }
+    override func draw(_ dirtyRect: NSRect) { render(draw: true) }
+
+    @discardableResult
+    private func render(draw: Bool) -> CGFloat {
+        let pad: CGFloat = 16
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 14
+        drawLine("Agents running", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.7, draw: draw)
+        drawLine(runs.isEmpty ? "" : "\(runs.count) now", .systemFont(ofSize: 12, weight: .semibold), NSColor(hex: 0x1864AB), x: pad, y: y + 2, width: inner, align: .right, draw: draw)
+        y += 30
+        if runs.isEmpty {
+            drawLine("No agent is running right now", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 24
+        }
+        for run in runs.prefix(8) {
+            if draw {
+                let card = NSRect(x: pad, y: y, width: inner, height: 56)
+                NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                NSBezierPath(roundedRect: card, xRadius: 12, yRadius: 12).fill()
+                NSColor(hex: 0x1C7ED6).setFill()
+                NSBezierPath(ovalIn: NSRect(x: pad + 12, y: y + 12, width: 9, height: 9)).fill()
+            }
+            drawLine(clip(run.task, 34), .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: pad + 30, y: y + 9, width: inner - 40, draw: draw)
+            drawLine(agentLine(run, now: now), .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad + 30, y: y + 30, width: inner - 40, draw: draw)
+            y += 64
+        }
+        return y + 6
+    }
+}
+
 /// How many chats need you, are working, and finished lately: what her ring and pill show
 struct StatusCounts: Equatable {
     var needs = 0
@@ -2760,6 +2798,19 @@ struct AgentRun {
     let task: String
     let started: Date
     let lastActivity: Date
+    /// The chat that started the agent: its session folder's name
+    var session: String = ""
+}
+
+/// How long a run has gone on, in words: "42s", "4m 10s"
+func elapsedText(_ seconds: Int) -> String {
+    let seconds = max(0, seconds)
+    return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+}
+
+/// One agent's line in the Agents box: how long it has run, and when it last did something
+func agentLine(_ run: AgentRun, now: Date) -> String {
+    "running \(elapsedText(Int(now.timeIntervalSince(run.started)))) · active \(elapsedText(Int(now.timeIntervalSince(run.lastActivity)))) ago"
 }
 
 /// Reads an agent's first line: the task it was given, and when that was. Nil if the line does not read
@@ -2806,7 +2857,7 @@ func readAgents(now: Date) -> [AgentRun] {
                 guard let firstLine = head.split(separator: "\n", maxSplits: 1).first,
                       let found = agentTask(fromLine: String(firstLine)) else { continue }
                 let id = file.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "agent-", with: "")
-                runs.append(AgentRun(id: id, task: found.task, started: found.at, lastActivity: modified))
+                runs.append(AgentRun(id: id, task: found.task, started: found.at, lastActivity: modified, session: session.lastPathComponent))
             }
         }
     }
@@ -3794,6 +3845,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var lastFinishedAt: Date?
     /// Every agent read recently, running or not
     var allAgents: [AgentRun] = []
+    let agentsBox = AgentsBoxView()
     /// The morning brief and the 6 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
     /// When the pointer last left the area around Mochi and the brief, while the brief shows
@@ -4092,6 +4144,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             allAgents = readAgents(now: Date())
         }
         view.activeAgents = allAgents.filter { agentActive(lastActivity: $0.lastActivity, now: Date()) }
+        refreshAgentsBox()
         refreshBrief()
         refreshBriefVisibility()
         refreshWeek()
@@ -4983,17 +5036,23 @@ final class NotePanel: NSPanel {
 
     /// The agents running now, each with its task, how long it has run and when it last did something
     func showAgents() {
-        let now = Date()
-        let lines: [(String, NSColor)] = view.activeAgents.map { run in
-            let minutes = Int(now.timeIntervalSince(run.started) / 60)
-            let quiet = Int(now.timeIntervalSince(run.lastActivity))
-            return ("\(run.task) · \(max(1, minutes)) min · active \(quiet) s ago", Status.running.color)
+        agentsBox.runs = view.activeAgents
+        agentsBox.now = Date()
+        presentInBubble(agentsBox, height: agentsBox.fittingHeight(), width: AgentsBoxView.width, accent: Status.running.color)
+        mochiLog("agents: \(view.activeAgents.count) shown")
+    }
+
+    /// Keeps the Agents box in step with the runs while it is open
+    func refreshAgentsBox() {
+        guard bubble.isVisible, bubbleFrame.scroll.documentView === agentsBox else { return }
+        agentsBox.runs = view.activeAgents
+        agentsBox.now = Date()
+        let height = agentsBox.fittingHeight()
+        if abs(height - agentsBox.frame.height) > 0.5 {
+            presentInBubble(agentsBox, height: height, width: AgentsBoxView.width, accent: Status.running.color)
+        } else {
+            agentsBox.needsDisplay = true
         }
-        var content = BriefContent()
-        content.title = "Agents running"
-        content.lines = lines.isEmpty ? [("No agent is running right now", .labelColor)] : lines
-        presentUnderHer(content)
-        mochiLog("agents: \(lines.count) shown")
     }
 
     /// Puts a card under her, centred and kept on screen, until its cross closes it

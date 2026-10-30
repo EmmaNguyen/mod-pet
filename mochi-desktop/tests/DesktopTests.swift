@@ -486,4 +486,11 @@ check("the menu bar picture grows with the counts", menuBarImage(StatusCounts(ne
 check("the ring shows when the pointer is near her", ringShows(nearby: true))
 check("the ring hides when the pointer is away", !ringShows(nearby: false))
 
+// The Agents box: elapsed times read in seconds or minutes, and each agent's line
+check("a short run reads in seconds", elapsedText(42) == "42s")
+check("a longer run reads in minutes and seconds", elapsedText(250) == "4m 10s")
+let boxNow = Date()
+let boxRun = AgentRun(id: "a1", task: "Drafting", started: boxNow.addingTimeInterval(-250), lastActivity: boxNow.addingTimeInterval(-5))
+check("an agent's line says how long it ran and how long ago it was active", agentLine(boxRun, now: boxNow) == "running 4m 10s · active 5s ago")
+
 print("ALL PASSED")
