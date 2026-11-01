@@ -523,10 +523,10 @@ let skins: [Skin] = [
     Skin(name: "Lavender galaxy", palette: [
         "K": NSColor(hex: 0x2A1B4A), "B": NSColor(hex: 0xB197FC), "L": NSColor(hex: 0xE5DBFF),
         "P": NSColor(hex: 0xFF8FD8), "D": NSColor(hex: 0x7950F2)], face: NSColor(hex: 0xB197FC), eye: NSColor(hex: 0x2A1B4A)),
-    // Halloween: a pumpkin body with glowing green eyes, added last so the chats' skins above do not change
+    // Halloween: a soft pumpkin with a cream belly, pink cheeks and big dark eyes, added last so the chats' skins above do not change
     Skin(name: "Halloween", palette: [
-        "K": NSColor(hex: 0x1E120A), "B": NSColor(hex: 0xF07D1A), "L": NSColor(hex: 0xFFB05C),
-        "P": NSColor(hex: 0xFFD08A), "D": NSColor(hex: 0xB3520A)], face: NSColor(hex: 0xF07D1A), eye: NSColor(hex: 0x7CFC4A)),
+        "K": NSColor(hex: 0x5A2A10), "B": NSColor(hex: 0xFF9A3C), "L": NSColor(hex: 0xFFE7C2),
+        "P": NSColor(hex: 0xFF8AB0), "D": NSColor(hex: 0xE8731F)], face: NSColor(hex: 0xFF9A3C), eye: NSColor(hex: 0x2B1A10)),
 ]
 
 /// The skins chats are given at random, before Halloween was added; a new skin is never handed to a chat by its id
