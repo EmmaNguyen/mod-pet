@@ -429,7 +429,7 @@ check("a chat's skin is one of the skins", (0..<50).allSatisfy { (0..<skins.coun
 let editedLook = ChatLook(shell: 3, hat: 1, eyewear: 2, extra: 3)
 check("a chat look survives saving and loading", (try? JSONDecoder().decode(ChatLook.self, from: JSONEncoder().encode(editedLook))) == editedLook)
 check("a chosen shell colour is the cat's body", chatSkin(id: "a", look: ChatLook(shell: 3)).face == NSColor(hex: shellColours[3].hex))
-check("no shell chosen keeps the skin from the chat id", chatSkin(id: "a", look: ChatLook()).face == skins[chatSkinIndex("a", count: skins.count)].face)
+check("no shell chosen keeps the skin from the chat id", chatSkin(id: "a", look: ChatLook()).face == skins[chatSkinIndex("a", count: chatSkinCount)].face)
 check("every hat, eyewear and extra is 16 by 16", (hatArt + eyewearArt + extraArt).allSatisfy { $0.isEmpty || ($0.count == 16 && $0.allSatisfy { $0.count == 16 }) })
 check("each option list has art for every name", hatArt.count == hatNames.count && eyewearArt.count == eyewearNames.count && extraArt.count == extraNames.count)
 check("a surprise look is the same for the same seed", randomChatLook(seed: 7) == randomChatLook(seed: 7))
@@ -496,5 +496,9 @@ check("an agent's line says how long it ran and how long ago it was active", age
 // Hovering Mochi shows the brief that is due now
 check("the pointer shows the morning brief before 6 PM", briefHoverKind(now: briefAt(9, 0)) == "morning")
 check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18, 30)) == "evening")
+
+// Halloween is a skin, and the chats keep the skins they had
+check("Halloween is one of the skins", skins.last?.name == "Halloween")
+check("chats are still given skins from the first six", (0..<50).allSatisfy { chatSkinIndex("chat-\($0)", count: chatSkinCount) < chatSkinCount })
 
 print("ALL PASSED")

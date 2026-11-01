@@ -523,7 +523,14 @@ let skins: [Skin] = [
     Skin(name: "Lavender galaxy", palette: [
         "K": NSColor(hex: 0x2A1B4A), "B": NSColor(hex: 0xB197FC), "L": NSColor(hex: 0xE5DBFF),
         "P": NSColor(hex: 0xFF8FD8), "D": NSColor(hex: 0x7950F2)], face: NSColor(hex: 0xB197FC), eye: NSColor(hex: 0x2A1B4A)),
+    // Halloween: a pumpkin body with glowing green eyes, added last so the chats' skins above do not change
+    Skin(name: "Halloween", palette: [
+        "K": NSColor(hex: 0x1E120A), "B": NSColor(hex: 0xF07D1A), "L": NSColor(hex: 0xFFB05C),
+        "P": NSColor(hex: 0xFFD08A), "D": NSColor(hex: 0xB3520A)], face: NSColor(hex: 0xF07D1A), eye: NSColor(hex: 0x7CFC4A)),
 ]
+
+/// The skins chats are given at random, before Halloween was added; a new skin is never handed to a chat by its id
+let chatSkinCount = 6
 
 /// The skin Mochi wears; remembered between launches
 var skinIndex: Int {
@@ -639,7 +646,7 @@ let extraArt: [[String]] = [
 
 /// The skin a chat wears: the one its id picks, with the editor's shell colour over it when one is chosen
 func chatSkin(id: String, look: ChatLook) -> Skin {
-    let base = skins[chatSkinIndex(id, count: skins.count)]
+    let base = skins[chatSkinIndex(id, count: chatSkinCount)]
     guard look.shell >= 0, look.shell < shellColours.count else { return base }
     let shell = NSColor(hex: shellColours[look.shell].hex)
     var palette = base.palette
