@@ -529,6 +529,19 @@ let skins: [Skin] = [
         "P": NSColor(hex: 0xFF8AB0), "D": NSColor(hex: 0xE8731F)], face: NSColor(hex: 0xFF9A3C), eye: NSColor(hex: 0x2B1A10)),
 ]
 
+/// The Halloween witch hat in her grid squares (above her head is negative y): brim, cone, bent tip, band and buckle
+let halloweenHat: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, hex: Int)] = [
+    (3, 0, 10, 1, 0x4B2A7A),      // brim
+    (5, -1, 6, 1, 0x5E37A0),      // base of the cone
+    (6, -2, 4, 1, 0x5E37A0),
+    (6.5, -3, 3, 1, 0x5E37A0),
+    (7, -4, 2, 1, 0x5E37A0),
+    (8, -5, 2, 1, 0x4B2A7A),      // the tip bends over
+    (9, -5.5, 1.5, 1, 0x4B2A7A),
+    (5, -1, 6, 0.5, 0xFF7A1A),    // band
+    (7.5, -1, 1, 0.5, 0xFFD166),  // buckle
+]
+
 /// The skins chats are given at random, before Halloween was added; a new skin is never handed to a chat by its id
 let chatSkinCount = 6
 
@@ -932,6 +945,7 @@ final class MochiView: NSView {
             for col in [3, 11] { NSRect(x: CGFloat(col) * scale, y: 7 * scale, width: 2 * scale, height: scale / 2).fill() }
         }
         drawAccessory(currentLook.accessory ?? "none")
+        if skins[skinIndex].name == "Halloween" { drawHalloweenCostume() }
         ctx.restoreGState()
         if autoMode { drawSparkles(around: NSPoint(x: originX + petSize / 2, y: originY + petSize / 2)) }
 
@@ -1099,6 +1113,14 @@ final class MochiView: NSView {
             NSBezierPath(rect: box(3, 11, 10, 1.6)).fill()
             NSBezierPath(rect: box(10, 12.2, 2, 2.2)).fill()
         default: break
+        }
+    }
+
+    /// The Halloween skin's costume: a purple witch hat with an orange band and a gold buckle, sitting between her ears
+    private func drawHalloweenCostume() {
+        for piece in halloweenHat {
+            NSColor(hex: piece.hex).setFill()
+            NSBezierPath(rect: NSRect(x: piece.x * scale, y: piece.y * scale, width: piece.w * scale, height: piece.h * scale)).fill()
         }
     }
 
