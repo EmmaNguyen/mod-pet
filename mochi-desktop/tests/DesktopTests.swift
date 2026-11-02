@@ -500,6 +500,7 @@ check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18,
 // Halloween is a skin, and the chats keep the skins they had
 check("Halloween is one of the skins", skins.last?.name == "Halloween")
 check("The Halloween witch hat sits above her head and over her ears", halloweenHat.contains { $0.y < 0 } && halloweenHat.allSatisfy { $0.x >= 0 && $0.x + $0.w <= 16 })
+check("A chat in Auto gets no Allow and Deny card, a chat in the other modes does", !showsApprovalCard(Chat(id: "a", title: "A", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "auto")) && showsApprovalCard(Chat(id: "b", title: "B", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "default")))
 check("Choosing Auto on the test request shows no card, the other choices do", !choiceCardShows(for: "auto") && choiceCardShows(for: "allow") && choiceCardShows(for: "deny"))
 check("chats are still given skins from the first six", (0..<50).allSatisfy { chatSkinIndex("chat-\($0)", count: chatSkinCount) < chatSkinCount })
 

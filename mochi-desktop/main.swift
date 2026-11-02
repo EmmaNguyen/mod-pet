@@ -727,6 +727,9 @@ func drawCatAvatar(_ skin: Skin, look: ChatLook = ChatLook(), in rect: NSRect, r
     if look.hat > 0, look.hat < hatArt.count { drawOverlay(hatArt[look.hat], in: rect) }
 }
 
+/// Whether a chat's Allow and Deny card shows: a chat in Auto approves on its own, so it gets none
+func showsApprovalCard(_ chat: Chat) -> Bool { chat.mode != "auto" }
+
 /// Whether a choice you make on the test request shows its card: Auto shows only the sparkles, with no card
 func choiceCardShows(for decision: String) -> Bool { decision != "auto" }
 
@@ -4456,7 +4459,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let now = Date().timeIntervalSince1970 * 1000
         let asking = approveHere ? chats.filter {
             $0.status == .needsInput && !$0.requestId.isEmpty && now - $0.askedAt < Self.answerWindow
-                && needsYou(waiting: $0.waiting) && !answered.contains($0.requestId)
+                && needsYou(waiting: $0.waiting) && !answered.contains($0.requestId) && showsApprovalCard($0)
         } : []
         answered = answered.filter { id in chats.contains { $0.requestId == id } }
         let ids = Set(asking.map { $0.requestId })
