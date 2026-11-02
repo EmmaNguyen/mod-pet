@@ -1893,9 +1893,6 @@ final class BriefView: NSView {
     /// The top-chat rows that open a chat, and the one under the pointer
     private var topHits: [(NSRect, String)] = []
     private var topHovered: Int?
-    /// The waiting rows that open a chat, and the one under the pointer
-    private var rowHits: [(NSRect, String)] = []
-    private var rowHovered: Int?
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
     private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
@@ -1953,55 +1950,6 @@ final class BriefView: NSView {
             y += (content.duet ? 66 : 62) + 14
         }
 
-        // Chats that need you: a panel with the title and a count badge, a card for each chat, the reason as a coloured chip
-        if !content.rows.isEmpty {
-            rowHits = []
-            let panel = NSRect(x: pad, y: y, width: inner, height: waitingPanelHeight(rows: content.rows.count))
-            let waitingCount = content.rowsTotal > 0 ? content.rowsTotal : content.rows.count
-            let rose = (fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)), ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)))
-            let blue = (fill: adaptiveColor(NSColor(hex: 0xDCE8F2), NSColor(hex: 0x2A3A48)), ink: adaptiveColor(NSColor(hex: 0x3E5A70), NSColor(hex: 0xBCD6EA)))
-            let green = (fill: adaptiveColor(NSColor(hex: 0xE4EDD9), NSColor(hex: 0x2F3D28)), ink: adaptiveColor(NSColor(hex: 0x4F6B3C), NSColor(hex: 0xC9E0B4)))
-            if draw {
-                NSColor.labelColor.withAlphaComponent(0.05).setFill()
-                NSBezierPath(roundedRect: panel, xRadius: 12, yRadius: 12).fill()
-            }
-            let badgeText = "\(waitingCount) waiting"
-            let badgeWidth = waitingChipWidth(badgeText)
-            let badge = NSRect(x: panel.maxX - badgeWidth - 14, y: y + 11, width: badgeWidth, height: 20)
-            if draw {
-                rose.fill.setFill()
-                NSBezierPath(roundedRect: badge, xRadius: 10, yRadius: 10).fill()
-            }
-            drawLine(content.rowsTitle, .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: panel.minX + 14, y: y + 12, width: badge.minX - panel.minX - 24, draw: draw)
-            drawLine(badgeText, .systemFont(ofSize: 12, weight: .medium), rose.ink, x: badge.minX, y: y + 14, width: badgeWidth, align: .center, draw: draw)
-            var cardY = y + 42
-            for (i, row) in content.rows.enumerated() {
-                let card = NSRect(x: panel.minX + 12, y: cardY, width: panel.width - 24, height: waitingCardHeight)
-                let tint = [rose, blue, green][waitingChipKind(row.right)]
-                let chipWidth = waitingChipWidth(row.right)
-                let chip = NSRect(x: card.maxX - chipWidth - 10, y: cardY + 10, width: chipWidth, height: 20)
-                if draw {
-                    adaptiveColor(NSColor.white.withAlphaComponent(0.9), NSColor.white.withAlphaComponent(0.08)).setFill()
-                    let outline = NSBezierPath(roundedRect: card.insetBy(dx: 0.25, dy: 0.25), xRadius: 10, yRadius: 10)
-                    outline.fill()
-                    NSColor.labelColor.withAlphaComponent(0.12).setStroke()
-                    outline.lineWidth = 0.5
-                    outline.stroke()
-                    drawRowMarker(row, x: card.minX + 10, y: cardY + 11)
-                    tint.fill.setFill()
-                    NSBezierPath(roundedRect: chip, xRadius: 10, yRadius: 10).fill()
-                }
-                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: card.minX + 36, y: cardY + 12, width: chip.minX - card.minX - 48, draw: draw)
-                // A waiting chat opens its real session, and underlines under the pointer like the latest sessions
-                if draw, rowHovered == i, row.link != nil {
-                    underline(from: card.minX + 36, width: nameWidth, y: cardY + 29, color: .labelColor)
-                }
-                drawLine(row.right, .systemFont(ofSize: 12, weight: .medium), tint.ink, x: chip.minX, y: cardY + 13, width: chipWidth, align: .center, draw: draw)
-                if let link = row.link { rowHits.append((card, link)) }
-                cardY += waitingCardHeight + waitingCardGap
-            }
-            y += panel.height + 8
-        }
 
         for (text, color) in content.lines {
             drawLine(text, .systemFont(ofSize: 13), color, x: pad, y: y, width: inner, draw: draw)
@@ -2112,11 +2060,9 @@ final class BriefView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         let row = latestHits.firstIndex { $0.0.contains(point) }
         let top = topHits.firstIndex { $0.0.contains(point) }
-        let waitingRow = rowHits.firstIndex { $0.0.contains(point) }
-        if row != hovered || top != topHovered || waitingRow != rowHovered {
+        if row != hovered || top != topHovered {
             hovered = row
             topHovered = top
-            rowHovered = waitingRow
             needsDisplay = true
         }
     }
@@ -2124,7 +2070,6 @@ final class BriefView: NSView {
     override func mouseExited(with event: NSEvent) {
         hovered = nil
         topHovered = nil
-        rowHovered = nil
         needsDisplay = true
     }
 
@@ -2133,7 +2078,7 @@ final class BriefView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
         if pinRect.insetBy(dx: -6, dy: -6).contains(point) { onPin?(); return }
-        if let hit = (rowHits + latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
+        if let hit = (latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
     }
 }
 
@@ -2982,17 +2927,6 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
 struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil }
-/// One waiting chat's card in the brief: its height, and the gap between cards
-let waitingCardHeight: CGFloat = 40
-let waitingCardGap: CGFloat = 6
-/// The height of the panel round the cards: a title row, then a card for each waiting chat
-func waitingPanelHeight(rows: Int) -> CGFloat {
-    42 + CGFloat(rows) * (waitingCardHeight + waitingCardGap) + 6
-}
-/// Which colour a waiting chat's chip takes: 0 rose for a command to run, 1 blue for an edit, 2 green for anything else
-func waitingChipKind(_ reason: String) -> Int {
-    reason.hasPrefix("Run") ? 0 : reason.hasPrefix("Edit") ? 1 : 2
-}
 /// The width of a waiting chat's reason chip: its text at 12 points, with 8 points of room each side
 func waitingChipWidth(_ reason: String) -> CGFloat {
     ceil((reason as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 16
@@ -3010,10 +2944,6 @@ struct BriefContent {
     var date = ""
     var headline: (big: String, sub: String)?
     var stats: [BriefStat] = []
-    var rowsTitle = ""
-    /// How many chats wait in all, when more than the rows shown
-    var rowsTotal = 0
-    var rows: [BriefRow] = []
     /// The seven most recently active sessions, newest first
     var latest: [BriefRow] = []
     var lines: [(String, NSColor)] = []
@@ -3052,10 +2982,6 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             BriefStat(value: "\(running.count)", label: "Running", ink: blue.ink, fill: blue.fill),
             BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
-        content.rowsTitle = waiting.isEmpty ? "" : "Needs you first"
-        content.rowsTotal = waiting.count
-        content.rows = waiting.prefix(5).map { BriefRow(left: clip($0.title, 26), right: clip($0.waiting.isEmpty ? "waiting" : $0.waiting, 24), dot: NSColor(hex: 0xC97A8F), link: $0.link, chatID: $0.id) }
-        if waiting.isEmpty { content.lines = [("Nothing needs you", Status.ready.color)] }
     } else {
         content.title = "Today's wrap-up."
         let today = log[dayKey(now)] ?? DayRecord()

@@ -325,9 +325,7 @@ let briefChats = [
 let briefLog: DayLog = [:]
 let morning = briefContent(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
 check("the morning brief counts the chats waiting and running", morning.stats.map { $0.value }.prefix(2) == ["1", "1"])
-check("the morning brief lists the chat that needs you first", morning.rows.first?.left == "Mod pet")
 let quietMorning = briefContent(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
-check("with nothing waiting, the brief says so", quietMorning.lines.first?.0 == "Nothing needs you" && quietMorning.rows.isEmpty)
 var dayWork: DayLog = [:]
 dayWork[dayKey(briefAt(20, 0))] = {
     var record = DayRecord()
@@ -394,7 +392,6 @@ check("the week chart takes a newer day record", liveWeek.log["2026-10-25"]?.tur
 
 // A waiting chat in the morning brief carries its real chat link, so a click opens it
 let waitingChat = [Chat(id: "W1", title: "Waiting session", status: .needsInput, log: [], updatedAt: 5, link: "claude://code/continue?session=wait", waiting: "Approve: ls", isRecent: true, requestId: "r", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
-check("a waiting row carries its chat link", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.link == "claude://code/continue?session=wait")
 
 // A skin picked from the right-click menu shows, even when Mochi Studio paints a body colour
 var studioLook = MochiLook()
@@ -441,7 +438,6 @@ check("a missing looks file reads as none", readChatLooks(from: looksFile.append
 try? FileManager.default.removeItem(at: looksFile)
 
 // The brief's rows carry the chat id, so each row can wear that chat's skin
-check("a waiting row carries its chat id", briefContent(kind: "morning", chats: waitingChat, log: [:], now: Date(), offer: nil, usagePercent: nil).rows.first?.chatID == "W1")
 check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.chatID == "L")
 
 // The wrap-up's top chats carry the chat id too, so each wears its skin and opens its own chat
@@ -498,10 +494,6 @@ check("the pointer shows the morning brief before 6 PM", briefHoverKind(now: bri
 check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18, 30)) == "evening")
 
 // Halloween is a skin, and the chats keep the skins they had
-check("A waiting chat's reason chip is wider for a longer reason, and fits its text", waitingChipWidth("Edit") < waitingChipWidth("Run a command") && waitingChipWidth("Edit") > 16)
-check("The waiting panel grows by a card and its gap for each chat", waitingPanelHeight(rows: 3) - waitingPanelHeight(rows: 2) == waitingCardHeight + waitingCardGap)
-check("Chips are rose for Run, blue for Edit, green for the rest", waitingChipKind("Run: ls") == 0 && waitingChipKind("Edit a.txt") == 1 && waitingChipKind("Open x") == 2)
-check("Waiting cards are 40 points tall with 6 between them", waitingCardHeight == 40 && waitingCardGap == 6)
 check("Halloween and the ten Christmas skins come after the first six", skins.count == 17 && skins[6].name == "Halloween" && skins[16].name == "Sugar plum")
 check("The Halloween witch hat sits above her head and over her ears", halloweenHat.contains { $0.y < 0 } && halloweenHat.allSatisfy { $0.x >= 0 && $0.x + $0.w <= 16 })
 check("A chat in Auto gets no Allow and Deny card, a chat in the other modes does", !showsApprovalCard(Chat(id: "a", title: "A", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "auto")) && showsApprovalCard(Chat(id: "b", title: "B", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "default")))
