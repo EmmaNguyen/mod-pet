@@ -499,6 +499,8 @@ check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18,
 
 // Halloween is a skin, and the chats keep the skins they had
 check("A waiting chat's reason chip is wider for a longer reason, and fits its text", waitingChipWidth("Edit") < waitingChipWidth("Run a command") && waitingChipWidth("Edit") > 16)
+check("The waiting panel grows by a card and its gap for each chat", waitingPanelHeight(rows: 3) - waitingPanelHeight(rows: 2) == waitingCardHeight + waitingCardGap)
+check("Chips are rose for Run, blue for Edit, green for the rest", waitingChipKind("Run: ls") == 0 && waitingChipKind("Edit a.txt") == 1 && waitingChipKind("Open x") == 2)
 check("Waiting cards are 40 points tall with 6 between them", waitingCardHeight == 40 && waitingCardGap == 6)
 check("Halloween and the ten Christmas skins come after the first six", skins.count == 17 && skins[6].name == "Halloween" && skins[16].name == "Sugar plum")
 check("The Halloween witch hat sits above her head and over her ears", halloweenHat.contains { $0.y < 0 } && halloweenHat.allSatisfy { $0.x >= 0 && $0.x + $0.w <= 16 })
