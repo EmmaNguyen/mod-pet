@@ -727,6 +727,9 @@ func drawCatAvatar(_ skin: Skin, look: ChatLook = ChatLook(), in rect: NSRect, r
     if look.hat > 0, look.hat < hatArt.count { drawOverlay(hatArt[look.hat], in: rect) }
 }
 
+/// Whether a choice you make on the test request shows its card: Auto shows only the sparkles, with no card
+func choiceCardShows(for decision: String) -> Bool { decision != "auto" }
+
 // MARK: - Mochi's window
 
 let scale: CGFloat = 5
@@ -4581,8 +4584,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         mochiLog("test answered: \(decision)")
         let names = ["allow": "Allow", "deny": "Deny", "acceptEdits": "Accept edits", "auto": "Auto"]
         closeApproval(chat.requestId)
-        showCard(title: "Test: you chose \(names[decision] ?? decision)", body: "The keys work. Nothing was approved.",
-                 color: Status.ready.color, link: nil)
+        if choiceCardShows(for: decision) {
+            showCard(title: "Test: you chose \(names[decision] ?? decision)", body: "The keys work. Nothing was approved.",
+                     color: Status.ready.color, link: nil)
+        }
         if decision == "auto" {
             testChat = Chat(id: "mochi-test", title: "Mochi test", status: .idle, log: [], updatedAt: Date().timeIntervalSince1970 * 1000,
                             link: nil, waiting: "", isRecent: true, mode: "auto")
