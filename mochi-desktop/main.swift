@@ -527,6 +527,37 @@ let skins: [Skin] = [
     Skin(name: "Halloween", palette: [
         "K": NSColor(hex: 0x5A2A10), "B": NSColor(hex: 0xFF9A3C), "L": NSColor(hex: 0xFFE7C2),
         "P": NSColor(hex: 0xFF8AB0), "D": NSColor(hex: 0xE8731F)], face: NSColor(hex: 0xFF9A3C), eye: NSColor(hex: 0x2B1A10)),
+    // Christmas: ten skins added after Halloween, so the chats' skins above do not change
+    Skin(name: "Santa red", palette: [
+        "K": NSColor(hex: 0x5C1A1A), "B": NSColor(hex: 0xD62828), "L": NSColor(hex: 0xFF6B6B),
+        "P": NSColor(hex: 0xFFC2C2), "D": NSColor(hex: 0xA61E1E)], face: NSColor(hex: 0xD62828), eye: NSColor(hex: 0x2B1A1A)),
+    Skin(name: "Evergreen", palette: [
+        "K": NSColor(hex: 0x1B3A24), "B": NSColor(hex: 0x2F7D4A), "L": NSColor(hex: 0x58B07A),
+        "P": NSColor(hex: 0xFF8FAB), "D": NSColor(hex: 0x1F5C36)], face: NSColor(hex: 0x2F7D4A), eye: NSColor(hex: 0x12261A)),
+    Skin(name: "Gingerbread", palette: [
+        "K": NSColor(hex: 0x4A2A12), "B": NSColor(hex: 0xC98B4E), "L": NSColor(hex: 0xE8B880),
+        "P": NSColor(hex: 0xF4A3A3), "D": NSColor(hex: 0x9A6236)], face: NSColor(hex: 0xC98B4E), eye: NSColor(hex: 0x2B1A10)),
+    Skin(name: "Candy cane", palette: [
+        "K": NSColor(hex: 0x7A1A1A), "B": NSColor(hex: 0xFFFFFF), "L": NSColor(hex: 0xFFFFFF),
+        "P": NSColor(hex: 0xFFB3C6), "D": NSColor(hex: 0xE03131)], face: NSColor(hex: 0xFFFFFF), eye: NSColor(hex: 0x2B2118)),
+    Skin(name: "Frosted blue", palette: [
+        "K": NSColor(hex: 0x2B4A6B), "B": NSColor(hex: 0xA5D8FF), "L": NSColor(hex: 0xDDF1FF),
+        "P": NSColor(hex: 0xFFB3C6), "D": NSColor(hex: 0x74B8E8)], face: NSColor(hex: 0xA5D8FF), eye: NSColor(hex: 0x1B3557)),
+    Skin(name: "Reindeer", palette: [
+        "K": NSColor(hex: 0x3E2414), "B": NSColor(hex: 0xB07A4A), "L": NSColor(hex: 0xD9A77A),
+        "P": NSColor(hex: 0xFFB3A7), "D": NSColor(hex: 0x7A4E2C)], face: NSColor(hex: 0xB07A4A), eye: NSColor(hex: 0x1E120A)),
+    Skin(name: "Tinsel gold", palette: [
+        "K": NSColor(hex: 0x6B4A0B), "B": NSColor(hex: 0xF5C84C), "L": NSColor(hex: 0xFFE38A),
+        "P": NSColor(hex: 0xFF9F7A), "D": NSColor(hex: 0xD9A21B)], face: NSColor(hex: 0xF5C84C), eye: NSColor(hex: 0x3A2A08)),
+    Skin(name: "Peppermint", palette: [
+        "K": NSColor(hex: 0x8A2B4A), "B": NSColor(hex: 0xFFD6E5), "L": NSColor(hex: 0xFFFFFF),
+        "P": NSColor(hex: 0xFF7FA0), "D": NSColor(hex: 0xE8577E)], face: NSColor(hex: 0xFFD6E5), eye: NSColor(hex: 0x5A1A33)),
+    Skin(name: "Winter night", palette: [
+        "K": NSColor(hex: 0x0E1530), "B": NSColor(hex: 0x2E3F78), "L": NSColor(hex: 0x4C5FA0),
+        "P": NSColor(hex: 0xFF8FD8), "D": NSColor(hex: 0x1C2A55)], face: NSColor(hex: 0x2E3F78), eye: NSColor(hex: 0xFFF2A8)),
+    Skin(name: "Sugar plum", palette: [
+        "K": NSColor(hex: 0x3B1F55), "B": NSColor(hex: 0xB084D8), "L": NSColor(hex: 0xDCC4F0),
+        "P": NSColor(hex: 0xFFB3E0), "D": NSColor(hex: 0x7E4FA8)], face: NSColor(hex: 0xB084D8), eye: NSColor(hex: 0x2A1040)),
 ]
 
 /// The Halloween witch hat in her grid squares (above her head is negative y): brim, cone, bent tip, band and buckle
