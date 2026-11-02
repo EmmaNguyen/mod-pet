@@ -498,6 +498,8 @@ check("the pointer shows the morning brief before 6 PM", briefHoverKind(now: bri
 check("the pointer shows the wrap-up from 6 PM", briefHoverKind(now: briefAt(18, 30)) == "evening")
 
 // Halloween is a skin, and the chats keep the skins they had
+check("A waiting chat's reason chip is wider for a longer reason, and fits its text", waitingChipWidth("Edit") < waitingChipWidth("Run a command") && waitingChipWidth("Edit") > 16)
+check("Waiting cards are 40 points tall with 6 between them", waitingCardHeight == 40 && waitingCardGap == 6)
 check("Halloween and the ten Christmas skins come after the first six", skins.count == 17 && skins[6].name == "Halloween" && skins[16].name == "Sugar plum")
 check("The Halloween witch hat sits above her head and over her ears", halloweenHat.contains { $0.y < 0 } && halloweenHat.allSatisfy { $0.x >= 0 && $0.x + $0.w <= 16 })
 check("A chat in Auto gets no Allow and Deny card, a chat in the other modes does", !showsApprovalCard(Chat(id: "a", title: "A", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "auto")) && showsApprovalCard(Chat(id: "b", title: "B", status: .needsInput, log: [], updatedAt: 0, link: nil, waiting: "Run", isRecent: true, mode: "default")))

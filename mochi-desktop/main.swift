@@ -1958,18 +1958,30 @@ final class BriefView: NSView {
             drawLine(content.rowsTitle, .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
             y += 22
             rowHits = []
+            // Each waiting chat is a card: her face, its name, and the reason as a chip on the right
+            let chipFill = adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36))
+            let chipInk = adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6))
             for (i, row) in content.rows.enumerated() {
-                if draw { drawRowMarker(row, x: pad, y: y) }
-                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 24, y: y, width: inner - 24, draw: draw)
+                let card = NSRect(x: pad, y: y, width: inner, height: waitingCardHeight)
+                let chipWidth = waitingChipWidth(row.right)
+                let chip = NSRect(x: card.maxX - chipWidth - 10, y: y + 10, width: chipWidth, height: 20)
+                if draw {
+                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                    NSBezierPath(roundedRect: card, xRadius: 10, yRadius: 10).fill()
+                    drawRowMarker(row, x: pad + 10, y: y + 11)
+                    chipFill.setFill()
+                    NSBezierPath(roundedRect: chip, xRadius: 10, yRadius: 10).fill()
+                }
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 36, y: y + 12, width: chip.minX - pad - 48, draw: draw)
                 // A waiting chat opens its real session, and underlines under the pointer like the latest sessions
                 if draw, rowHovered == i, row.link != nil {
-                    underline(from: pad + 24, width: nameWidth, y: y + 18, color: .labelColor)
+                    underline(from: pad + 36, width: nameWidth, y: y + 29, color: .labelColor)
                 }
-                if let link = row.link { rowHits.append((NSRect(x: pad, y: y, width: inner, height: 20), link)) }
-                drawLine(row.right, .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
-                y += 22
+                drawLine(row.right, .systemFont(ofSize: 12, weight: .medium), chipInk, x: chip.minX, y: y + 13, width: chipWidth, align: .center, draw: draw)
+                if let link = row.link { rowHits.append((card, link)) }
+                y += waitingCardHeight + waitingCardGap
             }
-            y += 8
+            y += 2
         }
 
         for (text, color) in content.lines {
@@ -2951,6 +2963,13 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
 struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil }
+/// One waiting chat's card in the brief: its height, and the gap between cards
+let waitingCardHeight: CGFloat = 40
+let waitingCardGap: CGFloat = 6
+/// The width of a waiting chat's reason chip: its text at 12 points, with 8 points of room each side
+func waitingChipWidth(_ reason: String) -> CGFloat {
+    ceil((reason as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 16
+}
 /// One day's bar in the week chart
 struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
 /// A chat in the top list, with its working time today
