@@ -338,7 +338,6 @@ dayWork[dayKey(briefAt(20, 0))] = {
 let evening = briefContent(kind: "evening", chats: [], log: dayWork, now: briefAt(20, 0), offer: nil, usagePercent: 38)
 check("the wrap-up headline is today's working time", evening.headline?.big == "3h 15m")
 check("the wrap-up counts finished chats, approvals and usage", evening.stats.map { $0.value } == ["5", "12", "38%"])
-check("the wrap-up lists the top chat first", evening.top.first?.name == "Redo the search" && evening.top.count == 2)
 check("the wrap-up chart has a bar for each day with today marked", evening.week.count == 7 && evening.week.filter { $0.isToday }.count == 1)
 let offerContent = briefContent(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23)), usagePercent: nil)
 check("the brief shows an open reset offer", offerContent.footer?.hasPrefix("Reset offer: 1 left") == true)
@@ -441,12 +440,6 @@ try? FileManager.default.removeItem(at: looksFile)
 check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.chatID == "L")
 
 // The wrap-up's top chats carry the chat id too, so each wears its skin and opens its own chat
-var topLog: DayLog = [:]
-recordSecond(&topLog, day: dayKey(Date()), chatID: "L", title: "Linked session", waiting: false)
-check("a top chat in the wrap-up carries its chat id and link", { () -> Bool in
-    let top = briefContent(kind: "evening", chats: linked, log: topLog, now: Date(), offer: nil, usagePercent: nil).top.first
-    return top?.chatID == "L" && top?.link == "claude://code/continue?session=abc"
-}())
 
 // A card's title starts after its chat's cat, or its dot, or at the edge
 check("a card's title makes room for the cat", cardTitleX(hasCat: true, hasDot: true) == 46)

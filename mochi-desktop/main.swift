@@ -1891,8 +1891,6 @@ final class BriefView: NSView {
     private var latestHits: [(NSRect, String)] = []
     private var hovered: Int?
     /// The top-chat rows that open a chat, and the one under the pointer
-    private var topHits: [(NSRect, String)] = []
-    private var topHovered: Int?
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
     private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
@@ -1994,34 +1992,6 @@ final class BriefView: NSView {
             y += 56 + 28
         }
 
-        // The top chats by working time
-        topHits = []
-        if !content.top.isEmpty {
-            drawLine("Top chats", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
-            y += 22
-            let longest = max(1, content.top.map(\.seconds).max() ?? 1)
-            for (i, chat) in content.top.enumerated() {
-                if draw, let id = chat.chatID {
-                    let look = chatLooks[id] ?? ChatLook()
-                    drawCatAvatar(chatSkin(id: id, look: look), look: look, in: NSRect(x: pad, y: y + 1, width: 18, height: 18), resting: false)
-                }
-                let nameWidth = drawLine(chat.name, .systemFont(ofSize: 13), .labelColor, x: pad + 24, y: y, width: inner - 94, draw: draw)
-                if draw, topHovered == i, chat.link != nil {
-                    underline(from: pad + 24, width: nameWidth, y: y + 18, color: .labelColor)
-                }
-                if let link = chat.link { topHits.append((NSRect(x: pad, y: y, width: inner, height: 20), link)) }
-                drawLine(clockText(chat.seconds), .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
-                if draw {
-                    let track = NSRect(x: pad, y: y + 22, width: inner, height: 5)
-                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                    NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
-                    (content.duet ? NSColor(hex: 0xC97A8F) : NSColor(hex: 0x1C7ED6)).setFill()
-                    NSBezierPath(roundedRect: NSRect(x: pad, y: track.minY, width: inner * CGFloat(chat.seconds) / CGFloat(longest), height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-                }
-                y += 36
-            }
-        }
-
         if let footer = content.footer {
             y += 4
             if content.duet {
@@ -2059,17 +2029,14 @@ final class BriefView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let row = latestHits.firstIndex { $0.0.contains(point) }
-        let top = topHits.firstIndex { $0.0.contains(point) }
-        if row != hovered || top != topHovered {
+        if row != hovered {
             hovered = row
-            topHovered = top
             needsDisplay = true
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         hovered = nil
-        topHovered = nil
         needsDisplay = true
     }
 
@@ -2078,7 +2045,7 @@ final class BriefView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
         if pinRect.insetBy(dx: -6, dy: -6).contains(point) { onPin?(); return }
-        if let hit = (latestHits + topHits).first(where: { $0.0.contains(point) }) { openChat(hit.1) }
+        if let hit = latestHits.first(where: { $0.0.contains(point) }) { openChat(hit.1) }
     }
 }
 
@@ -2934,7 +2901,6 @@ func waitingChipWidth(_ reason: String) -> CGFloat {
 /// One day's bar in the week chart
 struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
 /// A chat in the top list, with its working time today
-struct BriefTop { let name: String; let seconds: Int; var link: String? = nil; var chatID: String? = nil }
 
 /// Everything a brief card shows; the card draws whichever parts are filled
 struct BriefContent {
@@ -2948,7 +2914,6 @@ struct BriefContent {
     var latest: [BriefRow] = []
     var lines: [(String, NSColor)] = []
     var week: [BriefBar] = []
-    var top: [BriefTop] = []
     var footer: String?
 }
 
@@ -2995,13 +2960,6 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         names.dateFormat = "EEE"
         content.week = weekDates(containing: now).map { date in
             BriefBar(label: names.string(from: date), seconds: working(log[dayKey(date)] ?? DayRecord()), isToday: dayKey(date) == dayKey(now))
-        }
-        content.top = today.chats.filter { ($0.value.working ?? 0) > 0 }
-            .sorted { ($0.value.working ?? 0) > ($1.value.working ?? 0) }.prefix(2)
-            .map { BriefTop(name: clip($0.value.title, 28), seconds: $0.value.working ?? 0, chatID: $0.key) }
-        // Top chats carry their real links: the day record keeps none, so find each chat by its id
-        for i in content.top.indices {
-            content.top[i].link = chats.first { $0.id == content.top[i].chatID }?.link
         }
     }
     content.latest = latestSessions(chats).map { chat in
