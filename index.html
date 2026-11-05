@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
 <title>Mochi, a Claude Code companion</title>
 <meta name="description" content="Mochi is a pixel-art companion for Claude Code on macOS. She shows what each chat is doing and lets you answer requests from her card.">
@@ -68,6 +70,8 @@
 }
 
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {
   margin: 0;
   background: var(--bg);
@@ -96,10 +100,23 @@ img { max-width: 100%; height: auto; display: block; }
   color: var(--accent-ink);
 }
 
-/* Top bar */
+/* Skip link */
+.skip { position: absolute; left: 16px; top: -60px; z-index: 20; padding: 8px 14px; border-radius: 8px; background: var(--ink); color: var(--bg); font-weight: 700; }
+.skip:focus { top: 12px; }
+
+/* Top bar: stays in view while you scroll */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+  padding-inline: max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid transparent; transition: border-color 0.2s;
+}
+.topbar.stuck { border-bottom-color: var(--line); }
 .top {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding-block: 20px; flex-wrap: wrap;
+  padding-block: 14px; flex-wrap: wrap;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; color: var(--ink); text-decoration: none; }
 .brand img { width: 36px; height: 36px; }
@@ -132,7 +149,15 @@ img { max-width: 100%; height: auto; display: block; }
   aspect-ratio: 1 / 1; max-width: 420px; width: 100%; justify-self: center;
   background: var(--surface); border: 2px solid var(--line); border-radius: 28px;
 }
-.hero-art img { width: 62%; animation: hop 2.4s ease-in-out infinite; image-rendering: pixelated; }
+.hero-art > img { width: 56%; margin-bottom: 28px; animation: hop 2.4s ease-in-out infinite; image-rendering: pixelated; }
+.picker { position: absolute; bottom: 14px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; }
+.swatch {
+  width: 30px; height: 30px; padding: 3px; border-radius: 50%; cursor: pointer;
+  background: var(--bg); border: 2px solid var(--line);
+}
+.swatch img { width: 100%; height: 100%; animation: none; image-rendering: pixelated; }
+.swatch[aria-pressed="true"] { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+.skin-name { position: absolute; top: 14px; left: 0; right: 0; text-align: center; font-family: var(--pixel); font-size: 12px; letter-spacing: 0.08em; color: var(--muted); }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 
 /* Features */
@@ -150,6 +175,24 @@ img { max-width: 100%; height: auto; display: block; }
 .screen figcaption { margin-top: 10px; color: var(--muted); font-size: 0.95rem; }
 .screen.wide { grid-column: 1 / -1; }
 .screen.wide img { max-height: 520px; width: auto; margin-inline: auto; }
+
+/* How it works and privacy */
+.flow { display: grid; gap: 16px; margin-top: 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); counter-reset: flow; }
+.flow > div { background: var(--surface); border: 2px solid var(--line); border-radius: 20px; padding: 22px; counter-increment: flow; }
+.flow > div::before { content: counter(flow); font-family: var(--pixel); color: var(--accent-ink); font-size: 14px; }
+.flow h3 { margin-top: 6px; }
+.flow p { margin-top: 8px; color: var(--muted); }
+.flow code, .privacy code { font-family: var(--mono); font-size: 0.88em; background: var(--surface); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; }
+.privacy-list { margin: 20px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.privacy-list li { padding-left: 28px; position: relative; color: var(--muted); max-width: 62ch; }
+.privacy-list li::before { content: "\2713"; position: absolute; left: 0; color: var(--green); font-weight: 900; }
+
+/* Lightbox */
+.screen img { cursor: zoom-in; }
+dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
+dialog.lightbox::backdrop { background: rgba(20, 12, 6, 0.8); }
+dialog.lightbox img { max-width: 96vw; max-height: 90vh; width: auto; border-radius: 16px; background: var(--surface); }
+dialog.lightbox p { color: #fff; text-align: center; margin: 10px auto 0; }
 
 /* Install */
 .install { background: var(--surface); border-radius: 28px; border: 2px solid var(--line); padding: 32px; }
@@ -189,16 +232,20 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 }
 </style>
 
+<a class="skip" href="#top">Skip to content</a>
+<div class="topbar" id="topbar">
 <header class="wrap top">
   <a class="brand" href="#top"><img src="media/logo/mochi-logo-1024.png" alt="">Mochi</a>
   <nav aria-label="Page">
     <a href="#what">What she does</a>
     <a href="#screens">Screens</a>
+    <a href="#how">How it works</a>
     <a href="#install">Install</a>
     <a href="https://github.com/EmmaNguyen/mod-pet">GitHub</a>
     <button class="theme" type="button" id="theme-toggle" aria-label="Switch to light theme">&#9790;</button>
   </nav>
 </header>
+</div>
 
 <main id="top" class="wrap">
 
@@ -213,7 +260,16 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     </div>
   </div>
   <div class="hero-art">
-    <img src="media/logo/mochi-logo-1024.png" alt="Mochi, a pixel-art orange cat">
+    <span class="skin-name" id="skin-name" aria-live="polite">Classic orange</span>
+    <img id="hero-cat" src="media/logo/mochi-logo-1024.png" alt="Mochi, a pixel-art cat">
+    <div class="picker" role="group" aria-label="Try a skin">
+      <button class="swatch" type="button" data-skin="classic-orange" data-name="Classic orange" aria-pressed="true" aria-label="Classic orange"><img src="media/logo/skins/mochi-classic-orange-512.png" alt=""></button>
+      <button class="swatch" type="button" data-skin="midnight-black" data-name="Midnight black" aria-pressed="false" aria-label="Midnight black"><img src="media/logo/skins/mochi-midnight-black-512.png" alt=""></button>
+      <button class="swatch" type="button" data-skin="snow-white" data-name="Snow white" aria-pressed="false" aria-label="Snow white"><img src="media/logo/skins/mochi-snow-white-512.png" alt=""></button>
+      <button class="swatch" type="button" data-skin="tuxedo" data-name="Tuxedo" aria-pressed="false" aria-label="Tuxedo"><img src="media/logo/skins/mochi-tuxedo-512.png" alt=""></button>
+      <button class="swatch" type="button" data-skin="mint" data-name="Mint" aria-pressed="false" aria-label="Mint"><img src="media/logo/skins/mochi-mint-512.png" alt=""></button>
+      <button class="swatch" type="button" data-skin="lavender-galaxy" data-name="Lavender galaxy" aria-pressed="false" aria-label="Lavender galaxy"><img src="media/logo/skins/mochi-lavender-galaxy-512.png" alt=""></button>
+    </div>
   </div>
 </section>
 
@@ -316,6 +372,36 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   <p class="note">These images are drawn by Mochi's own views with made-up chats, so no real chat names appear.</p>
 </section>
 
+<section id="how" aria-labelledby="how-title">
+  <p class="label">How it works</p>
+  <h2 id="how-title">Three parts, joined by plain files.</h2>
+  <div class="flow">
+    <div>
+      <h3>A Claude Code plugin</h3>
+      <p>Hooks note when a chat starts, works, asks, or finishes, and write that to small files in <code>~/.claude/mochi/</code>.</p>
+    </div>
+    <div>
+      <h3>Mochi Desktop</h3>
+      <p>The cat reads those files, draws the state, and writes your Allow or Deny answer back as a file.</p>
+    </div>
+    <div>
+      <h3>Mochi Studio</h3>
+      <p>A small editor for her look. It saves one file, and the cat picks it up straight away.</p>
+    </div>
+  </div>
+</section>
+
+<section class="privacy" aria-labelledby="privacy-title">
+  <p class="label">Privacy</p>
+  <h2 id="privacy-title">It stays on your Mac.</h2>
+  <ul class="privacy-list">
+    <li>Mochi reads and writes only <code>~/.claude/mochi/</code>.</li>
+    <li>The diary keeps daily counts, not chat content.</li>
+    <li>Nothing is sent until you press Enter on a note you typed or spoke.</li>
+    <li>The code is MIT licensed, so you can read every line.</li>
+  </ul>
+</section>
+
 <section id="install" aria-labelledby="install-title">
   <div class="install">
     <p class="label">Install</p>
@@ -373,6 +459,44 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   </div>
 </footer>
 
+<dialog class="lightbox" id="lightbox" aria-label="Screenshot">
+  <img id="lightbox-img" alt="">
+  <p id="lightbox-cap"></p>
+</dialog>
+
+<script>
+  // Hero skin picker: tries a skin on the big cat. Only changes the picture.
+  (function () {
+    var cat = document.getElementById('hero-cat'), label = document.getElementById('skin-name');
+    var swatches = document.querySelectorAll('.swatch');
+    swatches.forEach(function (b) {
+      b.addEventListener('click', function () {
+        swatches.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
+        cat.src = 'media/logo/skins/mochi-' + b.dataset.skin + '-512.png';
+        label.textContent = b.dataset.name;
+      });
+    });
+  })();
+  // Header gets a line once you scroll
+  (function () {
+    var bar = document.getElementById('topbar');
+    var update = function () { bar.classList.toggle('stuck', window.scrollY > 4); };
+    window.addEventListener('scroll', update, { passive: true }); update();
+  })();
+  // Click a screenshot to see it large
+  (function () {
+    var box = document.getElementById('lightbox'), big = document.getElementById('lightbox-img'), cap = document.getElementById('lightbox-cap');
+    if (!box.showModal) return;
+    document.querySelectorAll('.screen img').forEach(function (img) {
+      img.addEventListener('click', function () {
+        big.src = img.src; big.alt = img.alt;
+        var c = img.parentElement.querySelector('figcaption'); cap.textContent = c ? c.textContent : '';
+        box.showModal();
+      });
+    });
+    box.addEventListener('click', function () { box.close(); });
+  })();
+</script>
 <script>
   // Theme switch: flips between light and dark, and remembers the choice.
   (function () {
