@@ -169,12 +169,19 @@ img { max-width: 100%; height: auto; display: block; }
 .feature p { margin-top: 8px; color: var(--muted); }
 
 /* Screens */
-.screens { display: grid; gap: 28px; margin-top: 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.intro { margin-top: 12px; color: var(--muted); }
+.group { margin-top: 48px; }
+.group > p { margin-top: 6px; color: var(--muted); }
+.group h3 { font-size: 1.4rem; }
+/* Columns, not rows, so tall and short screens pack without gaps */
+.screens { columns: 2 300px; column-gap: 28px; margin-top: 24px; }
+.screens .screen { break-inside: avoid; margin-bottom: 28px; }
+.group > .screen.wide { margin: 24px 0 0; }
+.group > .screen.wide + .screens, .group > .screens + .screen.wide { margin-top: 0; }
 .screen figure { margin: 0; }
 .screen img { border-radius: 16px; border: 1px solid var(--line); background: var(--surface); }
 .screen figcaption { margin-top: 10px; color: var(--muted); font-size: 0.95rem; }
-.screen.wide { grid-column: 1 / -1; }
-.screen.wide img { max-height: 520px; width: auto; margin-inline: auto; }
+.screen.wide img { width: 100%; }
 
 /* How it works and privacy */
 .flow { display: grid; gap: 16px; margin-top: 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); counter-reset: flow; }
@@ -327,49 +334,70 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 <section id="screens" aria-labelledby="screens-title">
   <p class="label">Screens</p>
   <h2 id="screens-title">What it looks like</h2>
-  <div class="screens">
+  <p class="intro">Every image is drawn by Mochi's own views. Click one to see it large.</p>
+
+  <div class="group">
+    <h3>Right now</h3>
+    <p>Her pose shows the state. Her card and list show what needs you.</p>
     <figure class="screen wide">
       <img src="media/screenshots/01-status.png" alt="Mochi in four poses: working, needs your OK, ready, and blocked" loading="lazy" width="1400" height="428">
       <figcaption>Four poses, four states. The badge on her ear shows what the chat needs.</figcaption>
     </figure>
-    <figure class="screen">
+    <div class="screens">
+<figure class="screen">
       <img src="media/screenshots/04-approval-card.png" alt="An approval card asking to allow a git push, with Deny and Allow once buttons" loading="lazy" width="960" height="524">
       <figcaption>The approval card. Deny and Allow once, with their keys.</figcaption>
     </figure>
-    <figure class="screen">
+<figure class="screen">
       <img src="media/screenshots/06-chat-list.png" alt="Mochi's chat list, grouped into Running now, Waiting, Finished and Resting" loading="lazy" width="1160" height="1576">
       <figcaption>Every chat in one list, grouped by what needs you.</figcaption>
     </figure>
-    <figure class="screen">
+</div>
+  </div>
+
+  <div class="group">
+    <h3>Your day</h3>
+    <p>A morning brief, who is running, and where the time went.</p>
+    <div class="screens">
+<figure class="screen">
+      <img src="media/screenshots/12-morning-brief.png" alt="The morning brief: waiting, running and yesterday's time as big numbers, then the latest sessions" loading="lazy" width="880" height="708">
+      <figcaption>The morning brief, with the day's numbers and the latest sessions.</figcaption>
+    </figure>
+<figure class="screen">
+      <img src="media/screenshots/15-agents-box.png" alt="The Agents box: two agents running, each with its task and how long it has run" loading="lazy" width="800" height="452">
+      <figcaption>The Agents box: each agent's task and how long it has run.</figcaption>
+    </figure>
+<figure class="screen">
       <img src="media/screenshots/08-this-week.png" alt="The This week tab with turns and approvals for each day" loading="lazy" width="880" height="1176">
       <figcaption>This week: turns and approvals each day.</figcaption>
     </figure>
-    <figure class="screen">
+<figure class="screen">
+      <img src="media/screenshots/14-time-tab.png" alt="The Time tab: working and waiting time for the week, day by day" loading="lazy" width="880" height="1176">
+      <figcaption>The Time tab: how long each chat was working and waiting.</figcaption>
+    </figure>
+</div>
+  </div>
+
+  <div class="group">
+    <h3>Make her yours</h3>
+    <p>Paint her in Studio, dress each chat's cat, or pick one of seventeen skins.</p>
+    <div class="screens">
+<figure class="screen">
       <img src="media/screenshots/11-studio.png" alt="Mochi Studio with the pixel editor and a live preview of Mochi wearing a bow" loading="lazy" width="1440" height="1600">
       <figcaption>Mochi Studio: paint her face and pick her accessory.</figcaption>
     </figure>
+<figure class="screen">
+      <img src="media/screenshots/16-skin-editor.png" alt="The chat skin editor with shell colours, hats, eyewear and extras" loading="lazy" width="880" height="1376">
+      <figcaption>The skin editor: a cat for each chat, with shell, hat, eyewear, and extras.</figcaption>
+    </figure>
+</div>
     <figure class="screen wide">
       <img src="media/images/skins-lineup.png" alt="All seventeen skins in three groups: Everyday, Halloween, and Christmas" loading="lazy" width="1624" height="1404">
       <figcaption>Seventeen skins: six everyday, one Halloween, and ten Christmas. Choose one from her right-click menu.</figcaption>
     </figure>
-    <figure class="screen">
-      <img src="media/screenshots/12-morning-brief.png" alt="The morning brief: waiting, running and yesterday's time as big numbers, then the latest sessions" loading="lazy" width="880" height="708">
-      <figcaption>The morning brief, with the day's numbers and the latest sessions.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="media/screenshots/15-agents-box.png" alt="The Agents box: two agents running, each with its task and how long it has run" loading="lazy" width="800" height="452">
-      <figcaption>The Agents box: each agent's task and how long it has run.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="media/screenshots/14-time-tab.png" alt="The Time tab: working and waiting time for the week, day by day" loading="lazy" width="880" height="1176">
-      <figcaption>The Time tab: how long each chat was working and waiting.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="media/screenshots/16-skin-editor.png" alt="The chat skin editor with shell colours, hats, eyewear and extras" loading="lazy" width="880" height="1376">
-      <figcaption>The skin editor: a cat for each chat, with shell, hat, eyewear, and extras.</figcaption>
-    </figure>
   </div>
-  <p class="note">These images are drawn by Mochi's own views with made-up chats, so no real chat names appear.</p>
+
+  <p class="note">These images use made-up chats, so no real chat names appear.</p>
 </section>
 
 <section id="how" aria-labelledby="how-title">
