@@ -131,7 +131,11 @@ While a live chat is in **Auto** mode (a model decides which requests to approve
 
 ### Her week and diary
 
-The scroll button opens two tabs. **This week** shows the week's turns and approvals each day, that day's peak 5-hour usage, the most active chats, and your week limit. **Diary** shows twelve weeks as squares, the darker the busier, with the busiest day, active days and your streak. Mochi keeps a small daily count in `~/.claude/mochi/days.json`, with no chat content.
+The scroll button opens three tabs. **This week** shows the week's turns and approvals each day, that day's peak 5-hour usage, the most active chats, and your week limit. **Diary** shows twelve weeks as squares, the darker the busier, with the busiest day, active days and your streak. **Time** shows how long each chat was working and waiting for you, day by day and today, counted while Mochi is open. Mochi keeps a small daily count in `~/.claude/mochi/days.json`, with no chat content.
+
+<p align="center">
+  <img src="media/screenshots/14-time-tab.png" alt="The Time tab: working and waiting time for the week, day by day, and per chat today" width="380">
+</p>
 
 <p align="center">
   <img src="media/screenshots/08-this-week.png" alt="The This week tab: turns and approvals each day, and the most active chats" width="380">
@@ -147,6 +151,40 @@ Now and then she thinks out loud in a bubble above her: how long is left in her 
   <img src="media/screenshots/10-thoughts.png" alt="Three thought bubbles: time left, chats ready, and a fun fact" width="390">
 </p>
 
+### Morning brief and 6 PM wrap-up
+
+Once a day she opens a brief under her. The morning brief shows at 8:00 AM, and the wrap-up at 6:00 PM. Each shows big numbers for what is waiting, running, and finished yesterday, what needs you, the latest seven sessions, a week chart and your usage. A brief shows once a day when it first comes due, so a missed 8:00 still shows it. It stays until you close it with its cross, and a pin keeps it above other windows. Waiting chats in the brief underline when you hover over them, and a click opens the real chat in Claude.
+
+You can open either brief by hand, from her right-click menu or with a `mochi://brief` link. Add `?kind=evening` to the link for the wrap-up.
+
+<p align="center">
+  <img src="media/screenshots/12-morning-brief.png" alt="The morning brief: waiting, running and yesterday's time as big numbers, then the latest sessions" width="400">
+  &nbsp;
+  <img src="media/screenshots/13-wrap-up.png" alt="The 6 PM wrap-up: the day's working time, finished chats, approvals, usage and the latest sessions" width="400">
+</p>
+
+### Status ring, timers and agents
+
+A ring round her status badge fills as a running chat gets through its estimate of how long the turn will take. The estimate is the longest of the last five finished turns. Past it, the timer shows elapsed time only. The ring turns green for a minute when the chat finishes.
+
+A running chat shows how long it has run and the time left on its estimate, with a bar. Past the estimate, it shows the elapsed time only. Agents that a chat starts show beside her as dots, one for each agent running now. Click a dot to see that agent's task, how long it has run, and when it was last active.
+
+<p align="center">
+  <img src="media/screenshots/15-agents-box.png" alt="The Agents box: two agents running, each with its task, how long it has run and when it was last active" width="400">
+</p>
+
+### Chat inbox and skins for each chat
+
+Every chat has its own pixel cat in the chat box, which works as an inbox. A chat that is working shows in orange, with the time at the right. Click a chat's cat to open its skin editor: choose a shell colour, a hat, eyewear, or an extra, or let Mochi pick one with **Surprise me**. A skin you pick from her right-click menu still shows on her, even with a body colour from Mochi Studio.
+
+<p align="center">
+  <img src="media/screenshots/16-skin-editor.png" alt="The chat skin editor: a preview of the chat's cat, with shell colours, hats, eyewear and extras to choose from" width="360">
+</p>
+
+### Menu bar, and closing or hiding her boxes
+
+A menu bar item shows her face with the counts of chats that need you and chats that are working, and a list of the chats grouped by state. Right-click her and choose **Close all boxes** to close the brief, week panel, chat list, thoughts and cards at once. **Hide notifications** stops the cards, the chat list and her thoughts until you turn it back on.
+
 ### Quiet, and tidy
 
 - **Quiet for 1 hour**, or **Quiet until I turn sounds back on**, from her right-click menu, silences her sounds, and the cards and Mac notifications for finished work. Questions and approval cards still show, and the same item ends the quiet early.
@@ -154,10 +192,10 @@ Now and then she thinks out loud in a bubble above her: how long is left in her 
 
 ### Make her yours
 
-Six skins, chosen from her right-click menu under **Skin**.
+Seventeen skins, chosen from her right-click menu under **Skin**. Six everyday looks, one Halloween skin, and ten Christmas skins. The Christmas skins are added after the Halloween one, so the skins that chats already wear do not change.
 
 <p align="center">
-  <img src="media/images/skins-lineup.png" alt="Six skins: classic orange, midnight black, snow white, tuxedo, mint, and lavender galaxy" width="560">
+  <img src="media/images/skins-lineup.png" alt="All seventeen skins in three groups: Everyday (classic orange, midnight black, snow white, tuxedo, mint, lavender galaxy), Halloween, and Christmas (santa red, evergreen, gingerbread, candy cane, frosted blue, reindeer, tinsel gold, peppermint, winter night, sugar plum)" width="640">
 </p>
 
 **Mochi Studio** is a small app to change her body, eyes, accessory (none, bow, hat, or scarf), and name, with a live preview. It saves to the same file Mochi reads, opens with the look you saved, and previews her in the skin chosen in Mochi's menu, drawn the way Mochi draws it. Undo and redo (⌘Z and ⇧⌘Z) step back through every change.

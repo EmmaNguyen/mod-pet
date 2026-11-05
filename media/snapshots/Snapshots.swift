@@ -143,7 +143,7 @@ func madeUpDiary(today: Date) -> DayLog {
         var left = turns
         for name in names.shuffled().prefix(3) where left > 0 {
             let share = max(1, Int(Double(left) * (0.35 + roll() * 0.4)))
-            record.chats[name] = ChatDay(title: name, turns: share)
+            record.chats[name] = ChatDay(title: name, turns: share, working: share * (150 + Int(roll() * 240)), waiting: Int(roll() * 900))
             left -= share
         }
         log[dayKey(date)] = record
@@ -297,3 +297,42 @@ for frame in 0..<24 {
     try? rep.representation(using: .png, properties: [:])?.write(to: url)
 }
 print("wrote 24 walk frames to \(walkFolder.path)")
+
+// MARK: - Newer views: the morning brief, the 6 PM wrap-up, the Time tab, the Agents box and the skin editor
+
+for (kind, name) in [("morning", "12-morning-brief.png"), ("evening", "13-wrap-up.png")] {
+    let brief = BriefView()
+    brief.content = briefContent(kind: kind, chats: chats, log: diary, now: now, offer: nil, usagePercent: 62)
+    brief.frame = NSRect(origin: .zero, size: NSSize(width: BriefView.width, height: brief.fittingHeight()))
+    let s = scene(BriefView.width + 60, brief.frame.height + 48)
+    place(brief, in: s, at: NSPoint(x: 30, y: 24), glass: 22)
+    save(s, as: name)
+}
+
+do {
+    let week = WeekView(log: diary, usage: weekUsage, now: friday, colorFor: { chatColor($0) })
+    week.tab = 2
+    let s = scene(WeekView.size.width + 60, WeekView.size.height + 48)
+    place(week, in: s, at: NSPoint(x: 30, y: 24), glass: 24)
+    save(s, as: "14-time-tab.png")
+}
+
+do {
+    let agents = AgentsBoxView()
+    agents.now = now
+    agents.runs = [
+        AgentRun(id: "agent-1", task: "Review the approval tests", started: now.addingTimeInterval(-214), lastActivity: now.addingTimeInterval(-12), session: "garden-api"),
+        AgentRun(id: "agent-2", task: "Update the README screenshots", started: now.addingTimeInterval(-70), lastActivity: now.addingTimeInterval(-3), session: "docs-site"),
+    ]
+    agents.frame = NSRect(origin: .zero, size: NSSize(width: AgentsBoxView.width, height: agents.fittingHeight()))
+    let s = scene(AgentsBoxView.width + 60, agents.frame.height + 48)
+    place(agents, in: s, at: NSPoint(x: 30, y: 24), glass: 22)
+    save(s, as: "15-agents-box.png")
+}
+
+do {
+    let editor = SkinEditorView(chatID: "billing", title: "billing")
+    let s = scene(SkinEditorView.size.width + 60, SkinEditorView.size.height + 48)
+    place(editor, in: s, at: NSPoint(x: 30, y: 24), glass: 24)
+    save(s, as: "16-skin-editor.png")
+}

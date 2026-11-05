@@ -41,7 +41,7 @@ def parse_skins():
         # Eyes use the skin's eye colour, shine is white (see mochi-desktop/main.swift, colour switch).
         colours.update({"E": "#" + eye, "e": "#" + eye, "W": "#FFFFFF"})
         skins.append((name, colours))
-    assert len(skins) == 6, f"expected 6 skins, found {len(skins)}"
+    assert len(skins) == 17, f"expected 17 skins, found {len(skins)}"
     return skins
 
 
@@ -92,21 +92,30 @@ def make_logo(grid, skins):
 
 
 def make_skin_lineup(grid, skins):
-    cell, pad, label_h = 14, 40, 50
-    cat = 16 * cell
-    cols, rows = 3, 2
-    width = cols * (cat + 2 * pad)
-    height = rows * (cat + 2 * pad + label_h)
+    """All skins, in three groups: everyday (the first six), Halloween, and Christmas (the rest), six to a row."""
+    groups = [("Everyday", skins[0:6]), ("Halloween", skins[6:7]), ("Christmas", skins[7:])]
+    cell, pad, label_h, heading_h, cols = 12, 30, 40, 44, 6
+    cat, tile = 16 * cell, 16 * cell + 2 * pad
+    rows = sum(-(-len(items) // cols) for _, items in groups)
+    width = cols * (tile + 16) + 16
+    height = rows * (tile + label_h + 16) + len(groups) * heading_h + 40
     img = gradient(width, height, (250, 246, 240), (240, 232, 222))
     draw = ImageDraw.Draw(img)
-    for i, (name, colours) in enumerate(skins):
-        col, row = i % cols, i // cols
-        x0 = col * (cat + 2 * pad) + pad
-        y0 = row * (cat + 2 * pad + label_h) + pad
-        img.paste(render_cat(grid, colours, cell), (x0, y0), render_cat(grid, colours, cell))
-        label_font = font(26)
-        w = draw.textlength(name, font=label_font)
-        draw.text((x0 + (cat - w) / 2, y0 + cat + 14), name, fill=(60, 50, 45), font=label_font)
+    label_font = font(18)
+    heading_font = font(22, index=1)
+    y = 20
+    for heading, items in groups:
+        draw.text((20, y), heading, fill=(60, 50, 45), font=heading_font)
+        y += heading_h
+        for i, (name, colours) in enumerate(items):
+            col, row = i % cols, i // cols
+            x0 = 16 + col * (tile + 16)
+            y0 = y + row * (tile + label_h + 16)
+            cat_img = render_cat(grid, colours, cell)
+            img.paste(cat_img, (x0 + pad, y0 + pad), cat_img)
+            w = draw.textlength(name, font=label_font)
+            draw.text((x0 + (tile - w) / 2, y0 + tile + 6), name, fill=(60, 50, 45), font=label_font)
+        y += (-(-len(items) // cols)) * (tile + label_h + 16)
     save(img, MEDIA / "images" / "skins-lineup.png")
 
 
