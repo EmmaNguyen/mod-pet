@@ -971,8 +971,9 @@ final class MochiView: NSView {
         case .blocked: break
         }
 
-        // She looks tired from the app in front, or the battery below 30%
-        let frontUsage = shownHost == .cursor ? (cursorUsage?.percent ?? 0) : shownHost == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
+        // She looks tired from the usage still on the pill, or the battery below 30%
+        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil)
+        let frontUsage = mark == .cursor ? (cursorUsage?.percent ?? 0) : mark == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
         usageTired = max(frontUsage, power.map { 100 - $0.percent } ?? 0) >= 70
 
         let originX = (bounds.width - petSize) / 2
@@ -1009,7 +1010,7 @@ final class MochiView: NSView {
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: taskMinutesLeft == nil ? originY + 6 : originY + 24)) }
         if usage != nil || cursorUsage != nil || power != nil {
             drawUsagePill()
-            if shownHost == .claude, let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
+            if mark == .claude, let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
                 drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: usagePill.midY))
             }
         }
@@ -1300,17 +1301,19 @@ final class MochiView: NSView {
         text.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
     }
 
-    /// Claude's spark, Cursor's cube, and a battery. The percent stays beside each mark
+    /// Claude's spark, Cursor's cube, and a battery. The percent stays beside each mark.
+    /// A host with no reading yet keeps the last reading on the pill.
     private func drawUsagePill() {
         enum Bit { case spark, cube, battery(Int), text(String), dot }
+        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil)
         var stress = 0
         var rows: [[Bit]] = []
-        if shownHost == .claude, let usage {
+        if mark == .claude, let usage {
             rows.append([.spark, .text("\(usage.fiveHour)%"), .dot, .text("\(usage.week)%")])
             stress = max(usage.fiveHour, usage.week)
         }
         var tail: [Bit] = []
-        if shownHost == .cursor, let cursorUsage {
+        if mark == .cursor, let cursorUsage {
             tail.append(.cube)
             tail.append(.text("\(cursorUsage.percent)%"))
             stress = max(stress, cursorUsage.percent)
@@ -3898,13 +3901,31 @@ enum CompanionHost { case claude, cursor }
 
 let cursorBundleID = "com.todesktop.230313mzl4w4u92"
 let claudeBundleID = "com.anthropic.claudefordesktop"
+let mochiBundleID = "local.claude-mods.mochi"
+
+/// How a front app should change the pill. Mochi herself, and no front app, leave it as it is
+enum UsageFront { case same, claude, cursor, other }
+
+/// Cursor's own helpers count as Cursor, and Claude's as Claude. A helper named "Cursor Helper"
+/// counts too, so a plugin window does not take the reading off the pill
+func usageFront(bundleID: String?, appName: String? = nil) -> UsageFront {
+    guard let bundleID else { return .same }
+    if bundleID == mochiBundleID { return .same }
+    if bundleID == cursorBundleID || bundleID.hasPrefix(cursorBundleID + ".") { return .cursor }
+    if bundleID == claudeBundleID || bundleID.hasPrefix(claudeBundleID + ".") { return .claude }
+    if let appName {
+        if appName == "Cursor" || appName.hasPrefix("Cursor ") { return .cursor }
+        if appName == "Claude" || appName.hasPrefix("Claude ") { return .claude }
+    }
+    return .other
+}
 
 /// Cursor or Claude when that app came to the front. Nil for every other app, so a browser does not switch her
 func companionHost(bundleID: String?) -> CompanionHost? {
-    switch bundleID {
-    case cursorBundleID: return .cursor
-    case claudeBundleID: return .claude
-    default: return nil
+    switch usageFront(bundleID: bundleID) {
+    case .cursor: return .cursor
+    case .claude: return .claude
+    case .same, .other: return nil
     }
 }
 
@@ -3915,9 +3936,25 @@ func bundleToHide(_ host: CompanionHost) -> String {
 
 /// Claude and Cursor each hide unless that app is the one in front. A browser hides both.
 /// Nil hides nothing, so a missing front app does not tuck them away
-func appsToHide(frontBundleID: String?) -> [String] {
-    guard let frontBundleID else { return [] }
-    return [claudeBundleID, cursorBundleID].filter { $0 != frontBundleID }
+func appsToHide(frontBundleID: String?, appName: String? = nil) -> [String] {
+    switch usageFront(bundleID: frontBundleID, appName: appName) {
+    case .same: return []
+    case .cursor: return [claudeBundleID]
+    case .claude: return [cursorBundleID]
+    case .other: return [claudeBundleID, cursorBundleID]
+    }
+}
+
+/// The usage the pill draws. The front app wins once its reading exists. Until that read arrives,
+/// the pill keeps the other reading it already has. Another app shows neither.
+func pillHost(front: CompanionHost?, hasClaude: Bool, hasCursor: Bool) -> CompanionHost? {
+    switch front {
+    case .claude where hasClaude: return .claude
+    case .cursor where hasCursor: return .cursor
+    case .claude where hasCursor: return .cursor
+    case .cursor where hasClaude: return .claude
+    default: return nil
+    }
 }
 
 // MARK: - Power: the Mac's draw, and the energy used today
@@ -4619,16 +4656,19 @@ func playAtTwoThirds(_ sound: NSSound?) {
         // Keep the usage numbers fresh in the background, so a click shows them at once
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            self?.followHost(app?.bundleIdentifier)
+            self?.followHost(app?.bundleIdentifier, name: app?.localizedName)
         }
-        followHost(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        followHost(frontApp?.bundleIdentifier, name: frontApp?.localizedName)
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.refreshUsageQuietly()
             self?.refreshCursorQuietly()
         }
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.refreshCursorQuietly()
+        }
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.refreshUsageQuietly()
-            self?.refreshCursorQuietly()
         }
         look()
     }
@@ -4660,9 +4700,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let testChat { chats.append(testChat) }
         checkUsage()
         samplePower()
-        followHost(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        let frontNow = NSWorkspace.shared.frontmostApplication
+        followHost(frontNow?.bundleIdentifier, name: frontNow?.localizedName)
         view.host = host
-        view.cursorUsage = cursorUsage
+        if let cursorUsage { view.cursorUsage = cursorUsage }
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
         // When each chat was first seen running, for its timer; forgotten once it stops
         let running = Set(chats.filter { $0.status == .running }.map(\.id))
@@ -4824,9 +4865,12 @@ func playAtTwoThirds(_ sound: NSSound?) {
         warnedWeek = week < warnedWeek ? week : max(warnedWeek, week)
     }
 
-    /// The front app stays visible. Claude hides when Claude is not that app, and Cursor does the same
-    func followHost(_ bundleID: String?) {
-        let front = companionHost(bundleID: bundleID)
+    /// The front app stays visible. Claude hides when Claude is not that app, and Cursor does the same.
+    /// Mochi herself, and a Cursor or Claude helper, leave the reading that is already on the pill
+    func followHost(_ bundleID: String?, name: String? = nil) {
+        let switched = usageFront(bundleID: bundleID, appName: name)
+        if switched == .same { return }
+        let front: CompanionHost? = switched == .cursor ? .cursor : switched == .claude ? .claude : nil
         if view.shownHost != front {
             view.shownHost = front
             view.needsDisplay = true
@@ -4835,11 +4879,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
             let changed = next != host
             host = next
             view.host = next
-            view.cursorUsage = cursorUsage
+            if let cursorUsage { view.cursorUsage = cursorUsage }
             view.needsDisplay = true
-            if let bundleID {
-                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).forEach { $0.unhide() }
-            }
+            let shownBundle = next == .cursor ? cursorBundleID : claudeBundleID
+            NSRunningApplication.runningApplications(withBundleIdentifier: shownBundle).forEach { $0.unhide() }
             if changed {
                 mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
                 if bubble.isVisible {
@@ -4852,7 +4895,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 }
             }
         }
-        for bundle in appsToHide(frontBundleID: bundleID) {
+        for bundle in appsToHide(frontBundleID: bundleID, appName: name) {
             NSRunningApplication.runningApplications(withBundleIdentifier: bundle).forEach { $0.hide() }
         }
     }
@@ -4896,10 +4939,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// Asks Cursor for usage in the background. Skipped when a check is already running, or the last one
-    /// was under a minute ago
+    /// was under 45 seconds ago
     func refreshCursorQuietly(_ done: ((Bool) -> Void)? = nil) {
         if cursorBusy { done?(false); return }
-        if let last = cursorCheckedAt, Date().timeIntervalSince(last) < 60 {
+        if let last = cursorCheckedAt, Date().timeIntervalSince(last) < 45 {
             done?(true)
             return
         }
@@ -4917,7 +4960,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                     self.cursorProblem = problem
                     mochiLog("cursor usage: \(problem)")
                 }
-                self.view.cursorUsage = self.cursorUsage
+                if let cursorUsage = self.cursorUsage { self.view.cursorUsage = cursorUsage }
                 self.chatList.cursor = self.host == .cursor ? self.cursorUsage : nil
                 self.view.needsDisplay = true
                 if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.chatList {
