@@ -16,6 +16,12 @@
   <img alt="Status: work in progress" src="https://img.shields.io/badge/status-work%20in%20progress-yellow">
 </p>
 
+<p align="center">
+  <a href="https://www.producthunt.com/products/mochi-8?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-mochi-10" target="_blank" rel="noopener noreferrer">
+    <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=mochi-8&theme=light" alt="Mochi - A pixel-art companion for Claude Code on macOS | Product Hunt" width="250" height="54">
+  </a>
+</p>
+
 > **Work in progress.** Mochi works day to day, but parts are still changing, and some things may break. Feedback and issues are welcome.
 
 <p align="center">
