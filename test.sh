@@ -14,7 +14,7 @@ echo "== Mochi Desktop logic tests"
 mkdir -p "$work/desktop"
 awk '/^let app = NSApplication.shared/ { exit } { print }' mochi-desktop/main.swift > "$work/desktop/main.swift"
 cat mochi-desktop/tests/DesktopTests.swift >> "$work/desktop/main.swift"
-swiftc -o "$work/desktop/tests" "$work/desktop/main.swift" -framework AppKit 2>&1 | grep -E "error" && exit 1 || true
+swiftc -o "$work/desktop/tests" "$work/desktop/main.swift" -framework AppKit -framework IOKit 2>&1 | grep -E "error" && exit 1 || true
 "$work/desktop/tests"
 
 echo "== Mochi Studio logic tests"
@@ -25,7 +25,7 @@ swiftc -o "$work/studio/tests" "$work/studio/main.swift" 2>&1 | grep -E "error" 
 "$work/studio/tests"
 
 echo "== Builds"
-swiftc -O -o "$work/MochiApp" mochi-desktop/main.swift -framework AppKit 2>&1 | grep -E "error" && exit 1 || true
+swiftc -O -o "$work/MochiApp" mochi-desktop/main.swift -framework AppKit -framework IOKit 2>&1 | grep -E "error" && exit 1 || true
 test -x "$work/MochiApp" && echo "Mochi Desktop builds"
 swiftc -O -parse-as-library -o "$work/StudioApp" mochi-studio/main.swift 2>&1 | grep -E "error" && exit 1 || true
 test -x "$work/StudioApp" && echo "Mochi Studio builds"

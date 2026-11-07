@@ -9,6 +9,7 @@
 // the notifications; right-click for the menu.
 
 import AppKit
+import IOKit
 import AVFoundation
 import Carbon
 import ServiceManagement
@@ -921,6 +922,9 @@ final class MochiView: NSView {
     var finishedAt: Date?
     /// Plan usage, shown as a small label under her
     var usage: Usage?
+    /// Which app she is connected to. The other one's usage stays off her
+    var host: CompanionHost = .claude
+    var cursorUsage: CursorUsage?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
     var usagePill: NSRect = .zero
     var onUsageClick: (() -> Void)?
@@ -964,8 +968,9 @@ final class MochiView: NSView {
         case .blocked: break
         }
 
-        // She looks tired from 70% of either window, the same level the label turns orange at
-        usageTired = (usage.map { max($0.fiveHour, $0.week) } ?? 0) >= 70
+        // She looks tired from 70% of the app she is connected to
+        let tiredPercent = host == .cursor ? (cursorUsage?.percent ?? 0) : (usage.map { max($0.fiveHour, $0.week) } ?? 0)
+        usageTired = tiredPercent >= 70
 
         let originX = (bounds.width - petSize) / 2
         let originY = 46 - lift // the usage label above her, the two buttons below
@@ -999,10 +1004,14 @@ final class MochiView: NSView {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
         }
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: taskMinutesLeft == nil ? originY + 6 : originY + 24)) }
-        if let usage { drawUsage(usage) }
-        // The countdown sits on the right end of the usage bar, over its corner
-        if let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
-            drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: 16)) // at the right end of the usage bar, on its top edge
+        if host == .cursor {
+            if let cursorUsage { drawCursorUsage(cursorUsage) }
+        } else if let usage {
+            drawUsage(usage)
+            // The countdown sits on the right end of the usage bar, over its corner
+            if let minutesLeft = lowTimeMinutes(resets: usage.fiveHourResets, now: Date()) {
+                drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: 16))
+            }
         }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening;
         // otherwise the summary pill sits in their place
@@ -1305,6 +1314,19 @@ final class MochiView: NSView {
         let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 20, width: size.width + 18, height: 20)
         usagePill = pill
         Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+        text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
+    }
+
+    /// The same pill, for Cursor: "Cursor 13%"
+    private func drawCursorUsage(_ cursor: CursorUsage) {
+        let text = NSAttributedString(string: "Cursor \(cursor.percent)%", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
+        ])
+        let size = text.size()
+        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 20, width: size.width + 18, height: 20)
+        usagePill = pill
+        Usage.color(cursor.percent).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
         text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
     }
@@ -1735,11 +1757,18 @@ func usageState(worst: Int) -> String {
     worst >= 100 ? "Out of usage" : worst >= 90 ? "Almost out" : worst >= 70 ? "Getting high" : "On track"
 }
 
-/// Her usage status box, laid out like the chat list: the state, the two limits as cards with bars, and a footer
-/// with the last check and a Refresh button
+/// Her usage box: one line for each limit and for the battery, then when it was checked and Refresh
 final class UsagePanelView: NSView {
-    static let width: CGFloat = 340
+    static let width: CGFloat = 320
     var usage: Usage?
+    /// Which app the box is for. Claude's limits and Cursor's limits are never shown together
+    var host: CompanionHost = .claude
+    /// Cursor's included usage, and a short reason when it could not be read
+    var cursor: CursorUsage?
+    var cursorProblem = ""
+    /// The Mac's power draw right now, and how much energy today has added up to
+    var power: PowerReading?
+    var wattHours: Double = 0
     /// A reset offer to show in the box, when there is one still open
     var resetOffer: ResetOffer?
     /// True while Claude is being asked for a fresh reading
@@ -1757,107 +1786,86 @@ final class UsagePanelView: NSView {
 
     override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
+    /// One line: a name, a percent, a bar, and the time on the right
+    private func meterRow(name: String, percent: Int, time: String, color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) {
+        let nameW: CGFloat = 52
+        let percentW: CGFloat = 36
+        let timeW: CGFloat = 52
+        let gap: CGFloat = 8
+        drawLine(name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x, y: y, width: nameW, draw: draw)
+        drawLine("\(percent)%", .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: x + nameW + gap, y: y - 1, width: percentW, draw: draw)
+        let barX = x + nameW + percentW + gap * 2
+        let barW = max(24, width - (barX - x) - timeW - gap)
+        if draw {
+            let track = NSRect(x: barX, y: y + 6, width: barW, height: 4)
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
+            NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+            color.setFill()
+            let filled = track.width * CGFloat(min(100, max(0, percent))) / 100
+            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+        }
+        drawLine(time, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + width - timeW, y: y, width: timeW, align: .right, draw: draw)
+    }
+
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
-        let pad: CGFloat = 16
+        let pad: CGFloat = 12
         let inner = Self.width - pad * 2
-        var y: CGFloat = 14
-        guard let usage else {
-            drawLine("No usage reading yet. Send a message and I'll get one.", .systemFont(ofSize: 12), .tertiaryLabelColor,
-                     x: pad, y: y, width: inner, draw: draw)
-            return y + 36
+        var y: CGFloat = 10
+        let shownUsage = host == .claude ? usage : nil
+        let shownCursor = host == .cursor ? cursor : nil
+        if shownUsage == nil && shownCursor == nil && power == nil {
+            let message = host == .cursor && !cursorProblem.isEmpty ? cursorProblem : "No usage reading yet. Send a message and I'll get one."
+            drawLine(message, .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            return y + 32
         }
 
-        // The state, in a pill at the right of the title
-        let worst = max(usage.fiveHour, usage.week)
-        let pillFont = NSFont.systemFont(ofSize: 12)
-        drawLine("Your usage", .systemFont(ofSize: 15, weight: .medium), .labelColor, x: pad, y: y, width: inner * 0.6, draw: draw)
-        let state = usageState(worst: worst)
-        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
-        let pill = NSRect(x: pad + inner - textWidth - 16, y: y, width: textWidth + 16, height: 20)
-        if draw {
-            Usage.color(worst).withAlphaComponent(0.15).setFill()
-            NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+        let worst = shownUsage.map { max($0.fiveHour, $0.week) } ?? shownCursor?.percent
+        let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        let title = host == .cursor ? "Cursor" : "Claude"
+        let titleW = drawLine(title, titleFont, .labelColor, x: pad, y: y, width: inner * 0.4, draw: draw)
+        if host == .cursor, let plan = shownCursor?.plan, plan != "Cursor" {
+            drawLine(plan, .systemFont(ofSize: 12, weight: .medium), .secondaryLabelColor, x: pad + titleW + 6, y: y + 1, width: 100, draw: draw)
         }
-        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 2, width: pill.width, align: .center, draw: draw)
-        y += 32
-
-        // A reset offer you can still use: how many, the day to use it by, and the days left
-        if let offer = resetOffer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: Date()) {
-            let box = NSRect(x: pad, y: y, width: inner, height: 50)
+        if let worst {
+            let state = usageState(worst: worst)
+            let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
+            let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
             if draw {
-                adaptiveColor(NSColor(hex: 0xFAEEDA), NSColor(hex: 0x4A3510)).setFill()
-                NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12).fill()
-                NSColor(hex: 0xEF9F27).setStroke()
-                let edge = NSBezierPath(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), xRadius: 12, yRadius: 12)
-                edge.lineWidth = 0.5
-                edge.stroke()
+                Usage.color(worst).withAlphaComponent(0.15).setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
             }
-            let day = DateFormatter()
-            day.dateFormat = "EEE, d MMMM"
-            let headline = "\(offer.count) reset\(offer.count == 1 ? "" : "s") offer\(offer.count == 1 ? "" : "s") available"
-            drawLine(headline, .systemFont(ofSize: 13, weight: .medium), adaptiveColor(NSColor(hex: 0x412402), NSColor(hex: 0xFAEEDA)),
-                     x: pad + 12, y: y + 8, width: inner - 24, draw: draw)
-            drawLine("Use it before \(day.string(from: offer.useBy)) · \(days) day\(days == 1 ? "" : "s") left",
-                     .systemFont(ofSize: 12), adaptiveColor(NSColor(hex: 0x633806), NSColor(hex: 0xF5D9A6)),
-                     x: pad + 12, y: y + 27, width: inner - 24, draw: draw)
-            y += 60
+            drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
+        }
+        y += 26
+
+        if let usage = shownUsage {
+            meterRow(name: "5-hour", percent: usage.fiveHour, time: Usage.until(usage.fiveHourResets) ?? "",
+                     color: Usage.color(usage.fiveHour), x: pad, y: y, width: inner, draw: draw)
+            y += 28
+            meterRow(name: "Week", percent: usage.week, time: Usage.until(usage.weekResets) ?? "",
+                     color: Usage.color(usage.week), x: pad, y: y, width: inner, draw: draw)
+            y += 28
+        }
+        if let cursor = shownCursor {
+            meterRow(name: "Week", percent: cursor.percent, time: Usage.until(cursor.resets) ?? "",
+                     color: Usage.color(cursor.percent), x: pad, y: y, width: inner, draw: draw)
+            y += 28
+        } else if host == .cursor, !cursorProblem.isEmpty {
+            drawLine(cursorProblem, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+        }
+        if let power {
+            meterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
+                     color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw)
+            y += 28
         }
 
-        // Out of usage: when you can continue
-        if let back = usage.backText {
-            let box = NSRect(x: pad, y: y, width: inner, height: 48)
-            if draw {
-                Usage.color(100).withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
-            }
-            drawLine(back, .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
-            drawLine("Your limit resets then. Chats can continue.", .systemFont(ofSize: 12), Usage.color(100),
-                     x: pad + 10, y: y + 26, width: inner - 20, draw: draw)
-            y += 56
-        }
-
-        // The two limits as cards: the percentage, a bar, and when it resets
-        let cardWidth = (inner - 8) / 2
-        let limits: [(name: String, percent: Int, resets: Date?)] = [
-            ("5-hour", usage.fiveHour, usage.fiveHourResets),
-            ("Week", usage.week, usage.weekResets),
-        ]
-        for (i, limit) in limits.enumerated() {
-            let x = pad + CGFloat(i) * (cardWidth + 8)
-            if draw {
-                NSColor.labelColor.withAlphaComponent(0.06).setFill()
-                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 90), xRadius: 8, yRadius: 8).fill()
-            }
-            drawLine(limit.name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 10, width: cardWidth - 20, draw: draw)
-            drawLine("\(limit.percent)%", .systemFont(ofSize: 18, weight: .medium), .labelColor, x: x + 10, y: y + 26, width: cardWidth - 20, draw: draw)
-            if draw {
-                let track = NSRect(x: x + 10, y: y + 56, width: cardWidth - 20, height: 4)
-                NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                Usage.color(limit.percent).setFill()
-                let filled = track.width * CGFloat(min(100, max(0, limit.percent))) / 100
-                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
-            }
-            let reset = Usage.until(limit.resets).map { "Resets in \($0)" } ?? "Reset time unknown"
-            drawLine(reset, .systemFont(ofSize: 11), .tertiaryLabelColor, x: x + 10, y: y + 66, width: cardWidth - 20, draw: draw)
-        }
-        y += 98
-
-        // The footer: the last check, and Refresh
-        if draw {
-            let rule = NSBezierPath()
-            rule.move(to: NSPoint(x: pad, y: y))
-            rule.line(to: NSPoint(x: pad + inner, y: y))
-            rule.lineWidth = 0.5
-            NSColor.labelColor.withAlphaComponent(0.15).setStroke()
-            rule.stroke()
-        }
-        y += 10
-        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 3, width: inner - 100, draw: draw)
-        refreshRect = NSRect(x: pad + inner - 84, y: y, width: 84, height: 24)
+        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
+        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
         drawButton(refreshRect, checking ? "Checking…" : "Refresh", filled: false, draw: draw)
-        return y + 34
+        return y + 26
     }
 
     // A click on Refresh asks for a fresh reading; anywhere else closes the box
@@ -2074,6 +2082,12 @@ final class ChatListView: NSView {
 
     var chats: [Chat] = []
     var usage: Usage?
+    /// Which app she is connected to. The other one's usage card is left out
+    var host: CompanionHost = .claude
+    /// Cursor's included usage for this cycle, when it has been read
+    var cursor: CursorUsage?
+    var power: PowerReading?
+    var wattHours: Double = 0
     var title = "Mochi"
     var titleColor: NSColor = .labelColor
     var subtitle = ""
@@ -2166,9 +2180,9 @@ final class ChatListView: NSView {
             }
         }
 
-        // The two limits as cards, with a bar and when each one resets
-        if usage != nil { y += 6 }
-        if let usage {
+        // The connected app's limits. Claude's cards, or Cursor's card, never both
+        if host == .claude, usage != nil { y += 6 }
+        if host == .claude, let usage {
             let cardWidth = (inner - 8) / 2
             let limits: [(name: String, percent: Int, resets: String?)] = [
                 ("5-hour limit", usage.fiveHour, Usage.until(usage.fiveHourResets)),
@@ -2199,6 +2213,48 @@ final class ChatListView: NSView {
                 label("⏳ \(back)", .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
                 y += 22
             }
+        }
+
+        // Cursor sits in the same place when she is connected to Cursor
+        if host == .cursor, let cursor {
+            y += 6
+            if draw {
+                Self.glassCard.setFill()
+                NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 76), xRadius: 16, yRadius: 16).fill()
+            }
+            label("Cursor · \(cursor.plan)", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
+            label(cursor.headline, .systemFont(ofSize: 16, weight: .medium), .labelColor, x: pad + 10, y: y + 24, width: inner - 20, draw: draw)
+            if draw {
+                let track = NSRect(x: pad + 10, y: y + 48, width: inner - 20, height: 4)
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                Usage.color(cursor.percent).setFill()
+                let filled = track.width * CGFloat(min(100, max(0, cursor.percent))) / 100
+                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+            label(cursor.detail, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 10, y: y + 56, width: inner - 20, draw: draw)
+            y += 82
+        }
+
+        if let power {
+            y += 6
+            if draw {
+                Self.glassCard.setFill()
+                NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 76), xRadius: 16, yRadius: 16).fill()
+            }
+            label("Power", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
+            label(power.headline, .systemFont(ofSize: 16, weight: .medium), .labelColor, x: pad + 10, y: y + 24, width: inner - 20, draw: draw)
+            if draw {
+                let track = NSRect(x: pad + 10, y: y + 48, width: inner - 20, height: 4)
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+                Usage.color(100 - power.percent).setFill()
+                let filled = track.width * CGFloat(min(100, max(0, power.percent))) / 100
+                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+            label("\(power.detail) · Today \(powerHoursText(wattHours))", .systemFont(ofSize: 12), .secondaryLabelColor,
+                  x: pad + 10, y: y + 56, width: inner - 20, draw: draw)
+            y += 82
         }
 
         if let footer {
@@ -3720,6 +3776,399 @@ struct Usage {
     }
 }
 
+// MARK: - Cursor usage, from the dashboard call Cursor already uses
+
+/// Included usage for the current Cursor cycle. The percent is included spend over the plan limit, which is
+/// the figure Cursor's own usage sentence uses. Auto and API stay beside it, because those percents measure
+/// something else.
+struct CursorUsage {
+    var plan: String
+    var percent: Int
+    var autoPercent: Int?
+    var apiPercent: Int?
+    var spent: String
+    var onDemand: String
+    var period: String
+    var resets: Date?
+    var at: Double
+
+    /// "64% this week" on a weekly plan, otherwise "64% included"
+    var headline: String { period == "This week" ? "\(percent)% this week" : "\(percent)% included" }
+
+    /// "$12.88 of $20 · Auto 4% · API 3%"
+    var poolsLine: String {
+        var parts: [String] = []
+        if !spent.isEmpty { parts.append(spent) }
+        var pools: [String] = []
+        if let autoPercent { pools.append("Auto \(autoPercent)%") }
+        if let apiPercent { pools.append("API \(apiPercent)%") }
+        if !pools.isEmpty { parts.append(pools.joined(separator: " · ")) }
+        if !onDemand.isEmpty { parts.append(onDemand) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "Resets in 3d", or "Reset time unknown"
+    var resetLine: String { Usage.until(resets).map { "Resets in \($0)" } ?? "Reset time unknown" }
+
+    /// The pools and the reset, for a wide row
+    var detail: String { poolsLine.isEmpty ? resetLine : "\(poolsLine) · \(resetLine)" }
+
+    /// The last reading Mochi saved, from ~/.claude/mochi/cursor-usage.json
+    static func read() -> CursorUsage? {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi/cursor-usage.json")
+        guard let data = try? Data(contentsOf: file),
+              let saved = try? JSONDecoder().decode(CursorUsageFile.self, from: data) else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        return CursorUsage(plan: saved.plan, percent: saved.percent, autoPercent: saved.autoPercent, apiPercent: saved.apiPercent,
+                            spent: saved.spent, onDemand: saved.onDemand, period: saved.period,
+                            resets: saved.resetsAt.flatMap { iso.date(from: $0) ?? plain.date(from: $0) }, at: saved.at)
+    }
+
+    func save() {
+        let iso = ISO8601DateFormatter()
+        let file = CursorUsageFile(plan: plan, percent: percent, autoPercent: autoPercent, apiPercent: apiPercent,
+                                    spent: spent, onDemand: onDemand, period: period,
+                                    resetsAt: resets.map { iso.string(from: $0) }, at: at)
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(file) {
+            try? data.write(to: folder.appendingPathComponent("cursor-usage.json"))
+        }
+    }
+}
+
+struct CursorUsageFile: Codable {
+    let plan: String
+    let percent: Int
+    let autoPercent: Int?
+    let apiPercent: Int?
+    let spent: String
+    let onDemand: String
+    let period: String
+    let resetsAt: String?
+    let at: Double
+}
+
+/// The app Mochi is keeping in view. The other one is hidden
+enum CompanionHost { case claude, cursor }
+
+let cursorBundleID = "com.todesktop.230313mzl4w4u92"
+let claudeBundleID = "com.anthropic.claudefordesktop"
+
+/// Cursor or Claude when that app came to the front. Nil for every other app, so a browser does not switch her
+func companionHost(bundleID: String?) -> CompanionHost? {
+    switch bundleID {
+    case cursorBundleID: return .cursor
+    case claudeBundleID: return .claude
+    default: return nil
+    }
+}
+
+/// The app to hide for this connection: Claude while she is with Cursor, and Cursor while she is with Claude
+func bundleToHide(_ host: CompanionHost) -> String {
+    host == .cursor ? claudeBundleID : cursorBundleID
+}
+
+// MARK: - Power: the Mac's draw, and the energy used today
+
+/// What the battery is doing now. Watts is the machine's draw. Minutes is time left on battery, or time to full while charging
+struct PowerReading {
+    var watts: Double
+    var percent: Int
+    var minutes: Int?
+    var charging: Bool
+    var plugged: Bool
+
+    /// "7.5 W", "Charging", or "Plugged in"
+    var headline: String {
+        if charging { return "Charging" }
+        if plugged && watts < 0.5 { return "Plugged in" }
+        return powerWattsText(watts)
+    }
+
+    /// "99% · 5h 11m left"
+    var detail: String {
+        var parts = ["\(percent)%"]
+        if let minutes {
+            parts.append(charging ? "\(powerClock(minutes)) to full" : "\(powerClock(minutes)) left")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// "7.5 W", or "12 W" from 10 watts up
+func powerWattsText(_ watts: Double) -> String {
+    watts >= 10 ? String(format: "%.0f W", watts.rounded()) : String(format: "%.1f W", watts)
+}
+
+/// "0.4 Wh", or "12 Wh" from 10 watt-hours up
+func powerHoursText(_ wattHours: Double) -> String {
+    wattHours >= 10 ? String(format: "%.0f Wh", wattHours.rounded()) : String(format: "%.1f Wh", wattHours)
+}
+
+/// "5h 11m", or "40m"
+func powerClock(_ minutes: Int) -> String {
+    minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+}
+
+/// Battery power in watts. Amperage is milliamps, negative while discharging, and voltage is millivolts
+func powerWatts(milliamps: Int64, millivolts: Int64) -> Double {
+    Double(-milliamps) * Double(millivolts) / 1_000_000
+}
+
+/// Today's energy. A gap of five minutes or more is the Mac asleep, so those watts are not counted
+struct PowerLog {
+    var day: String
+    var wattHours: Double
+    var at: Date
+
+    static func read() -> PowerLog? {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi/power.json")
+        guard let data = try? Data(contentsOf: file),
+              let saved = try? JSONDecoder().decode(PowerFile.self, from: data) else { return nil }
+        return PowerLog(day: saved.day, wattHours: saved.wattHours, at: Date(timeIntervalSince1970: saved.at))
+    }
+
+    func save() {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = PowerFile(day: day, wattHours: wattHours, at: at.timeIntervalSince1970)
+        if let data = try? JSONEncoder().encode(file) {
+            try? data.write(to: folder.appendingPathComponent("power.json"))
+        }
+    }
+
+    /// Adds the draw since the last sample. Returns whether the total changed
+    mutating func add(watts: Double, now: Date) -> Bool {
+        let today = dayKey(now)
+        if day != today {
+            day = today
+            wattHours = 0
+            at = now
+            return true
+        }
+        let gap = now.timeIntervalSince(at)
+        at = now
+        guard gap > 0, gap < 5 * 60, watts > 0 else { return false }
+        wattHours += watts * gap / 3600
+        return true
+    }
+}
+
+struct PowerFile: Codable {
+    let day: String
+    let wattHours: Double
+    let at: Double
+}
+
+/// The battery, read from the Mac. Nil on a machine with no battery
+func readPower() -> PowerReading? {
+    let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+    guard service != 0 else { return nil }
+    defer { IOObjectRelease(service) }
+
+    func value(_ key: String) -> CFTypeRef? {
+        IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+    }
+    func number(_ key: String) -> Int64? { (value(key) as? NSNumber)?.int64Value }
+    guard let capacity = number("CurrentCapacity") else { return nil }
+    let full = number("MaxCapacity") ?? 0
+    let percent: Int
+    if full > 0, full <= 100 {
+        percent = min(100, Swift.max(0, Int((Double(capacity) / Double(full) * 100).rounded())))
+    } else if capacity >= 0, capacity <= 100 {
+        percent = Int(capacity)
+    } else if full > 0 {
+        percent = min(100, Swift.max(0, Int((Double(capacity) / Double(full) * 100).rounded())))
+    } else {
+        return nil
+    }
+
+    var watts = powerWatts(milliamps: number("InstantAmperage") ?? 0, millivolts: number("Voltage") ?? 0)
+    if let telemetry = value("PowerTelemetryData") as? [String: Any],
+       let load = telemetry["SystemLoad"] as? NSNumber, load.doubleValue > 0 {
+        watts = load.doubleValue / 1000
+    }
+    var charging = (value("IsCharging") as? NSNumber)?.boolValue ?? false
+    if let charger = value("ChargerData") as? [String: Any], let flag = charger["IsCharging"] as? NSNumber {
+        charging = flag.boolValue
+    }
+    let plugged = (value("ExternalConnected") as? NSNumber)?.boolValue ?? false
+    let minutes = number("TimeRemaining").flatMap { $0 > 0 && $0 < 24 * 60 ? Int($0) : nil }
+    return PowerReading(watts: max(0, watts), percent: percent, minutes: minutes, charging: charging, plugged: plugged)
+}
+
+/// "premium" from Cursor's saved membership, as a short label when the plan name has not come back yet
+func cursorPlanLabel(_ raw: String) -> String {
+    switch raw.lowercased() {
+    case "premium": return "Premium"
+    case "pro": return "Pro"
+    case "pro_plus", "pro-plus": return "Pro+"
+    case "free", "free_trial": return "Free"
+    case "business", "team": return "Business"
+    case "enterprise": return "Enterprise"
+    case "ultra": return "Ultra"
+    case "hobby": return "Hobby"
+    case "": return "Cursor"
+    default:
+        return raw.prefix(1).uppercased() + raw.dropFirst()
+    }
+}
+
+/// A JSON number, or a number written as text. Cursor's dashboard sometimes sends large amounts as strings
+func cursorNumber(_ any: Any?) -> Double? {
+    switch any {
+    case let number as NSNumber: return number.doubleValue
+    case let text as String: return Double(text.replacingOccurrences(of: ",", with: ""))
+    default: return nil
+    }
+}
+
+/// A cycle boundary: epoch milliseconds, epoch seconds, or an ISO date
+func cursorDate(_ any: Any?) -> Date? {
+    if let number = cursorNumber(any), number > 1_000_000_000 {
+        return Date(timeIntervalSince1970: number > 10_000_000_000 ? number / 1000 : number)
+    }
+    if let text = any as? String {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return iso.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    }
+    return nil
+}
+
+/// "$12.88", or "$20" when the cents are a whole dollar
+func cursorMoney(_ cents: Double) -> String {
+    let dollars = cents / 100
+    if abs(dollars - dollars.rounded()) < 0.001 { return "$\(Int(dollars.rounded()))" }
+    return String(format: "$%.2f", dollars)
+}
+
+/// Reads GetCurrentPeriodUsage. Nil when the body has no included amount and no percent
+func parseCursorUsage(_ data: Data, plan: String, at: Date) -> CursorUsage? {
+    guard let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+    return parseCursorUsage(json: json, plan: plan, at: at)
+}
+
+func parseCursorUsage(json: Any, plan: String, at: Date) -> CursorUsage? {
+    guard let root = json as? [String: Any], let planUsage = root["planUsage"] as? [String: Any] else { return nil }
+    let included = cursorNumber(planUsage["includedSpend"])
+    let totalSpend = cursorNumber(planUsage["totalSpend"])
+    let limit = cursorNumber(planUsage["limit"])
+    let reported = cursorNumber(planUsage["totalPercentUsed"])
+    let used = included ?? totalSpend
+    let percent: Int
+    if let used, let limit, limit > 0 {
+        percent = min(100, max(0, Int((used / limit * 100).rounded())))
+    } else if let reported {
+        percent = min(100, max(0, Int(reported.rounded())))
+    } else {
+        return nil
+    }
+    let start = cursorDate(root["billingCycleStart"])
+    let end = cursorDate(root["billingCycleEnd"])
+    let days = start.flatMap { start in end.map { $0.timeIntervalSince(start) / 86400 } }
+    let period = (days.map { $0 > 5 && $0 < 9 } ?? false) ? "This week" : "Included"
+    let spent = (used != nil && limit != nil && (limit ?? 0) > 0) ? "\(cursorMoney(used!)) of \(cursorMoney(limit!))" : ""
+    let spendLimit = root["spendLimitUsage"] as? [String: Any]
+    let extra = cursorNumber(spendLimit?["individualUsed"]).flatMap { $0 > 0 ? $0 : nil }
+        ?? cursorNumber(spendLimit?["pooledUsed"]).flatMap { $0 > 0 ? $0 : nil }
+    return CursorUsage(plan: plan, percent: percent,
+                        autoPercent: cursorNumber(planUsage["autoPercentUsed"]).map { Int($0.rounded()) },
+                        apiPercent: cursorNumber(planUsage["apiPercentUsed"]).map { Int($0.rounded()) },
+                        spent: spent, onDemand: extra.map { "On-demand \(cursorMoney($0))" } ?? "",
+                        period: period, resets: end, at: at.timeIntervalSince1970 * 1000)
+}
+
+/// The plan name from GetPlanInfo, when the body has one
+func cursorPlanName(_ data: Data) -> String? {
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let info = json["planInfo"] as? [String: Any],
+          let name = info["planName"] as? String, !name.isEmpty else { return nil }
+    return name
+}
+
+/// One value from Cursor's state database, read only. The key has to be one Mochi asks for
+func cursorStateValue(_ key: String) -> String? {
+    let allowed = ["cursorAuth/accessToken", "cursorAuth/stripeMembershipType"]
+    guard allowed.contains(key) else { return nil }
+    let db = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+    guard FileManager.default.fileExists(atPath: db.path) else { return nil }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = ["-readonly", "-cmd", ".timeout 2000", db.path, "SELECT value FROM ItemTable WHERE key='\(key)';"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    do { try process.run() } catch { return nil }
+    let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killer)
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    process.waitUntilExit()
+    killer.cancel()
+    let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return text.isEmpty ? nil : text
+}
+
+/// What a Cursor usage check came back with
+struct CursorFetch {
+    var usage: CursorUsage?
+    var problem: String?
+}
+
+/// Asks Cursor for this cycle's usage. The sign-in Cursor saved on this Mac is used, and it is not written anywhere
+func refreshCursorUsage(_ done: @escaping (CursorFetch) -> Void) {
+    DispatchQueue.global(qos: .utility).async {
+        let db = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        guard FileManager.default.fileExists(atPath: db.path) else {
+            done(CursorFetch(problem: "Cursor is not installed on this Mac.")); return
+        }
+        guard let token = cursorStateValue("cursorAuth/accessToken") else {
+            done(CursorFetch(problem: "Sign in to Cursor, then press Refresh.")); return
+        }
+        let fallback = cursorPlanLabel(cursorStateValue("cursorAuth/stripeMembershipType") ?? "")
+        guard let response = cursorPost(token, path: "/aiserver.v1.DashboardService/GetCurrentPeriodUsage") else {
+            done(CursorFetch(problem: "Cursor usage did not come through.")); return
+        }
+        if response.code == 401 || response.code == 403 {
+            done(CursorFetch(problem: "Cursor needs you to sign in again.")); return
+        }
+        guard response.code == 200, var usage = parseCursorUsage(response.body, plan: fallback, at: Date()) else {
+            done(CursorFetch(problem: "Cursor usage did not come through.")); return
+        }
+        if let plan = cursorPost(token, path: "/aiserver.v1.DashboardService/GetPlanInfo"),
+           plan.code == 200, let name = cursorPlanName(plan.body) {
+            usage.plan = name
+        }
+        usage.save()
+        done(CursorFetch(usage: usage))
+    }
+}
+
+/// One read of a Cursor dashboard call. The body is empty. Nothing but the status and the reply comes back
+func cursorPost(_ token: String, path: String) -> (code: Int, body: Data)? {
+    guard let url = URL(string: "https://api2.cursor.sh" + path) else { return nil }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.httpBody = Data("{}".utf8)
+    request.timeoutInterval = 20
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+    let wait = DispatchSemaphore(value: 0)
+    var result: (Int, Data)?
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        result = ((response as? HTTPURLResponse)?.statusCode ?? 0, data ?? Data())
+        wait.signal()
+    }.resume()
+    guard wait.wait(timeout: .now() + 25) == .success else { return nil }
+    return result.map { (code: $0.0, body: $0.1) }
+}
+
 // MARK: - Asking Claude for fresh usage: `claude -p "/usage"`
 
 /// Finds the Claude command-line tool the app ships with (the newest version), or the one on the PATH
@@ -3880,6 +4329,17 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var warnedFiveHour = 0
     var warnedWeek = 0
     var usage: Usage?
+    /// Cursor while Cursor is in front, Claude while Claude is in front
+    var host: CompanionHost = .claude
+    /// Cursor's included usage, and why the last check failed when it did
+    var cursorUsage: CursorUsage?
+    var cursorProblem = ""
+    var cursorBusy = false
+    var cursorCheckedAt: Date?
+    /// The Mac's draw, and today's energy, saved every half minute
+    var power: PowerReading?
+    var powerLog = PowerLog.read() ?? PowerLog(day: dayKey(Date()), wattHours: 0, at: Date())
+    var powerSavedAt = Date.distantPast
 
     /// The Allow and Deny cards by the tool call they answer, and the calls already answered, so none comes back
     /// Each day's turns, approvals and peak usage, for "This week"; saved a few seconds after a change
@@ -4108,17 +4568,50 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.look() }
         // Keep the usage numbers fresh in the background, so a click shows them at once
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.refreshUsageQuietly() }
-        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refreshUsageQuietly() }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            self?.followHost(app?.bundleIdentifier)
+        }
+        followHost(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.refreshUsageQuietly()
+            self?.refreshCursorQuietly()
+        }
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.refreshUsageQuietly()
+            self?.refreshCursorQuietly()
+        }
         look()
     }
 
     /// Reads every chat, picks the most urgent status, and announces anything new
+    /// Reads the battery and adds this second's draw to today's energy
+    func samplePower(now: Date = Date()) {
+        guard let reading = readPower() else { return }
+        power = reading
+        if powerLog.add(watts: reading.watts, now: now), now.timeIntervalSince(powerSavedAt) > 30 {
+            powerLog.save()
+            powerSavedAt = now
+        }
+        let today = powerLog.day == dayKey(now) ? powerLog.wattHours : 0
+        usagePanel.power = reading
+        usagePanel.wattHours = today
+        chatList.power = reading
+        chatList.wattHours = today
+        if bubble.isVisible {
+            usagePanel.needsDisplay = true
+            chatList.needsDisplay = true
+        }
+    }
+
     func look() {
         currentLook = MochiLook.read()
         chats = readChats()
         if let testChat { chats.append(testChat) }
         checkUsage()
+        samplePower()
+        view.host = host
+        view.cursorUsage = cursorUsage
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
         // When each chat was first seen running, for its timer; forgotten once it stops
         let running = Set(chats.filter { $0.status == .running }.map(\.id))
@@ -4247,6 +4740,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// A card when usage passes 80% or reaches 100% of the 5-hour window or the week
     func checkUsage() {
+        if cursorUsage == nil { cursorUsage = CursorUsage.read() }
         guard let now = Usage.read() else { return }
         let isFirst = usage == nil
         usage = now
@@ -4255,7 +4749,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         func level(_ percent: Int) -> Int { percent >= 100 ? 100 : percent >= 80 ? 80 : 0 }
         let five = level(now.fiveHour), week = level(now.week)
         if isFirst { warnedFiveHour = five; warnedWeek = week; wasBlocked = now.blocked != nil; return } // no warning for what was already so at launch
-        let usageShows = noticeAllowed(.usage, onlyApprovals: onlyApprovals)
+        let usageShows = host == .claude && noticeAllowed(.usage, onlyApprovals: onlyApprovals)
         // You ran out: say when you can continue
         if usageShows, let back = now.backText, !wasBlocked {
             showCard(title: "⏳ \(now.blocked?.what ?? "Limit") reached", body: back,
@@ -4279,12 +4773,41 @@ func playAtTwoThirds(_ sound: NSSound?) {
         warnedWeek = week < warnedWeek ? week : max(warnedWeek, week)
     }
 
-    /// Click the usage label: shows the numbers Mochi already has at once, then refreshes them
+    /// Cursor came forward: hide Claude. Claude came forward: hide Cursor. Any other app leaves her as she is
+    func followHost(_ bundleID: String?) {
+        guard let next = companionHost(bundleID: bundleID) else { return }
+        let changed = next != host
+        host = next
+        view.host = next
+        view.cursorUsage = cursorUsage
+        view.needsDisplay = true
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID ?? "").forEach { $0.unhide() }
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleToHide(next)).forEach { $0.hide() }
+        guard changed else { return }
+        mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
+        guard bubble.isVisible else { return }
+        if bubbleFrame.scroll.documentView === chatList {
+            fillChatList()
+            showList()
+        } else if bubbleFrame.scroll.documentView === usagePanel {
+            renderUsagePanel(fresh: false, updating: false)
+        }
+    }
+
+    /// Click the usage label: shows the numbers Mochi already has at once, then refreshes Claude and Cursor
     func showUsageDetails() {
         if let known = Usage.read() { usage = known; view.usage = known }
+        if cursorUsage == nil { cursorUsage = CursorUsage.read() }
         renderUsagePanel(fresh: false, updating: true)
-        refreshUsageQuietly { [weak self] ok in
-            self?.renderUsagePanel(fresh: ok, updating: false)
+        let group = DispatchGroup()
+        var claudeOK = false
+        var cursorOK = false
+        group.enter()
+        refreshUsageQuietly { ok in claudeOK = ok; group.leave() }
+        group.enter()
+        refreshCursorQuietly { ok in cursorOK = ok; group.leave() }
+        group.notify(queue: .main) { [weak self] in
+            self?.renderUsagePanel(fresh: claudeOK || cursorOK, updating: false)
         }
     }
 
@@ -4309,18 +4832,60 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
     }
 
-    /// The glass panel: both limits as bars, when each resets, and how fresh the reading is
+    /// Asks Cursor for usage in the background. Skipped when a check is already running, or the last one
+    /// was under a minute ago
+    func refreshCursorQuietly(_ done: ((Bool) -> Void)? = nil) {
+        if cursorBusy { done?(false); return }
+        if let last = cursorCheckedAt, Date().timeIntervalSince(last) < 60 {
+            done?(true)
+            return
+        }
+        cursorBusy = true
+        refreshCursorUsage { [weak self] fetch in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.cursorBusy = false
+                if let usage = fetch.usage {
+                    self.cursorCheckedAt = Date()
+                    self.cursorUsage = usage
+                    self.cursorProblem = ""
+                    mochiLog("cursor usage \(usage.percent)% \(usage.plan)")
+                } else if let problem = fetch.problem {
+                    self.cursorProblem = problem
+                    mochiLog("cursor usage: \(problem)")
+                }
+                self.view.cursorUsage = self.cursorUsage
+                self.chatList.cursor = self.host == .cursor ? self.cursorUsage : nil
+                self.view.needsDisplay = true
+                if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.chatList {
+                    self.showList()
+                } else if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.usagePanel {
+                    self.renderUsagePanel(fresh: true, updating: false)
+                }
+                done?(fetch.usage != nil)
+            }
+        }
+    }
+
+    /// The glass panel: Claude's limits and Cursor's included usage, and how fresh the reading is
     func renderUsagePanel(fresh: Bool, updating: Bool = false) {
-        guard let usage else {
+        let cursor = host == .cursor ? (cursorUsage ?? CursorUsage.read()) : nil
+        let shown = host == .claude ? usage : nil
+        guard shown != nil || cursor != nil || (host == .cursor && !cursorProblem.isEmpty) || power != nil else {
             say("No usage reading yet. Send a message and I'll get one.", color: Status.idle.color)
             return
         }
-        let worst = max(usage.fiveHour, usage.week)
+        let worst = shown.map { max($0.fiveHour, $0.week) } ?? cursor?.percent ?? 0
         let clock = DateFormatter()
         clock.dateFormat = "h:mm a"
-        let when = clock.string(from: Date(timeIntervalSince1970: usage.at / 1000))
-        usagePanel.usage = usage
-        usagePanel.resetOffer = resetOffer
+        let when = clock.string(from: Date(timeIntervalSince1970: (shown?.at ?? cursor?.at ?? Date().timeIntervalSince1970 * 1000) / 1000))
+        usagePanel.host = host
+        usagePanel.usage = shown
+        usagePanel.cursor = cursor
+        usagePanel.cursorProblem = host == .cursor ? cursorProblem : ""
+        usagePanel.resetOffer = host == .claude ? resetOffer : nil
+        usagePanel.power = power
+        usagePanel.wattHours = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
         usagePanel.checking = updating
         usagePanel.footnote = updating ? "Checking now…" : fresh ? "Checked \(when)" : "Last read \(when)"
         showUsagePanel(accent: Usage.color(worst))
@@ -4813,7 +5378,11 @@ final class NotePanel: NSPanel {
         let needing = chats.filter { $0.status == .needsInput }.count
         let approving = chats.filter(approvingOnItsOwn).count
         chatList.chats = chats
-        chatList.usage = usage
+        chatList.host = host
+        chatList.usage = host == .claude ? usage : nil
+        chatList.cursor = host == .cursor ? (cursorUsage ?? CursorUsage.read()) : nil
+        chatList.power = power
+        chatList.wattHours = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
         chatList.title = boardTitle(needing: needing)
         chatList.titleColor = view.status.color
         chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
@@ -5177,9 +5746,18 @@ final class NotePanel: NSPanel {
         let shortcutsItem = menu.addItem(withTitle: "Shortcuts", action: nil, keyEquivalent: "")
         shortcutsItem.submenu = shortcuts
         menu.addItem(.separator())
-        if let usage = Usage.read() {
+        if host == .claude, let usage = Usage.read() {
             menu.addItem(withTitle: "Usage: 5-hour \(usage.fiveHour)% · week \(usage.week)% (\(ago(usage.at)))", action: nil, keyEquivalent: "").isEnabled = false
             if let back = usage.backText { menu.addItem(withTitle: "⏳ \(back)", action: nil, keyEquivalent: "").isEnabled = false }
+            menu.addItem(.separator())
+        }
+        if host == .cursor, let cursor = cursorUsage ?? CursorUsage.read() {
+            menu.addItem(withTitle: "Cursor: \(cursor.headline) · \(cursor.plan)", action: nil, keyEquivalent: "").isEnabled = false
+            menu.addItem(.separator())
+        }
+        if let power {
+            let today = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
+            menu.addItem(withTitle: "Power: \(power.headline) · \(power.detail) · today \(powerHoursText(today))", action: nil, keyEquivalent: "").isEnabled = false
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self

@@ -23,6 +23,6 @@ cat > Mochi.app/Contents/Info.plist <<'PLIST'
 </plist>
 PLIST
 
-swiftc -O -o Mochi.app/Contents/MacOS/Mochi main.swift -framework AppKit
+swiftc -O -o Mochi.app/Contents/MacOS/Mochi main.swift -framework AppKit -framework IOKit
 codesign --force --sign - Mochi.app
 echo "Built $(pwd)/Mochi.app"
