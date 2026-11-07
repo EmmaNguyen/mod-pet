@@ -924,7 +924,10 @@ final class MochiView: NSView {
     var usage: Usage?
     /// Which app she is connected to. The other one's usage stays off her
     var host: CompanionHost = .claude
+    /// The companion in front right now. Nil while another app is in front, so both usage lines stay off the pill
+    var shownHost: CompanionHost?
     var cursorUsage: CursorUsage?
+    var power: PowerReading?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
     var usagePill: NSRect = .zero
     var onUsageClick: (() -> Void)?
@@ -968,9 +971,9 @@ final class MochiView: NSView {
         case .blocked: break
         }
 
-        // She looks tired from 70% of the app she is connected to
-        let tiredPercent = host == .cursor ? (cursorUsage?.percent ?? 0) : (usage.map { max($0.fiveHour, $0.week) } ?? 0)
-        usageTired = tiredPercent >= 70
+        // She looks tired from the app in front, or the battery below 30%
+        let frontUsage = shownHost == .cursor ? (cursorUsage?.percent ?? 0) : shownHost == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
+        usageTired = max(frontUsage, power.map { 100 - $0.percent } ?? 0) >= 70
 
         let originX = (bounds.width - petSize) / 2
         let originY = 46 - lift // the usage label above her, the two buttons below
@@ -981,7 +984,7 @@ final class MochiView: NSView {
         ctx.rotate(by: tilt)
         ctx.translateBy(x: -petSize / 2, y: -petSize / 2)
         drawPixels(currentLook.art, blinking: blinking)
-        if usageTired || lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) != nil {
+        if usageTired {
             // A lid: the top half of each eye in the body colour, so she looks half-closed
             face.setFill()
             for col in [3, 11] { NSRect(x: CGFloat(col) * scale, y: 7 * scale, width: 2 * scale, height: scale / 2).fill() }
@@ -1004,13 +1007,10 @@ final class MochiView: NSView {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
         }
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: taskMinutesLeft == nil ? originY + 6 : originY + 24)) }
-        if host == .cursor {
-            if let cursorUsage { drawCursorUsage(cursorUsage) }
-        } else if let usage {
-            drawUsage(usage)
-            // The countdown sits on the right end of the usage bar, over its corner
-            if let minutesLeft = lowTimeMinutes(resets: usage.fiveHourResets, now: Date()) {
-                drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: 16))
+        if usage != nil || cursorUsage != nil || power != nil {
+            drawUsagePill()
+            if shownHost == .claude, let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
+                drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: usagePill.midY))
             }
         }
         // The two buttons show only when the cursor is near her, or while the note box is open or listening;
@@ -1300,35 +1300,137 @@ final class MochiView: NSView {
         text.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
     }
 
-    /// A small pill under her: "5h 34% · wk 12%", coloured by the fuller of the two
-    private func drawUsage(_ usage: Usage) {
-        var words = "5h \(usage.fiveHour)% · \(usage.week)%"
-        if let blocked = usage.blocked {
-            words = blocked.until.map { "Back \(Usage.clock($0))" } ?? "Limit reached"
+    /// Claude's spark, Cursor's cube, and a battery. The percent stays beside each mark
+    private func drawUsagePill() {
+        enum Bit { case spark, cube, battery(Int), text(String), dot }
+        var stress = 0
+        var rows: [[Bit]] = []
+        if shownHost == .claude, let usage {
+            rows.append([.spark, .text("\(usage.fiveHour)%"), .dot, .text("\(usage.week)%")])
+            stress = max(usage.fiveHour, usage.week)
         }
-        let text = NSAttributedString(string: words, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
-        ])
-        let size = text.size()
-        // A few points below the top edge, so the rounded ends are not cut off by the window
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 20, width: size.width + 18, height: 20)
+        var tail: [Bit] = []
+        if shownHost == .cursor, let cursorUsage {
+            tail.append(.cube)
+            tail.append(.text("\(cursorUsage.percent)%"))
+            stress = max(stress, cursorUsage.percent)
+        }
+        if let power {
+            tail.append(.battery(power.percent))
+            tail.append(.text("\(power.percent)%"))
+            stress = max(stress, 100 - power.percent)
+        }
+        if !tail.isEmpty { rows.append(tail) }
+        guard !rows.isEmpty else { return }
+
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let gap: CGFloat = 4
+        func bitWidth(_ bit: Bit) -> CGFloat {
+            switch bit {
+            case .spark, .battery: return 16
+            case .cube: return 14
+            case .dot: return 3
+            case .text(let words): return (words as NSString).size(withAttributes: [.font: font]).width
+            }
+        }
+        func rowWidth(_ row: [Bit]) -> CGFloat {
+            row.reduce(0) { $0 + bitWidth($1) } + gap * CGFloat(max(0, row.count - 1))
+        }
+        let lineHeight: CGFloat = 16
+        let width = min(bounds.width - 6, (rows.map(rowWidth).max() ?? 0) + 16)
+        let height = lineHeight * CGFloat(rows.count) + 8
+        let pill = NSRect(x: (bounds.width - width) / 2, y: 8, width: width, height: height)
         usagePill = pill
-        Usage.color(max(usage.fiveHour, usage.week)).withAlphaComponent(0.9).setFill()
+        Usage.color(stress).withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
-        text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
+        NSColor.white.set()
+        var y = pill.minY + 4
+        for row in rows {
+            var x = pill.midX - rowWidth(row) / 2
+            for bit in row {
+                let w = bitWidth(bit)
+                switch bit {
+                case .spark: drawClaudeSpark(in: NSRect(x: x, y: y, width: 16, height: 16))
+                case .cube: drawCursorCube(in: NSRect(x: x, y: y, width: 14, height: 16))
+                case .battery(let percent): drawPillBattery(percent, in: NSRect(x: x, y: y, width: 16, height: 16))
+                case .dot:
+                    NSBezierPath(ovalIn: NSRect(x: x, y: y + 6.5, width: 3, height: 3)).fill()
+                case .text(let words):
+                    let text = NSAttributedString(string: words, attributes: [.font: font, .foregroundColor: NSColor.white])
+                    text.draw(at: NSPoint(x: x, y: y + 1))
+                }
+                x += w + gap
+            }
+            y += lineHeight
+        }
     }
 
-    /// The same pill, for Cursor: "Cursor 13%"
-    private func drawCursorUsage(_ cursor: CursorUsage) {
-        let text = NSAttributedString(string: "Cursor \(cursor.percent)%", attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white,
-        ])
-        let size = text.size()
-        let pill = NSRect(x: (bounds.width - size.width) / 2 - 9, y: 20, width: size.width + 18, height: 20)
-        usagePill = pill
-        Usage.color(cursor.percent).withAlphaComponent(0.9).setFill()
-        NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
-        text.draw(at: NSPoint(x: pill.minX + 7, y: pill.minY + (pill.height - size.height) / 2))
+    /// Claude's spark: four rounded bars through the centre
+    private func drawClaudeSpark(in rect: NSRect) {
+        let path = NSBezierPath()
+        let bar = NSRect(x: rect.midX - rect.width * 0.053, y: rect.midY - rect.height * 0.425, width: rect.width * 0.106, height: rect.height * 0.85)
+        for degrees in [0, 45, 90, 135] as [CGFloat] {
+            let piece = NSBezierPath(roundedRect: bar, xRadius: bar.width / 2, yRadius: bar.width / 2)
+            let turn = NSAffineTransform()
+            turn.translateX(by: rect.midX, yBy: rect.midY)
+            turn.rotate(byDegrees: degrees)
+            turn.translateX(by: -rect.midX, yBy: -rect.midY)
+            path.append(turn.transform(piece))
+        }
+        path.fill()
+    }
+
+    /// Cursor's cube. The second shape is the cut, so the fill uses the even-odd rule
+    private func drawCursorCube(in rect: NSRect) {
+        let p = NSBezierPath()
+        p.move(to: NSPoint(x: 250.89, y: 69.08))
+        p.line(to: NSPoint(x: 134.06, y: 1.62))
+        p.curve(to: NSPoint(x: 121.93, y: 1.62), controlPoint1: NSPoint(x: 130.31, y: -0.54), controlPoint2: NSPoint(x: 125.68, y: -0.54))
+        p.line(to: NSPoint(x: 5.10, y: 69.08))
+        p.curve(to: NSPoint(x: 0.00, y: 77.91), controlPoint1: NSPoint(x: 1.95, y: 70.89), controlPoint2: NSPoint(x: 0, y: 74.27))
+        p.line(to: NSPoint(x: 0, y: 213.93))
+        p.curve(to: NSPoint(x: 5.10, y: 222.77), controlPoint1: NSPoint(x: 0, y: 217.57), controlPoint2: NSPoint(x: 1.95, y: 220.94))
+        p.line(to: NSPoint(x: 121.93, y: 290.22))
+        p.curve(to: NSPoint(x: 134.07, y: 290.22), controlPoint1: NSPoint(x: 125.68, y: 292.38), controlPoint2: NSPoint(x: 130.32, y: 292.38))
+        p.line(to: NSPoint(x: 250.90, y: 222.77))
+        p.curve(to: NSPoint(x: 256, y: 213.93), controlPoint1: NSPoint(x: 254.05, y: 220.95), controlPoint2: NSPoint(x: 256, y: 217.57))
+        p.line(to: NSPoint(x: 256, y: 77.91))
+        p.curve(to: NSPoint(x: 250.90, y: 69.08), controlPoint1: NSPoint(x: 256, y: 74.27), controlPoint2: NSPoint(x: 254.05, y: 70.90))
+        p.close()
+        p.move(to: NSPoint(x: 243.55, y: 83.36))
+        p.line(to: NSPoint(x: 130.77, y: 278.71))
+        p.curve(to: NSPoint(x: 128, y: 277.97), controlPoint1: NSPoint(x: 130.01, y: 280.03), controlPoint2: NSPoint(x: 128, y: 279.49))
+        p.line(to: NSPoint(x: 128, y: 150.05))
+        p.curve(to: NSPoint(x: 124.41, y: 143.85), controlPoint1: NSPoint(x: 127.99, y: 147.50), controlPoint2: NSPoint(x: 126.63, y: 145.13))
+        p.line(to: NSPoint(x: 13.64, y: 79.90))
+        p.curve(to: NSPoint(x: 14.39, y: 77.12), controlPoint1: NSPoint(x: 12.32, y: 79.13), controlPoint2: NSPoint(x: 12.86, y: 77.12))
+        p.line(to: NSPoint(x: 239.96, y: 77.12))
+        p.curve(to: NSPoint(x: 243.56, y: 83.37), controlPoint1: NSPoint(x: 243.16, y: 77.12), controlPoint2: NSPoint(x: 245.16, y: 80.59))
+        p.close()
+        p.windingRule = .evenOdd
+        NSGraphicsContext.saveGraphicsState()
+        let fit = NSAffineTransform()
+        fit.translateX(by: rect.minX, yBy: rect.minY)
+        fit.scaleX(by: rect.width / 256, yBy: rect.height / 292)
+        fit.concat()
+        p.fill()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// A battery whose fill is the charge left
+    private func drawPillBattery(_ percent: Int, in rect: NSRect) {
+        let s = rect.width / 16
+        func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSRect {
+            NSRect(x: rect.minX + x * s, y: rect.minY + y * s, width: w * s, height: h * s)
+        }
+        let body = NSBezierPath(roundedRect: box(0.8, 4.2, 12.2, 7.6), xRadius: 1.7 * s, yRadius: 1.7 * s)
+        body.lineWidth = 1.4 * s
+        body.stroke()
+        NSBezierPath(roundedRect: box(13.4, 6.4, 1.8, 3.2), xRadius: 0.6 * s, yRadius: 0.6 * s).fill()
+        let inner = 9.0 * CGFloat(min(100, max(0, percent))) / 100
+        if inner > 0.4 {
+            NSBezierPath(roundedRect: box(2.4, 5.8, inner, 4.4), xRadius: 0.7 * s, yRadius: 0.7 * s).fill()
+        }
     }
 
     /// A blue dot for each agent running now, in a column on her left; a click on them opens the list
@@ -1613,6 +1715,30 @@ func drawLine(_ text: String, _ font: NSFont, _ color: NSColor, x: CGFloat, y: C
     return string.size().width
 }
 
+/// One compact usage row: label, percent, green bar, time on the right
+@discardableResult
+func drawUsageMeterRow(name: String, percent: Int, time: String, color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) -> CGFloat {
+    let nameW: CGFloat = 44
+    let percentW: CGFloat = 36
+    let timeW: CGFloat = 52
+    let gap: CGFloat = 8
+    drawLine(name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x, y: y, width: nameW, draw: draw)
+    drawLine("\(percent)%", .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: x + nameW + gap, y: y - 1, width: percentW, draw: draw)
+    let barX = x + nameW + percentW + gap * 2
+    let barW = max(24, width - (barX - x) - timeW - gap)
+    if draw {
+        let track = NSRect(x: barX, y: y + 5, width: barW, height: 6)
+        NSColor.labelColor.withAlphaComponent(0.12).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+        color.setFill()
+        let filled = max(percent > 0 ? 6 : 0, track.width * CGFloat(min(100, max(0, percent))) / 100)
+        NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: min(filled, track.width), height: 6),
+                     xRadius: 3, yRadius: 3).fill()
+    }
+    drawLine(time, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + width - timeW, y: y, width: timeW, align: .right, draw: draw)
+    return y + 22
+}
+
 /// A small rounded button: a filled accent one, or an outlined one
 func drawButton(_ rect: NSRect, _ title: String, filled: Bool, draw: Bool) {
     guard draw else { return }
@@ -1786,27 +1912,6 @@ final class UsagePanelView: NSView {
 
     override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
-    /// One line: a name, a percent, a bar, and the time on the right
-    private func meterRow(name: String, percent: Int, time: String, color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) {
-        let nameW: CGFloat = 52
-        let percentW: CGFloat = 36
-        let timeW: CGFloat = 52
-        let gap: CGFloat = 8
-        drawLine(name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x, y: y, width: nameW, draw: draw)
-        drawLine("\(percent)%", .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: x + nameW + gap, y: y - 1, width: percentW, draw: draw)
-        let barX = x + nameW + percentW + gap * 2
-        let barW = max(24, width - (barX - x) - timeW - gap)
-        if draw {
-            let track = NSRect(x: barX, y: y + 6, width: barW, height: 4)
-            NSColor.labelColor.withAlphaComponent(0.1).setFill()
-            NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-            color.setFill()
-            let filled = track.width * CGFloat(min(100, max(0, percent))) / 100
-            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
-        }
-        drawLine(time, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + width - timeW, y: y, width: timeW, align: .right, draw: draw)
-    }
-
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
         let pad: CGFloat = 12
@@ -1820,46 +1925,40 @@ final class UsagePanelView: NSView {
             return y + 32
         }
 
-        let worst = shownUsage.map { max($0.fiveHour, $0.week) } ?? shownCursor?.percent
+        let worst = shownUsage.map { max($0.fiveHour, $0.week) } ?? shownCursor?.percent ?? power.map { 100 - $0.percent } ?? 0
         let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
         let title = host == .cursor ? "Cursor" : "Claude"
         let titleW = drawLine(title, titleFont, .labelColor, x: pad, y: y, width: inner * 0.4, draw: draw)
         if host == .cursor, let plan = shownCursor?.plan, plan != "Cursor" {
             drawLine(plan, .systemFont(ofSize: 12, weight: .medium), .secondaryLabelColor, x: pad + titleW + 6, y: y + 1, width: 100, draw: draw)
         }
-        if let worst {
-            let state = usageState(worst: worst)
-            let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
-            let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
-            if draw {
-                Usage.color(worst).withAlphaComponent(0.15).setFill()
-                NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
-            }
-            drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
+        let state = usageState(worst: worst)
+        let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
+        let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
+        if draw {
+            Usage.color(worst).withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
         }
+        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
         y += 26
 
         if let usage = shownUsage {
-            meterRow(name: "5-hour", percent: usage.fiveHour, time: Usage.until(usage.fiveHourResets) ?? "",
-                     color: Usage.color(usage.fiveHour), x: pad, y: y, width: inner, draw: draw)
-            y += 28
-            meterRow(name: "Week", percent: usage.week, time: Usage.until(usage.weekResets) ?? "",
-                     color: Usage.color(usage.week), x: pad, y: y, width: inner, draw: draw)
-            y += 28
+            y = drawUsageMeterRow(name: "5-hour", percent: usage.fiveHour, time: Usage.until(usage.fiveHourResets) ?? "",
+                                  color: Usage.color(usage.fiveHour), x: pad, y: y, width: inner, draw: draw) + 6
+            y = drawUsageMeterRow(name: "Week", percent: usage.week, time: Usage.until(usage.weekResets) ?? "",
+                                  color: Usage.color(usage.week), x: pad, y: y, width: inner, draw: draw) + 6
         }
         if let cursor = shownCursor {
-            meterRow(name: "Week", percent: cursor.percent, time: Usage.until(cursor.resets) ?? "",
-                     color: Usage.color(cursor.percent), x: pad, y: y, width: inner, draw: draw)
-            y += 28
+            y = drawUsageMeterRow(name: "Week", percent: cursor.percent, time: Usage.until(cursor.resets) ?? "",
+                                  color: Usage.color(cursor.percent), x: pad, y: y, width: inner, draw: draw) + 6
         } else if host == .cursor, !cursorProblem.isEmpty {
             drawLine(cursorProblem, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
             y += 22
         }
         if let power {
-            meterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
-                     color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw)
-            y += 28
+            y = drawUsageMeterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
+                                  color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw) + 6
         }
 
         drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
@@ -2180,81 +2279,24 @@ final class ChatListView: NSView {
             }
         }
 
-        // The connected app's limits. Claude's cards, or Cursor's card, never both
-        if host == .claude, usage != nil { y += 6 }
-        if host == .claude, let usage {
-            let cardWidth = (inner - 8) / 2
-            let limits: [(name: String, percent: Int, resets: String?)] = [
-                ("5-hour limit", usage.fiveHour, Usage.until(usage.fiveHourResets)),
-                ("Week limit", usage.week, Usage.until(usage.weekResets)),
-            ]
-            for (i, limit) in limits.enumerated() {
-                let x = pad + CGFloat(i) * (cardWidth + 8)
-                if draw {
-                    Self.glassCard.setFill()
-                    NSBezierPath(roundedRect: NSRect(x: x, y: y, width: cardWidth, height: 76), xRadius: 16, yRadius: 16).fill()
-                }
-                label(limit.name, .systemFont(ofSize: 13), .secondaryLabelColor, x: x + 10, y: y + 8, width: cardWidth - 20, draw: draw)
-                label("\(limit.percent)%", .systemFont(ofSize: 16, weight: .medium), .labelColor, x: x + 10, y: y + 24, width: cardWidth - 20, draw: draw)
-                if draw {
-                    let track = NSRect(x: x + 10, y: y + 48, width: cardWidth - 20, height: 4)
-                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                    NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                    Usage.color(limit.percent).setFill()
-                    let filled = track.width * CGFloat(min(100, max(0, limit.percent))) / 100
-                    NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
-                }
-                if let resets = limit.resets {
-                    label("Resets in \(resets)", .systemFont(ofSize: 12), .secondaryLabelColor, x: x + 10, y: y + 56, width: cardWidth - 20, draw: draw)
-                }
-            }
-            y += 84
-            if let back = usage.backText {
-                label("⏳ \(back)", .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
-                y += 22
-            }
-        }
-
-        // Cursor sits in the same place when she is connected to Cursor
+        // The connected app's limits, then power
+        if usage != nil || cursor != nil || power != nil { y += 6 }
         if host == .cursor, let cursor {
-            y += 6
-            if draw {
-                Self.glassCard.setFill()
-                NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 76), xRadius: 16, yRadius: 16).fill()
-            }
-            label("Cursor · \(cursor.plan)", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
-            label(cursor.headline, .systemFont(ofSize: 16, weight: .medium), .labelColor, x: pad + 10, y: y + 24, width: inner - 20, draw: draw)
-            if draw {
-                let track = NSRect(x: pad + 10, y: y + 48, width: inner - 20, height: 4)
-                NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                Usage.color(cursor.percent).setFill()
-                let filled = track.width * CGFloat(min(100, max(0, cursor.percent))) / 100
-                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
-            }
-            label(cursor.detail, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 10, y: y + 56, width: inner - 20, draw: draw)
-            y += 82
+            y = drawUsageMeterRow(name: "Cursor", percent: cursor.percent, time: Usage.until(cursor.resets) ?? "",
+                                  color: Usage.color(cursor.percent), x: pad, y: y, width: inner, draw: draw) + 6
+        } else if let usage {
+            y = drawUsageMeterRow(name: "5-hour", percent: usage.fiveHour, time: Usage.until(usage.fiveHourResets) ?? "",
+                                  color: Usage.color(usage.fiveHour), x: pad, y: y, width: inner, draw: draw) + 6
+            y = drawUsageMeterRow(name: "Week", percent: usage.week, time: Usage.until(usage.weekResets) ?? "",
+                                  color: Usage.color(usage.week), x: pad, y: y, width: inner, draw: draw) + 6
         }
-
         if let power {
-            y += 6
-            if draw {
-                Self.glassCard.setFill()
-                NSBezierPath(roundedRect: NSRect(x: pad, y: y, width: inner, height: 76), xRadius: 16, yRadius: 16).fill()
-            }
-            label("Power", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad + 10, y: y + 8, width: inner - 20, draw: draw)
-            label(power.headline, .systemFont(ofSize: 16, weight: .medium), .labelColor, x: pad + 10, y: y + 24, width: inner - 20, draw: draw)
-            if draw {
-                let track = NSRect(x: pad + 10, y: y + 48, width: inner - 20, height: 4)
-                NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
-                Usage.color(100 - power.percent).setFill()
-                let filled = track.width * CGFloat(min(100, max(0, power.percent))) / 100
-                NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: filled, height: 4), xRadius: 2, yRadius: 2).fill()
-            }
-            label("\(power.detail) · Today \(powerHoursText(wattHours))", .systemFont(ofSize: 12), .secondaryLabelColor,
-                  x: pad + 10, y: y + 56, width: inner - 20, draw: draw)
-            y += 82
+            y = drawUsageMeterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
+                                  color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw) + 6
+        }
+        if let usage, let back = usage.backText {
+            label("⏳ \(back)", .systemFont(ofSize: 13, weight: .medium), Usage.color(100), x: pad, y: y, width: inner, draw: draw)
+            y += 22
         }
 
         if let footer {
@@ -3871,6 +3913,13 @@ func bundleToHide(_ host: CompanionHost) -> String {
     host == .cursor ? claudeBundleID : cursorBundleID
 }
 
+/// Claude and Cursor each hide unless that app is the one in front. A browser hides both.
+/// Nil hides nothing, so a missing front app does not tuck them away
+func appsToHide(frontBundleID: String?) -> [String] {
+    guard let frontBundleID else { return [] }
+    return [claudeBundleID, cursorBundleID].filter { $0 != frontBundleID }
+}
+
 // MARK: - Power: the Mac's draw, and the energy used today
 
 /// What the battery is doing now. Watts is the machine's draw. Minutes is time left on battery, or time to full while charging
@@ -4589,6 +4638,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     func samplePower(now: Date = Date()) {
         guard let reading = readPower() else { return }
         power = reading
+        view.power = reading
         if powerLog.add(watts: reading.watts, now: now), now.timeIntervalSince(powerSavedAt) > 30 {
             powerLog.save()
             powerSavedAt = now
@@ -4610,6 +4660,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let testChat { chats.append(testChat) }
         checkUsage()
         samplePower()
+        followHost(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         view.host = host
         view.cursorUsage = cursorUsage
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
@@ -4773,24 +4824,36 @@ func playAtTwoThirds(_ sound: NSSound?) {
         warnedWeek = week < warnedWeek ? week : max(warnedWeek, week)
     }
 
-    /// Cursor came forward: hide Claude. Claude came forward: hide Cursor. Any other app leaves her as she is
+    /// The front app stays visible. Claude hides when Claude is not that app, and Cursor does the same
     func followHost(_ bundleID: String?) {
-        guard let next = companionHost(bundleID: bundleID) else { return }
-        let changed = next != host
-        host = next
-        view.host = next
-        view.cursorUsage = cursorUsage
-        view.needsDisplay = true
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID ?? "").forEach { $0.unhide() }
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleToHide(next)).forEach { $0.hide() }
-        guard changed else { return }
-        mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
-        guard bubble.isVisible else { return }
-        if bubbleFrame.scroll.documentView === chatList {
-            fillChatList()
-            showList()
-        } else if bubbleFrame.scroll.documentView === usagePanel {
-            renderUsagePanel(fresh: false, updating: false)
+        let front = companionHost(bundleID: bundleID)
+        if view.shownHost != front {
+            view.shownHost = front
+            view.needsDisplay = true
+        }
+        if let next = front {
+            let changed = next != host
+            host = next
+            view.host = next
+            view.cursorUsage = cursorUsage
+            view.needsDisplay = true
+            if let bundleID {
+                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).forEach { $0.unhide() }
+            }
+            if changed {
+                mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
+                if bubble.isVisible {
+                    if bubbleFrame.scroll.documentView === chatList {
+                        fillChatList()
+                        showList()
+                    } else if bubbleFrame.scroll.documentView === usagePanel {
+                        renderUsagePanel(fresh: false, updating: false)
+                    }
+                }
+            }
+        }
+        for bundle in appsToHide(frontBundleID: bundleID) {
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundle).forEach { $0.hide() }
         }
     }
 
@@ -4875,7 +4938,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
             say("No usage reading yet. Send a message and I'll get one.", color: Status.idle.color)
             return
         }
-        let worst = shown.map { max($0.fiveHour, $0.week) } ?? cursor?.percent ?? 0
+        let worst = shown.map { max($0.fiveHour, $0.week) } ?? cursor?.percent ?? power.map { 100 - $0.percent } ?? 0
         let clock = DateFormatter()
         clock.dateFormat = "h:mm a"
         let when = clock.string(from: Date(timeIntervalSince1970: (shown?.at ?? cursor?.at ?? Date().timeIntervalSince1970 * 1000) / 1000))
