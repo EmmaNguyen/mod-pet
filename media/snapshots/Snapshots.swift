@@ -302,7 +302,7 @@ print("wrote 24 walk frames to \(walkFolder.path)")
 
 for (kind, name) in [("morning", "12-morning-brief.png"), ("evening", "13-wrap-up.png")] {
     let brief = BriefView()
-    brief.content = briefContent(kind: kind, chats: chats, log: diary, now: now, offer: nil, usagePercent: 62)
+    brief.content = briefContent(kind: kind, chats: chats, log: diary, now: now, offer: nil)
     brief.frame = NSRect(origin: .zero, size: NSSize(width: BriefView.width, height: brief.fittingHeight()))
     let s = scene(BriefView.width + 60, brief.frame.height + 48)
     place(brief, in: s, at: NSPoint(x: 30, y: 24), glass: 22)

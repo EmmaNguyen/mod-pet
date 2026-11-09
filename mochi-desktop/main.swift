@@ -113,6 +113,8 @@ struct Chat {
     var mode = ""
     /// The chat's plugin can switch modes (Accept edits, Auto); a chat started before that plugin cannot
     var canSwitchMode = false
+    /// Which app this chat is from. Cursor chats sit in the same list and briefs as Claude's
+    var host: CompanionHost = .claude
     var isOpen: Bool { status != .ended }
 }
 
@@ -122,9 +124,87 @@ func oldestWaiting(_ chats: [Chat]) -> Chat? {
     return chats.filter { $0.status == .needsInput && $0.isOpen && $0.isRecent }.min { since($0) < since($1) }
 }
 
-/// Brings Claude to the front on that chat
+/// Cursor's public jump to an existing agent: `cursor://anysphere.cursor-deeplink/agent?id=`
+func cursorAgentLink(id: String, workspace: String? = nil) -> String {
+    var items = [URLQueryItem(name: "id", value: id)]
+    if let workspace, !workspace.isEmpty {
+        items.append(URLQueryItem(name: "workspace", value: workspace))
+    }
+    var parts = URLComponents()
+    parts.scheme = "cursor"
+    parts.host = "anysphere.cursor-deeplink"
+    parts.path = "/agent"
+    parts.queryItems = items
+    return parts.url?.absoluteString ?? "cursor://anysphere.cursor-deeplink/agent?id=\(id)"
+}
+
+/// The folder a Cursor project slug came from: `Users-emma-Documents-Claude-Mods` is `/Users/emma/Documents/Claude Mods`
+func cursorWorkspacePath(fromProject encoded: String, fileManager fm: FileManager = .default) -> String? {
+    guard encoded != "empty-window", !encoded.isEmpty else { return nil }
+    let parts = encoded.split(separator: "-").map(String.init)
+    guard !parts.isEmpty else { return nil }
+    return matchCursorPath(parts, from: URL(fileURLWithPath: "/"), fileManager: fm)
+}
+
+func matchCursorPath(_ parts: [String], from root: URL, fileManager fm: FileManager) -> String? {
+    if parts.isEmpty { return root.path == "/" ? nil : root.path }
+    let kids = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+    for n in stride(from: parts.count, through: 1, by: -1) {
+        let want = parts.prefix(n).joined(separator: "-")
+        for kid in kids {
+            let key = kid.lastPathComponent.replacingOccurrences(of: " ", with: "-")
+            guard key.compare(want, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame else { continue }
+            let rest = Array(parts.dropFirst(n))
+            if rest.isEmpty { return kid.path }
+            let isDir = (try? kid.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            if isDir, let nested = matchCursorPath(rest, from: kid, fileManager: fm) { return nested }
+        }
+    }
+    return nil
+}
+
+func cursorAgentID(from url: URL) -> String? {
+    let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    if let id = items.first(where: { $0.name == "id" })?.value, !id.isEmpty { return id }
+    if url.host == "chat" {
+        let id = url.lastPathComponent
+        return id.isEmpty ? nil : id
+    }
+    return nil
+}
+
+func openCursorChat(_ url: URL) {
+    let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    let workspace = items.first(where: { $0.name == "workspace" })?.value
+    let id = cursorAgentID(from: url)
+    let jump: () -> Void = {
+        if let id, let agent = URL(string: cursorAgentLink(id: id)) {
+            NSWorkspace.shared.open(agent)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    if let workspace, FileManager.default.fileExists(atPath: workspace),
+       let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: cursorBundleID) {
+        let folder = URL(fileURLWithPath: workspace)
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.open([folder], withApplicationAt: app, configuration: cfg) { _, _ in
+            DispatchQueue.main.async(execute: jump)
+        }
+        return
+    }
+    jump()
+}
+
+/// Brings Claude or Cursor to the front on that chat
 func openChat(_ link: String?) {
-    guard let link, let url = URL(string: link), url.scheme == "claude" else { return }
+    guard let link, let url = URL(string: link) else { return }
+    if url.scheme == "cursor" {
+        openCursorChat(url)
+        return
+    }
+    guard url.scheme == "claude" else { return }
     NSWorkspace.shared.open(url)
 }
 
@@ -474,6 +554,7 @@ func readChats() -> [Chat] {
 
     // Terminal chats the app does not know of
     chats.append(contentsOf: live.values)
+    chats.append(contentsOf: readCursorChats(now: Date(timeIntervalSince1970: now / 1000)))
     return chats
 }
 
@@ -924,7 +1005,7 @@ final class MochiView: NSView {
     var usage: Usage?
     /// Which app she is connected to. The other one's usage stays off her
     var host: CompanionHost = .claude
-    /// The companion in front right now. Nil while another app is in front, so both usage lines stay off the pill
+    /// The last Cursor or Claude that was in front. Other apps leave this as it is, so the cube stays on the pill
     var shownHost: CompanionHost?
     var cursorUsage: CursorUsage?
     var power: PowerReading?
@@ -1354,7 +1435,7 @@ final class MochiView: NSView {
                 let w = bitWidth(bit)
                 switch bit {
                 case .spark: drawClaudeSpark(in: NSRect(x: x, y: y, width: 16, height: 16))
-                case .cube: drawCursorCube(in: NSRect(x: x, y: y, width: 14, height: 16))
+                case .cube: drawCursorCube(in: NSRect(x: x, y: y, width: 14, height: 16), crease: Usage.color(stress).withAlphaComponent(0.9))
                 case .battery(let percent): drawPillBattery(percent, in: NSRect(x: x, y: y, width: 16, height: 16))
                 case .dot:
                     NSBezierPath(ovalIn: NSRect(x: x, y: y + 6.5, width: 3, height: 3)).fill()
@@ -1383,38 +1464,40 @@ final class MochiView: NSView {
         path.fill()
     }
 
-    /// Cursor's cube. The second shape is the cut, so the fill uses the even-odd rule
-    private func drawCursorCube(in rect: NSRect) {
+    /// Cursor's official 2D cube from cursor.com/brand. Even-odd cuts the arrow out of the hexagon
+    private func drawCursorCube(in rect: NSRect, crease _: NSColor) {
+        // viewBox 0 0 466.73 532.09 — General Logos/Cube/SVG/CUBE_2D
         let p = NSBezierPath()
-        p.move(to: NSPoint(x: 250.89, y: 69.08))
-        p.line(to: NSPoint(x: 134.06, y: 1.62))
-        p.curve(to: NSPoint(x: 121.93, y: 1.62), controlPoint1: NSPoint(x: 130.31, y: -0.54), controlPoint2: NSPoint(x: 125.68, y: -0.54))
-        p.line(to: NSPoint(x: 5.10, y: 69.08))
-        p.curve(to: NSPoint(x: 0.00, y: 77.91), controlPoint1: NSPoint(x: 1.95, y: 70.89), controlPoint2: NSPoint(x: 0, y: 74.27))
-        p.line(to: NSPoint(x: 0, y: 213.93))
-        p.curve(to: NSPoint(x: 5.10, y: 222.77), controlPoint1: NSPoint(x: 0, y: 217.57), controlPoint2: NSPoint(x: 1.95, y: 220.94))
-        p.line(to: NSPoint(x: 121.93, y: 290.22))
-        p.curve(to: NSPoint(x: 134.07, y: 290.22), controlPoint1: NSPoint(x: 125.68, y: 292.38), controlPoint2: NSPoint(x: 130.32, y: 292.38))
-        p.line(to: NSPoint(x: 250.90, y: 222.77))
-        p.curve(to: NSPoint(x: 256, y: 213.93), controlPoint1: NSPoint(x: 254.05, y: 220.95), controlPoint2: NSPoint(x: 256, y: 217.57))
-        p.line(to: NSPoint(x: 256, y: 77.91))
-        p.curve(to: NSPoint(x: 250.90, y: 69.08), controlPoint1: NSPoint(x: 256, y: 74.27), controlPoint2: NSPoint(x: 254.05, y: 70.90))
+        p.move(to: NSPoint(x: 457.43, y: 125.94))
+        p.line(to: NSPoint(x: 244.42, y: 2.96))
+        p.curve(to: NSPoint(x: 222.30, y: 2.96), controlPoint1: NSPoint(x: 237.58, y: -0.99), controlPoint2: NSPoint(x: 229.14, y: -0.99))
+        p.line(to: NSPoint(x: 9.30, y: 125.94))
+        p.curve(to: NSPoint(x: 0.00, y: 142.05), controlPoint1: NSPoint(x: 3.55, y: 129.26), controlPoint2: NSPoint(x: 0.00, y: 135.40))
+        p.line(to: NSPoint(x: 0.00, y: 390.04))
+        p.curve(to: NSPoint(x: 9.30, y: 406.15), controlPoint1: NSPoint(x: 0.00, y: 396.69), controlPoint2: NSPoint(x: 3.55, y: 402.83))
+        p.line(to: NSPoint(x: 222.31, y: 529.13))
+        p.curve(to: NSPoint(x: 244.43, y: 529.13), controlPoint1: NSPoint(x: 229.15, y: 533.08), controlPoint2: NSPoint(x: 237.59, y: 533.08))
+        p.line(to: NSPoint(x: 457.44, y: 406.15))
+        p.curve(to: NSPoint(x: 466.74, y: 390.04), controlPoint1: NSPoint(x: 463.19, y: 402.83), controlPoint2: NSPoint(x: 466.74, y: 396.69))
+        p.line(to: NSPoint(x: 466.74, y: 142.05))
+        p.curve(to: NSPoint(x: 457.44, y: 125.94), controlPoint1: NSPoint(x: 466.74, y: 135.40), controlPoint2: NSPoint(x: 463.19, y: 129.26))
         p.close()
-        p.move(to: NSPoint(x: 243.55, y: 83.36))
-        p.line(to: NSPoint(x: 130.77, y: 278.71))
-        p.curve(to: NSPoint(x: 128, y: 277.97), controlPoint1: NSPoint(x: 130.01, y: 280.03), controlPoint2: NSPoint(x: 128, y: 279.49))
-        p.line(to: NSPoint(x: 128, y: 150.05))
-        p.curve(to: NSPoint(x: 124.41, y: 143.85), controlPoint1: NSPoint(x: 127.99, y: 147.50), controlPoint2: NSPoint(x: 126.63, y: 145.13))
-        p.line(to: NSPoint(x: 13.64, y: 79.90))
-        p.curve(to: NSPoint(x: 14.39, y: 77.12), controlPoint1: NSPoint(x: 12.32, y: 79.13), controlPoint2: NSPoint(x: 12.86, y: 77.12))
-        p.line(to: NSPoint(x: 239.96, y: 77.12))
-        p.curve(to: NSPoint(x: 243.56, y: 83.37), controlPoint1: NSPoint(x: 243.16, y: 77.12), controlPoint2: NSPoint(x: 245.16, y: 80.59))
+        // The arrow cut
+        p.move(to: NSPoint(x: 444.05, y: 151.99))
+        p.line(to: NSPoint(x: 238.42, y: 508.15))
+        p.curve(to: NSPoint(x: 233.36, y: 506.79), controlPoint1: NSPoint(x: 237.03, y: 510.55), controlPoint2: NSPoint(x: 233.36, y: 509.57))
+        p.line(to: NSPoint(x: 233.36, y: 273.58))
+        p.curve(to: NSPoint(x: 226.83, y: 262.27), controlPoint1: NSPoint(x: 233.36, y: 268.92), controlPoint2: NSPoint(x: 230.87, y: 264.61))
+        p.line(to: NSPoint(x: 24.87, y: 145.67))
+        p.curve(to: NSPoint(x: 26.23, y: 140.61), controlPoint1: NSPoint(x: 22.47, y: 144.28), controlPoint2: NSPoint(x: 23.45, y: 140.61))
+        p.line(to: NSPoint(x: 437.49, y: 140.61))
+        p.curve(to: NSPoint(x: 444.06, y: 152.00), controlPoint1: NSPoint(x: 443.33, y: 140.61), controlPoint2: NSPoint(x: 446.98, y: 146.94))
         p.close()
         p.windingRule = .evenOdd
         NSGraphicsContext.saveGraphicsState()
         let fit = NSAffineTransform()
         fit.translateX(by: rect.minX, yBy: rect.minY)
-        fit.scaleX(by: rect.width / 256, yBy: rect.height / 292)
+        fit.scaleX(by: rect.width / 466.73, yBy: rect.height / 532.09)
         fit.concat()
         p.fill()
         NSGraphicsContext.restoreGraphicsState()
@@ -1740,6 +1823,163 @@ func drawUsageMeterRow(name: String, percent: Int, time: String, color: NSColor,
     }
     drawLine(time, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + width - timeW, y: y, width: timeW, align: .right, draw: draw)
     return y + 22
+}
+
+/// One reading on the usage graph: 5-hour and week percents, at a time in milliseconds
+struct UsagePoint {
+    let at: Double
+    let fiveHour: Int
+    let week: Int
+}
+
+/// Keeps the first and last reading, and evenly spaced ones in between, so the graph stays readable
+func thinUsagePoints(_ points: [UsagePoint], limit: Int = 48) -> [UsagePoint] {
+    guard points.count > limit, limit > 2 else { return points }
+    let last = points.count - 1
+    var out: [UsagePoint] = [points[0]]
+    for i in 1..<(limit - 1) {
+        let idx = Int((Double(i) * Double(last) / Double(limit - 1)).rounded())
+        if idx > 0, idx < last, out.last?.at != points[idx].at { out.append(points[idx]) }
+    }
+    out.append(points[last])
+    return out
+}
+
+/// One reading per hour: the latest sample at or before that hour ends
+func hourlyUsagePoints(_ points: [UsagePoint], now: Date = Date(), hours: Int = 6) -> [UsagePoint] {
+    let cal = Calendar.current
+    guard hours > 0, let thisHour = cal.dateInterval(of: .hour, for: now)?.start else { return [] }
+    let sorted = points.sorted { $0.at < $1.at }
+    var i = 0
+    var last: UsagePoint?
+    var out: [UsagePoint] = []
+    for h in 0..<hours {
+        guard let hourStart = cal.date(byAdding: .hour, value: h - (hours - 1), to: thisHour),
+              let hourEnd = cal.date(byAdding: .hour, value: 1, to: hourStart) else { continue }
+        let endMs = hourEnd.timeIntervalSince1970 * 1000
+        while i < sorted.count, sorted[i].at < endMs {
+            last = sorted[i]
+            i += 1
+        }
+        if let last {
+            out.append(UsagePoint(at: hourStart.timeIntervalSince1970 * 1000, fiveHour: last.fiveHour, week: last.week))
+        }
+    }
+    return out
+}
+
+/// Readings for the last six hours, one per hour. A live point is added when it is newer than the file
+func usageHistory(from url: URL, live: UsagePoint? = nil, now: Date = Date(),
+                  window: TimeInterval = 6 * 3600) -> [UsagePoint] {
+    var points: [UsagePoint] = []
+    if let data = try? Data(contentsOf: url),
+       let file = try? JSONDecoder().decode(UsageFile.self, from: data) {
+        points = file.samples.map {
+            UsagePoint(at: $0.t, fiveHour: Int(($0.u.fh ?? 0).rounded()), week: Int(($0.u.sd ?? 0).rounded()))
+        }
+    }
+    if let live, points.last.map({ $0.at < live.at - 1 }) ?? true { points.append(live) }
+    return hourlyUsagePoints(points.sorted { $0.at < $1.at }, now: now, hours: Int(window / 3600))
+}
+
+func cursorUsageHistory(from url: URL, live: UsagePoint? = nil, now: Date = Date(),
+                        window: TimeInterval = 6 * 3600) -> [UsagePoint] {
+    var points: [UsagePoint] = []
+    if let data = try? Data(contentsOf: url),
+       let file = try? JSONDecoder().decode(CursorHistoryFile.self, from: data) {
+        points = file.samples.map { UsagePoint(at: $0.t, fiveHour: $0.percent, week: $0.percent) }
+    }
+    if let live, points.last.map({ $0.at < live.at - 1 }) ?? true { points.append(live) }
+    return hourlyUsagePoints(points.sorted { $0.at < $1.at }, now: now, hours: Int(window / 3600))
+}
+
+func recordCursorUsageSample(_ usage: CursorUsage, folder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi")) {
+    let file = folder.appendingPathComponent("cursor-usage-history.json")
+    var samples = (try? JSONDecoder().decode(CursorHistoryFile.self, from: Data(contentsOf: file)))?.samples ?? []
+    if let last = samples.last, last.percent == usage.percent, usage.at - last.t < 2 * 60 * 1000 { return }
+    samples.append(.init(t: usage.at, percent: usage.percent))
+    if samples.count > 400 { samples = Array(samples.suffix(400)) }
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    if let data = try? JSONEncoder().encode(CursorHistoryFile(samples: samples)) {
+        try? data.write(to: file)
+    }
+}
+
+/// "3:40 PM" today, otherwise "7 Nov"
+func usageGraphCaption(_ at: Double, now: Date = Date()) -> String {
+    let date = Date(timeIntervalSince1970: at / 1000)
+    if Calendar.current.isDate(date, inSameDayAs: now) {
+        let time = DateFormatter()
+        time.dateFormat = "h:mm a"
+        return time.string(from: date)
+    }
+    let day = DateFormatter()
+    day.dateFormat = "d MMM"
+    return day.string(from: date)
+}
+
+/// A filled line of percents across time. The view must be flipped, so 100% sits at the top of the rect
+func drawUsageGraph(points: [UsagePoint], value: (UsagePoint) -> Int, in rect: NSRect, color: NSColor) {
+    guard points.count >= 2 else { return }
+    let start = points.first!.at, span = max(1, points.last!.at - start)
+    func point(_ sample: UsagePoint) -> NSPoint {
+        let x = rect.minX + CGFloat((sample.at - start) / span) * rect.width
+        let y = rect.minY + (1 - CGFloat(min(100, max(0, value(sample)))) / 100) * rect.height
+        return NSPoint(x: x, y: y)
+    }
+    let line = NSBezierPath()
+    line.move(to: point(points[0]))
+    for sample in points.dropFirst() { line.line(to: point(sample)) }
+    let fill = line.copy() as! NSBezierPath
+    fill.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+    fill.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+    fill.close()
+    color.withAlphaComponent(0.18).setFill()
+    fill.fill()
+    line.lineWidth = 1.6
+    line.lineJoinStyle = .round
+    color.setStroke()
+    line.stroke()
+}
+
+/// The usage box graph: tracks, the lines, and the dates at each end. Returns the y under it
+func drawUsageGraphBlock(points: [UsagePoint], host: CompanionHost, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) -> CGFloat {
+    guard points.count >= 2 else { return y }
+    let title = host == .cursor ? "Included, last 6 hours" : "Last 6 hours"
+    drawLine(title, .systemFont(ofSize: 11, weight: .medium), .secondaryLabelColor, x: x, y: y, width: width, draw: draw)
+    var legendX = x + width
+    if host == .claude {
+        legendX -= 52
+        drawLine("Week", .systemFont(ofSize: 10), .secondaryLabelColor, x: legendX, y: y, width: 52, align: .right, draw: draw)
+        legendX -= 58
+        drawLine("5-hour", .systemFont(ofSize: 10), Usage.color(points.last?.fiveHour ?? 0), x: legendX, y: y, width: 52, align: .right, draw: draw)
+    }
+    let graph = NSRect(x: x, y: y + 18, width: width, height: 72)
+    if draw {
+        NSColor.labelColor.withAlphaComponent(0.06).setFill()
+        NSBezierPath(roundedRect: graph, xRadius: 8, yRadius: 8).fill()
+        for mark in [70, 90] {
+            let gy = graph.minY + (1 - CGFloat(mark) / 100) * graph.height
+            NSColor.labelColor.withAlphaComponent(0.08).setStroke()
+            let dash = NSBezierPath()
+            dash.move(to: NSPoint(x: graph.minX + 6, y: gy))
+            dash.line(to: NSPoint(x: graph.maxX - 6, y: gy))
+            dash.setLineDash([3, 3], count: 2, phase: 0)
+            dash.lineWidth = 1
+            dash.stroke()
+        }
+        if host == .claude {
+            drawUsageGraph(points: points, value: \.week, in: graph, color: NSColor(hex: 0x1C7ED6))
+            drawUsageGraph(points: points, value: \.fiveHour, in: graph, color: Usage.color(points.last?.fiveHour ?? 0))
+        } else {
+            drawUsageGraph(points: points, value: \.week, in: graph, color: Usage.color(points.last?.week ?? 0))
+        }
+    }
+    drawLine(usageGraphCaption(points.first!.at), .systemFont(ofSize: 10), .tertiaryLabelColor,
+             x: x, y: graph.maxY + 4, width: width / 2, draw: draw)
+    drawLine(usageGraphCaption(points.last!.at), .systemFont(ofSize: 10), .tertiaryLabelColor,
+             x: x, y: graph.maxY + 4, width: width, align: .right, draw: draw)
+    return graph.maxY + 20
 }
 
 /// A small rounded button: a filled accent one, or an outlined one
@@ -2082,19 +2322,40 @@ final class BriefView: NSView {
             y += 8
         }
 
-        // The week, one bar for each day, today dark
+        // The week: working time per day, Claude below and Cursor on top when both were active
         if !content.week.isEmpty {
-            drawLine("This week", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            drawLine("This week", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner * 0.5, draw: draw)
+            drawLine("Claude", .systemFont(ofSize: 10), content.duet ? NSColor(hex: 0xC97A8F) : NSColor(hex: 0xF4A259),
+                     x: pad, y: y + 1, width: inner, align: .right, draw: draw)
+            let cursorLegendX = pad + inner - 52
+            drawLine("·", .systemFont(ofSize: 10), .tertiaryLabelColor, x: cursorLegendX - 6, y: y + 1, width: 8, align: .center, draw: draw)
+            drawLine("Cursor", .systemFont(ofSize: 10), NSColor(hex: 0x7C6BB0), x: cursorLegendX, y: y + 1, width: 52, align: .right, draw: draw)
             y += 22
             let slot = inner / CGFloat(content.week.count)
             let peak = max(1, content.week.map(\.seconds).max() ?? 1)
             let baseY = y + 56
             for (i, bar) in content.week.enumerated() {
                 let x = pad + CGFloat(i) * slot
-                let height = max(3, CGFloat(bar.seconds) / CGFloat(peak) * 56)
-                if draw {
-                    (content.duet ? (bar.isToday ? NSColor(hex: 0x3D2C3A) : NSColor(hex: 0xC97A8F)) : (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259))).setFill()
-                    NSBezierPath(roundedRect: NSRect(x: x + slot * 0.2, y: baseY - height, width: slot * 0.6, height: height), xRadius: 4, yRadius: 4).fill()
+                let height = bar.seconds > 0 ? max(3, CGFloat(bar.seconds) / CGFloat(peak) * 56) : 0
+                let barW = slot * 0.6
+                let barX = x + slot * 0.2
+                if draw, height > 0 {
+                    let claudeH = height * CGFloat(bar.claudeSeconds) / CGFloat(max(1, bar.seconds))
+                    let cursorH = height - claudeH
+                    let claudeColor = content.duet
+                        ? (bar.isToday ? NSColor(hex: 0x3D2C3A) : NSColor(hex: 0xC97A8F))
+                        : (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259))
+                    if claudeH > 0 {
+                        claudeColor.setFill()
+                        NSBezierPath(roundedRect: NSRect(x: barX, y: baseY - claudeH, width: barW, height: claudeH), xRadius: 4, yRadius: 4).fill()
+                    }
+                    if cursorH > 0.5 {
+                        NSColor(hex: 0x7C6BB0).setFill()
+                        let cursorY = baseY - height
+                        let corners = claudeH > 0 ? 0 : 4
+                        NSBezierPath(roundedRect: NSRect(x: barX, y: cursorY, width: barW, height: cursorH),
+                                     xRadius: CGFloat(corners), yRadius: CGFloat(corners)).fill()
+                    }
                 }
                 drawLine(bar.label, .systemFont(ofSize: 11, weight: bar.isToday ? .semibold : .regular),
                          bar.isToday ? .labelColor : .secondaryLabelColor, x: x, y: baseY + 4, width: slot, align: .center, draw: draw)
@@ -2240,7 +2501,7 @@ final class ChatListView: NSView {
         y += 6
 
         if chats.isEmpty {
-            label("Start a Claude chat and I'll tell you how it goes!", .systemFont(ofSize: 13), .secondaryLabelColor,
+            label("Start a Claude or Cursor chat and I'll tell you how it goes!", .systemFont(ofSize: 13), .secondaryLabelColor,
                   x: pad, y: y, width: inner, draw: draw)
             y += 22
         }
@@ -2350,7 +2611,8 @@ final class ChatListView: NSView {
         if chat.isOpen, chat.status == .running || chat.status == .needsInput || auto {
             let word = chat.status == .running ? "✦ Working…" : chat.status == .needsInput ? "Needs you" : "Ready"
             let colour = chat.status == .running ? Self.workingInk : chat.status == .needsInput ? Status.needsInput.color : NSColor.secondaryLabelColor
-            label((auto ? "Auto · " : "") + word, .systemFont(ofSize: 13, weight: .medium), colour, x: textX, y: cy, width: textWidth, draw: draw)
+            let source = chat.host == .cursor ? "Cursor · " : ""
+            label(source + (auto ? "Auto · " : "") + word, .systemFont(ofSize: 13, weight: .medium), colour, x: textX, y: cy, width: textWidth, draw: draw)
             cy += 20
         }
 
@@ -2999,8 +3261,14 @@ struct BriefRow { let left: String; let right: String; let dot: NSColor; var lin
 func waitingChipWidth(_ reason: String) -> CGFloat {
     ceil((reason as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 16
 }
-/// One day's bar in the week chart
-struct BriefBar { let label: String; let seconds: Int; let isToday: Bool }
+/// One day's bar in the week chart: total working time, split by host when both were active
+struct BriefBar {
+    let label: String
+    let seconds: Int
+    let claudeSeconds: Int
+    let cursorSeconds: Int
+    let isToday: Bool
+}
 /// A chat in the top list, with its working time today
 
 /// Everything a brief card shows; the card draws whichever parts are filled
@@ -3018,13 +3286,35 @@ struct BriefContent {
     var footer: String?
 }
 
-/// The most recently active sessions, newest first, up to the limit
+/// The most recently active sessions, newest first, up to the limit.
+/// Claude and Cursor each keep at least one row when both have chats, so one app cannot hide the other.
 func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
-    Array(chats.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
+    let sorted = chats.sorted { $0.updatedAt > $1.updatedAt }
+    let claude = sorted.filter { $0.host != .cursor }
+    let cursor = sorted.filter { $0.host == .cursor }
+    guard limit >= 2, !claude.isEmpty, !cursor.isEmpty else {
+        return Array(sorted.prefix(limit))
+    }
+    var picked: [Chat] = []
+    var i = 0, j = 0
+    while picked.count < limit && (i < claude.count || j < cursor.count) {
+        let slotsLeft = limit - picked.count
+        let needCursor = j < cursor.count && !picked.contains(where: { $0.host == .cursor }) && slotsLeft == 1
+        let needClaude = i < claude.count && !picked.contains(where: { $0.host != .cursor }) && slotsLeft == 1
+        let takeCursor: Bool
+        if needCursor { takeCursor = true }
+        else if needClaude { takeCursor = false }
+        else if i >= claude.count { takeCursor = true }
+        else if j >= cursor.count { takeCursor = false }
+        else { takeCursor = cursor[j].updatedAt >= claude[i].updatedAt }
+        if takeCursor { picked.append(cursor[j]); j += 1 }
+        else { picked.append(claude[i]); i += 1 }
+    }
+    return picked.sorted { $0.updatedAt > $1.updatedAt }
 }
 
 /// The morning brief ("morning") or the 6 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
-func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, usagePercent: Int?) -> BriefContent {
+func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
     // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
     let red = (ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)), fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)))
@@ -3050,17 +3340,24 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         ]
     } else {
         content.title = "Today's wrap-up."
-        let today = log[dayKey(now)] ?? DayRecord()
-        content.headline = (clockText(working(today)), "working today · \(clockText(waited(today))) waiting for you")
+        let transcripts = cursorByDay ?? cursorTranscriptSecondsByDay(containing: now)
+        let todayKey = dayKey(now)
+        let today = log[todayKey] ?? DayRecord()
+        let todayWorking = dayWorking(today, host: .claude) + cursorWorking(on: todayKey, log: log, transcriptTotals: transcripts)
+        content.headline = (clockText(todayWorking), "working today · \(clockText(waited(today))) waiting for you")
         content.stats = [
             BriefStat(value: "\(today.turns)", label: "Finished", ink: plain.ink, fill: plain.fill),
             BriefStat(value: "\(today.allowed)", label: "Approvals", ink: plain.ink, fill: plain.fill),
-            BriefStat(value: usagePercent.map { "\($0)%" } ?? "–", label: "Usage", ink: plain.ink, fill: plain.fill),
         ]
         let names = DateFormatter()
         names.dateFormat = "EEE"
         content.week = weekDates(containing: now).map { date in
-            BriefBar(label: names.string(from: date), seconds: working(log[dayKey(date)] ?? DayRecord()), isToday: dayKey(date) == dayKey(now))
+            let key = dayKey(date)
+            let record = log[key] ?? DayRecord()
+            let claude = dayWorking(record, host: .claude)
+            let cursor = cursorWorking(on: key, log: log, transcriptTotals: transcripts)
+            return BriefBar(label: names.string(from: date), seconds: claude + cursor,
+                            claudeSeconds: claude, cursorSeconds: cursor, isToday: key == todayKey)
         }
     }
     content.latest = latestSessions(chats).map { chat in
@@ -3881,7 +4178,16 @@ struct CursorUsage {
         if let data = try? JSONEncoder().encode(file) {
             try? data.write(to: folder.appendingPathComponent("cursor-usage.json"))
         }
+        recordCursorUsageSample(self, folder: folder)
     }
+}
+
+struct CursorHistoryFile: Codable {
+    struct Sample: Codable {
+        let t: Double
+        let percent: Int
+    }
+    var samples: [Sample]
 }
 
 struct CursorUsageFile: Codable {
@@ -3907,8 +4213,9 @@ let mochiBundleID = "local.claude-mods.mochi"
 enum UsageFront { case same, claude, cursor, other }
 
 /// Cursor's own helpers count as Cursor, and Claude's as Claude. A helper named "Cursor Helper"
-/// counts too, so a plugin window does not take the reading off the pill
-func usageFront(bundleID: String?, appName: String? = nil) -> UsageFront {
+/// counts too, so a plugin window does not take the reading off the pill. XPC services and other
+/// non-regular apps leave the pill alone — typing often fronts CursorUIViewService for a moment
+func usageFront(bundleID: String?, appName: String? = nil, regular: Bool = true) -> UsageFront {
     guard let bundleID else { return .same }
     if bundleID == mochiBundleID { return .same }
     if bundleID == cursorBundleID || bundleID.hasPrefix(cursorBundleID + ".") { return .cursor }
@@ -3916,6 +4223,10 @@ func usageFront(bundleID: String?, appName: String? = nil) -> UsageFront {
     if let appName {
         if appName == "Cursor" || appName.hasPrefix("Cursor ") { return .cursor }
         if appName == "Claude" || appName.hasPrefix("Claude ") { return .claude }
+    }
+    // Menu extras, input services, and helpers are not a real switch away from Cursor or Claude
+    if !regular || bundleID.contains(".xpc.") || bundleID.hasPrefix("com.apple.TextInputUI") {
+        return .same
     }
     return .other
 }
@@ -3934,10 +4245,243 @@ func bundleToHide(_ host: CompanionHost) -> String {
     host == .cursor ? claudeBundleID : cursorBundleID
 }
 
+let cursorProjectsFolder = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".cursor/projects")
+
+/// One question from a Cursor transcript tag, trimmed for a session title
+func cursorQueryText(_ raw: Substring) -> String? {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\n", with: " ")
+    return text.isEmpty ? nil : clip(text, 48)
+}
+
+/// The first question in a Cursor agent transcript
+func cursorUserQuery(fromHead head: String) -> String? {
+    guard let start = head.range(of: "<user_query>"),
+          let end = head.range(of: "</user_query>", range: start.upperBound..<head.endIndex) else { return nil }
+    return cursorQueryText(head[start.upperBound..<end.lowerBound])
+}
+
+/// The latest question in a Cursor transcript snippet (head, tail, or both)
+func lastCursorUserQuery(in text: String) -> String? {
+    var last: String?
+    var search = text.startIndex
+    while let start = text.range(of: "<user_query>", range: search..<text.endIndex) {
+        guard let end = text.range(of: "</user_query>", range: start.upperBound..<text.endIndex) else { break }
+        if let query = cursorQueryText(text[start.upperBound..<end.lowerBound]) { last = query }
+        search = end.upperBound
+    }
+    return last
+}
+
+/// The latest `<timestamp>` in a Cursor transcript snippet
+func lastCursorTranscriptStamp(in text: String) -> Date? {
+    var last: Date?
+    var search = text.startIndex
+    while let open = text.range(of: "<timestamp>", range: search..<text.endIndex) {
+        guard let close = text.range(of: "</timestamp>", range: open.upperBound..<text.endIndex) else { break }
+        if let date = parseCursorTranscriptStamp(String(text[open.upperBound..<close.lowerBound])) { last = date }
+        search = close.upperBound
+    }
+    return last
+}
+
+/// Head and tail of a transcript: the first question lives at the start, the latest at the end
+func cursorTranscriptEnds(url: URL, headBytes: Int = 8192, tailBytes: Int = 32768) -> (head: String, tail: String) {
+    guard let handle = FileHandle(forReadingAtPath: url.path) else { return ("", "") }
+    defer { try? handle.close() }
+    let head = String(data: handle.readData(ofLength: headBytes), encoding: .utf8) ?? ""
+    let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+    guard size > tailBytes else { return (head, head) }
+    handle.seek(toFileOffset: UInt64(size - tailBytes))
+    let tail = String(data: handle.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return (head, tail)
+}
+
+/// A Cursor agent that has written in the last two minutes is still working
+func cursorChatStatus(modified: Date, now: Date) -> Status {
+    now.timeIntervalSince(modified) < 120 ? .running : .ready
+}
+
+/// One Cursor agent chat from its transcript file. Nil when the file has no question
+func cursorChat(id: String, project: String, head: String, modified: Date, created: Date, now: Date, tail: String = "") -> Chat? {
+    let blob = tail.isEmpty ? head : head + tail
+    let query = lastCursorUserQuery(in: blob) ?? cursorUserQuery(fromHead: head) ?? "Cursor chat"
+    let stamped = lastCursorTranscriptStamp(in: blob)
+    let active: Date
+    if let stamped, stamped.timeIntervalSince(now) <= 120 {
+        active = stamped
+    } else {
+        active = modified
+    }
+    let status = cursorChatStatus(modified: active, now: now)
+    let at = (status == .running ? created : active).timeIntervalSince1970 * 1000
+    let recent = 6 * 3600.0
+    return Chat(id: "cursor-\(id)", title: "Cursor · \(query)", status: status,
+                log: [Event(kind: "turn", text: status == .running ? "Working" : "Done",
+                            detail: project, seconds: nil, at: at)],
+                updatedAt: active.timeIntervalSince1970 * 1000,
+                link: cursorAgentLink(id: id, workspace: cursorWorkspacePath(fromProject: project)), waiting: "",
+                isRecent: now.timeIntervalSince(active) < recent, host: .cursor)
+}
+
+/// Cursor agent chats from ~/.cursor/projects, newest first. Sub-agents are left out
+func readCursorChats(now: Date = Date(), root: URL = cursorProjectsFolder) -> [Chat] {
+    let fm = FileManager.default
+    var chats: [Chat] = []
+    let projects = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+    for project in projects {
+        let folder = project.appendingPathComponent("agent-transcripts")
+        let sessions = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        for session in sessions {
+            let keys = (try? session.resourceValues(forKeys: [.isDirectoryKey]))
+            guard keys?.isDirectory == true else { continue }
+            let id = session.lastPathComponent
+            let file = session.appendingPathComponent("\(id).jsonl")
+            let info = try? file.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+            let modified = info?.contentModificationDate ?? .distantPast
+            guard now.timeIntervalSince(modified) < 7 * 24 * 3600 else { continue }
+            let ends = cursorTranscriptEnds(url: file)
+            guard !ends.head.isEmpty else { continue }
+            let created = info?.creationDate ?? modified
+            if let chat = cursorChat(id: id, project: project.lastPathComponent, head: ends.head, modified: modified,
+                                     created: created, now: now, tail: ends.tail) {
+                chats.append(chat)
+            }
+        }
+    }
+    return chats.sorted { $0.updatedAt > $1.updatedAt }
+}
+
+/// Start of a calendar day from its `days.json` key
+func dayStart(_ key: String) -> Date? { dayFormatter.date(from: key) }
+
+let cursorTranscriptStamp: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "EEEE, MMM d, yyyy, h:mm a"
+    return formatter
+}()
+
+/// Parses `<timestamp>Saturday, Nov 7, 2026, 6:40 PM (UTC+7)</timestamp>` from a transcript line
+func parseCursorTranscriptStamp(_ text: String) -> Date? {
+    var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let open = cleaned.range(of: "(UTC") {
+        cleaned = String(cleaned[..<open.lowerBound]).trimmingCharacters(in: .whitespaces)
+    }
+    return cursorTranscriptStamp.date(from: cleaned)
+}
+
+/// Every `<timestamp>` stamp in a Cursor agent transcript
+func cursorTranscriptStamps(in url: URL) -> [Date] {
+    guard let data = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    var stamps: [Date] = []
+    var search = data.startIndex
+    let openTag = "<timestamp>"
+    let closeTag = "</timestamp>"
+    while let open = data.range(of: openTag, range: search..<data.endIndex) {
+        let after = open.upperBound
+        guard let close = data.range(of: closeTag, range: after..<data.endIndex) else { break }
+        let raw = String(data[after..<close.lowerBound])
+        if let date = parseCursorTranscriptStamp(raw) { stamps.append(date) }
+        search = close.upperBound
+    }
+    return stamps
+}
+
+/// First and last stamp on a day, padded slightly after the last message
+func cursorTranscriptRangeOnDay(stamps: [Date], dayStart start: Date, dayEnd end: Date) -> (Date, Date)? {
+    let onDay = stamps.filter { $0 >= start && $0 < end }.sorted()
+    guard let first = onDay.first, let last = onDay.last else { return nil }
+    let clipEnd = min(last.addingTimeInterval(120), end)
+    guard clipEnd > first else { return nil }
+    return (first, clipEnd)
+}
+
+func mergeDateRanges(_ ranges: [(Date, Date)]) -> [(Date, Date)] {
+    let sorted = ranges.sorted { $0.0 < $1.0 }
+    guard let first = sorted.first else { return [] }
+    var merged: [(Date, Date)] = []
+    var current = first
+    for next in sorted.dropFirst() {
+        if next.0 <= current.1.addingTimeInterval(300) {
+            current.1 = max(current.1, next.1)
+        } else {
+            merged.append(current)
+            current = next
+        }
+    }
+    merged.append(current)
+    return merged
+}
+
+func secondsFromMergedRanges(_ ranges: [(Date, Date)]) -> Int {
+    ranges.reduce(0) { $0 + max(60, Int($1.1.timeIntervalSince($1.0))) }
+}
+
+/// Every Cursor agent transcript on disk: main session plus sub-agents
+func eachCursorTranscriptFile(root: URL = cursorProjectsFolder, visit: (URL) -> Void) {
+    let fm = FileManager.default
+    for project in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+        let transcripts = project.appendingPathComponent("agent-transcripts")
+        guard let sessions = try? fm.contentsOfDirectory(at: transcripts, includingPropertiesForKeys: [.isDirectoryKey]) else { continue }
+        for session in sessions {
+            guard (try? session.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            let id = session.lastPathComponent
+            let main = session.appendingPathComponent("\(id).jsonl")
+            if fm.fileExists(atPath: main.path) { visit(main) }
+            let sub = session.appendingPathComponent("subagents")
+            for file in (try? fm.contentsOfDirectory(at: sub, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "jsonl" {
+                visit(file)
+            }
+        }
+    }
+}
+
+/// Cursor working seconds per day for the week that contains `date`, from transcript timestamps on disk
+func cursorTranscriptSecondsByDay(containing date: Date, root: URL = cursorProjectsFolder) -> [String: Int] {
+    let keys = weekDates(containing: date).map { dayKey($0) }
+    let bounds: [(String, Date, Date)] = keys.compactMap { key in
+        guard let start = dayStart(key) else { return nil }
+        return (key, start, start.addingTimeInterval(86_400))
+    }
+    var rangesByDay = Dictionary(uniqueKeysWithValues: keys.map { ($0, [(Date, Date)]()) })
+    eachCursorTranscriptFile(root: root) { file in
+        let stamps = cursorTranscriptStamps(in: file)
+        for (key, start, end) in bounds {
+            if let range = cursorTranscriptRangeOnDay(stamps: stamps, dayStart: start, dayEnd: end) {
+                rangesByDay[key, default: []].append(range)
+            }
+        }
+    }
+    var totals: [String: Int] = [:]
+    for key in keys {
+        let merged = mergeDateRanges(rangesByDay[key] ?? [])
+        totals[key] = min(86_400, secondsFromMergedRanges(merged))
+    }
+    return totals
+}
+
+/// Working seconds for one host on one day, from `days.json`
+func dayWorking(_ record: DayRecord, host: CompanionHost) -> Int {
+    record.chats.reduce(0) { total, pair in
+        let isCursor = pair.key.hasPrefix("cursor-")
+        guard (host == .cursor) == isCursor else { return total }
+        return total + (pair.value.working ?? 0)
+    }
+}
+
+/// Cursor working time for a day: live tally from Mochi, or transcript spans when Mochi was not open
+func cursorWorking(on day: String, log: DayLog, transcriptTotals: [String: Int]) -> Int {
+    let record = log[day] ?? DayRecord()
+    return max(dayWorking(record, host: .cursor), transcriptTotals[day] ?? 0)
+}
+
 /// Claude and Cursor each hide unless that app is the one in front. A browser hides both.
 /// Nil hides nothing, so a missing front app does not tuck them away
-func appsToHide(frontBundleID: String?, appName: String? = nil) -> [String] {
-    switch usageFront(bundleID: frontBundleID, appName: appName) {
+func appsToHide(frontBundleID: String?, appName: String? = nil, regular: Bool = true) -> [String] {
+    switch usageFront(bundleID: frontBundleID, appName: appName, regular: regular) {
     case .same: return []
     case .cursor: return [claudeBundleID]
     case .claude: return [cursorBundleID]
@@ -4176,6 +4720,11 @@ func cursorPlanName(_ data: Data) -> String? {
     return name
 }
 
+/// Whether a Cursor access token can be sent as a Bearer value. Encrypted-at-rest blobs are not JWTs.
+func cursorAccessTokenUsable(_ value: String) -> Bool {
+    !value.hasPrefix("cursor-safe-storage:") && value.contains(".")
+}
+
 /// One value from Cursor's state database, read only. The key has to be one Mochi asks for
 func cursorStateValue(_ key: String) -> String? {
     let allowed = ["cursorAuth/accessToken", "cursorAuth/stripeMembershipType"]
@@ -4205,6 +4754,37 @@ struct CursorFetch {
     var problem: String?
 }
 
+/// How long to wait between Cursor usage polls. Failures retry quickly; Cursor in front stays near live.
+func cursorRefreshMinInterval(cursorFront: Bool, lastFailed: Bool) -> TimeInterval {
+    if lastFailed { return 8 }
+    if cursorFront { return 12 }
+    return 45
+}
+
+/// Whether another Cursor usage poll is due.
+func shouldRefreshCursor(now: Date, attemptedAt: Date?, cursorFront: Bool, lastFailed: Bool, busy: Bool, force: Bool) -> Bool {
+    if busy { return false }
+    if force { return true }
+    guard let attempted = attemptedAt else { return true }
+    return now.timeIntervalSince(attempted) >= cursorRefreshMinInterval(cursorFront: cursorFront, lastFailed: lastFailed)
+}
+
+/// Whether Cursor (or a Cursor helper) is the front app right now
+func isCursorFrontNow() -> Bool {
+    let app = NSWorkspace.shared.frontmostApplication
+    return usageFront(bundleID: app?.bundleIdentifier, appName: app?.localizedName,
+                      regular: app?.activationPolicy == .regular) == .cursor
+}
+
+/// A Cursor dashboard call, retried when the network or server hiccups
+func cursorPostWithRetry(_ token: String, path: String, attempts: Int = 3) -> (code: Int, body: Data)? {
+    for attempt in 0..<attempts {
+        if let result = cursorPost(token, path: path) { return result }
+        if attempt + 1 < attempts { Thread.sleep(forTimeInterval: 1.5) }
+    }
+    return nil
+}
+
 /// Asks Cursor for this cycle's usage. The sign-in Cursor saved on this Mac is used, and it is not written anywhere
 func refreshCursorUsage(_ done: @escaping (CursorFetch) -> Void) {
     DispatchQueue.global(qos: .utility).async {
@@ -4216,8 +4796,11 @@ func refreshCursorUsage(_ done: @escaping (CursorFetch) -> Void) {
         guard let token = cursorStateValue("cursorAuth/accessToken") else {
             done(CursorFetch(problem: "Sign in to Cursor, then press Refresh.")); return
         }
+        guard cursorAccessTokenUsable(token) else {
+            done(CursorFetch(problem: "Couldn't refresh from Cursor.")); return
+        }
         let fallback = cursorPlanLabel(cursorStateValue("cursorAuth/stripeMembershipType") ?? "")
-        guard let response = cursorPost(token, path: "/aiserver.v1.DashboardService/GetCurrentPeriodUsage") else {
+        guard let response = cursorPostWithRetry(token, path: "/aiserver.v1.DashboardService/GetCurrentPeriodUsage") else {
             done(CursorFetch(problem: "Cursor usage did not come through.")); return
         }
         if response.code == 401 || response.code == 403 {
@@ -4226,7 +4809,7 @@ func refreshCursorUsage(_ done: @escaping (CursorFetch) -> Void) {
         guard response.code == 200, var usage = parseCursorUsage(response.body, plan: fallback, at: Date()) else {
             done(CursorFetch(problem: "Cursor usage did not come through.")); return
         }
-        if let plan = cursorPost(token, path: "/aiserver.v1.DashboardService/GetPlanInfo"),
+        if let plan = cursorPostWithRetry(token, path: "/aiserver.v1.DashboardService/GetPlanInfo"),
            plan.code == 200, let name = cursorPlanName(plan.body) {
             usage.plan = name
         }
@@ -4422,6 +5005,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var cursorProblem = ""
     var cursorBusy = false
     var cursorCheckedAt: Date?
+    var cursorAttemptedAt: Date?
     /// The Mac's draw, and today's energy, saved every half minute
     var power: PowerReading?
     var powerLog = PowerLog.read() ?? PowerLog(day: dayKey(Date()), wattHours: 0, at: Date())
@@ -4656,15 +5240,19 @@ func playAtTwoThirds(_ sound: NSSound?) {
         // Keep the usage numbers fresh in the background, so a click shows them at once
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            self?.followHost(app?.bundleIdentifier, name: app?.localizedName)
+            self?.followHost(app)
         }
-        let frontApp = NSWorkspace.shared.frontmostApplication
-        followHost(frontApp?.bundleIdentifier, name: frontApp?.localizedName)
+        // Seed the pill from the last saved readings before the first network check
+        if let known = Usage.read() { usage = known; view.usage = known }
+        if let known = CursorUsage.read() { cursorUsage = known; view.cursorUsage = known }
+        followHost(NSWorkspace.shared.frontmostApplication)
+        // Until Cursor or Claude has been in front this session, keep the last saved reading on the pill
+        if view.shownHost == nil {
+            if cursorUsage != nil { view.shownHost = .cursor }
+            else if usage != nil { view.shownHost = .claude }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.refreshUsageQuietly()
-            self?.refreshCursorQuietly()
-        }
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.refreshCursorQuietly()
         }
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
@@ -4700,8 +5288,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let testChat { chats.append(testChat) }
         checkUsage()
         samplePower()
-        let frontNow = NSWorkspace.shared.frontmostApplication
-        followHost(frontNow?.bundleIdentifier, name: frontNow?.localizedName)
+        followHost(NSWorkspace.shared.frontmostApplication)
+        maybeRefreshCursorUsage()
         view.host = host
         if let cursorUsage { view.cursorUsage = cursorUsage }
         view.status = chats.filter { $0.isOpen && $0.isRecent }.max(by: { $0.status.urgency < $1.status.urgency })?.status ?? .idle
@@ -4866,36 +5454,46 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// The front app stays visible. Claude hides when Claude is not that app, and Cursor does the same.
-    /// Mochi herself, and a Cursor or Claude helper, leave the reading that is already on the pill
-    func followHost(_ bundleID: String?, name: String? = nil) {
-        let switched = usageFront(bundleID: bundleID, appName: name)
+    /// Mochi herself, helpers, and any other app leave the last reading on the pill
+    func followHost(_ app: NSRunningApplication?) {
+        followHost(app?.bundleIdentifier, name: app?.localizedName, regular: app?.activationPolicy == .regular)
+    }
+
+    func followHost(_ bundleID: String?, name: String? = nil, regular: Bool = true) {
+        let switched = usageFront(bundleID: bundleID, appName: name, regular: regular)
         if switched == .same { return }
-        let front: CompanionHost? = switched == .cursor ? .cursor : switched == .claude ? .claude : nil
-        if view.shownHost != front {
-            view.shownHost = front
-            view.needsDisplay = true
+        if switched == .other {
+            for bundle in appsToHide(frontBundleID: bundleID, appName: name, regular: regular) {
+                NSRunningApplication.runningApplications(withBundleIdentifier: bundle).forEach { $0.hide() }
+            }
+            return
         }
-        if let next = front {
-            let changed = next != host
-            host = next
-            view.host = next
-            if let cursorUsage { view.cursorUsage = cursorUsage }
+        let next: CompanionHost = switched == .cursor ? .cursor : .claude
+        if view.shownHost != next {
+            view.shownHost = next
             view.needsDisplay = true
-            let shownBundle = next == .cursor ? cursorBundleID : claudeBundleID
-            NSRunningApplication.runningApplications(withBundleIdentifier: shownBundle).forEach { $0.unhide() }
-            if changed {
-                mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
-                if bubble.isVisible {
-                    if bubbleFrame.scroll.documentView === chatList {
-                        fillChatList()
-                        showList()
-                    } else if bubbleFrame.scroll.documentView === usagePanel {
-                        renderUsagePanel(fresh: false, updating: false)
-                    }
+            mochiLog(next == .cursor ? "pill: Cursor" : "pill: Claude")
+        }
+        let changed = next != host
+        host = next
+        view.host = next
+        if let cursorUsage { view.cursorUsage = cursorUsage }
+        view.needsDisplay = true
+        let shownBundle = next == .cursor ? cursorBundleID : claudeBundleID
+        NSRunningApplication.runningApplications(withBundleIdentifier: shownBundle).forEach { $0.unhide() }
+        if changed, next == .cursor { refreshCursorQuietly(force: true) }
+        if changed {
+            mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
+            if bubble.isVisible {
+                if bubbleFrame.scroll.documentView === chatList {
+                    fillChatList()
+                    showList()
+                } else if bubbleFrame.scroll.documentView === usagePanel {
+                    renderUsagePanel(fresh: false, updating: false)
                 }
             }
         }
-        for bundle in appsToHide(frontBundleID: bundleID, appName: name) {
+        for bundle in appsToHide(frontBundleID: bundleID, appName: name, regular: regular) {
             NSRunningApplication.runningApplications(withBundleIdentifier: bundle).forEach { $0.hide() }
         }
     }
@@ -4911,7 +5509,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         group.enter()
         refreshUsageQuietly { ok in claudeOK = ok; group.leave() }
         group.enter()
-        refreshCursorQuietly { ok in cursorOK = ok; group.leave() }
+        refreshCursorQuietly(force: true) { ok in cursorOK = ok; group.leave() }
         group.notify(queue: .main) { [weak self] in
             self?.renderUsagePanel(fresh: claudeOK || cursorOK, updating: false)
         }
@@ -4938,35 +5536,51 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
     }
 
-    /// Asks Cursor for usage in the background. Skipped when a check is already running, or the last one
-    /// was under 45 seconds ago
-    func refreshCursorQuietly(_ done: ((Bool) -> Void)? = nil) {
-        if cursorBusy { done?(false); return }
-        if let last = cursorCheckedAt, Date().timeIntervalSince(last) < 45 {
-            done?(true)
+    /// Polls Cursor for usage when the timer in `look()` says it is due
+    func maybeRefreshCursorUsage(now: Date = Date()) {
+        let failed = !cursorProblem.isEmpty
+        let front = isCursorFrontNow() || host == .cursor
+        guard shouldRefreshCursor(now: now, attemptedAt: cursorAttemptedAt, cursorFront: front,
+                                  lastFailed: failed, busy: cursorBusy, force: false) else { return }
+        refreshCursorQuietly()
+    }
+
+    /// Asks Cursor for usage in the background. While Cursor is in front, polls about every 12 seconds;
+    /// after a failure, retries about every 8 seconds until a read comes through.
+    func refreshCursorQuietly(force: Bool = false, _ done: ((Bool) -> Void)? = nil) {
+        let failed = !cursorProblem.isEmpty
+        let front = isCursorFrontNow() || host == .cursor
+        if !force, !shouldRefreshCursor(now: Date(), attemptedAt: cursorAttemptedAt, cursorFront: front,
+                                        lastFailed: failed, busy: cursorBusy, force: false) {
+            done?(false)
             return
         }
+        if cursorBusy { done?(false); return }
+        cursorAttemptedAt = Date()
         cursorBusy = true
         refreshCursorUsage { [weak self] fetch in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.cursorBusy = false
+                let usageChanged = fetch.usage != nil
+                let problemChanged = fetch.problem != nil && fetch.problem != self.cursorProblem
                 if let usage = fetch.usage {
                     self.cursorCheckedAt = Date()
                     self.cursorUsage = usage
                     self.cursorProblem = ""
                     mochiLog("cursor usage \(usage.percent)% \(usage.plan)")
                 } else if let problem = fetch.problem {
+                    if problemChanged { mochiLog("cursor usage: \(problem)") }
                     self.cursorProblem = problem
-                    mochiLog("cursor usage: \(problem)")
                 }
                 if let cursorUsage = self.cursorUsage { self.view.cursorUsage = cursorUsage }
                 self.chatList.cursor = self.host == .cursor ? self.cursorUsage : nil
                 self.view.needsDisplay = true
+                guard usageChanged || problemChanged else { done?(fetch.usage != nil); return }
                 if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.chatList {
                     self.showList()
                 } else if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.usagePanel {
-                    self.renderUsagePanel(fresh: true, updating: false)
+                    self.renderUsagePanel(fresh: fetch.usage != nil, updating: false)
                 }
                 done?(fetch.usage != nil)
             }
@@ -4993,7 +5607,17 @@ func playAtTwoThirds(_ sound: NSSound?) {
         usagePanel.power = power
         usagePanel.wattHours = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
         usagePanel.checking = updating
-        usagePanel.footnote = updating ? "Checking now…" : fresh ? "Checked \(when)" : "Last read \(when)"
+        if updating {
+            usagePanel.footnote = "Checking now…"
+        } else if host == .cursor, !cursorProblem.isEmpty, cursor == nil {
+            usagePanel.footnote = cursorProblem
+        } else if host == .cursor, !cursorProblem.isEmpty {
+            usagePanel.footnote = "Last read \(when)"
+        } else if host == .cursor, let ok = cursorCheckedAt, Date().timeIntervalSince(ok) > 90 {
+            usagePanel.footnote = "Last successful read \(when) — rechecking…"
+        } else {
+            usagePanel.footnote = fresh ? "Checked \(when)" : "Last read \(when)"
+        }
         showUsagePanel(accent: Usage.color(worst))
         mochiLog("usage box shown: \(usageState(worst: worst)), \(updating ? "checking" : fresh ? "fresh" : "last read")")
         // It closes on its own fifteen seconds after a reading, long enough to read it, and stays open while Claude is being asked
@@ -5491,8 +6115,8 @@ final class NotePanel: NSPanel {
         chatList.wattHours = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
         chatList.title = boardTitle(needing: needing)
         chatList.titleColor = view.status.color
-        chatList.subtitle = chats.isEmpty ? "No Claude chats yet" : boardSubtitle(approving: approving, open: open)
-        chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it in Claude" : nil
+        chatList.subtitle = chats.isEmpty ? "No chats yet" : boardSubtitle(approving: approving, open: open)
+        chatList.footer = chats.contains(where: { $0.link != nil }) ? "Click a chat to open it" : nil
         chatList.runningSince = runningSince
         chatList.countdowns = countdowns
         let running = chats.filter { $0.isOpen && $0.status == .running }.map(\.title)
@@ -5711,7 +6335,7 @@ final class NotePanel: NSPanel {
             mochiLog("brief: wrap-up held until 6:00 PM")
             return
         }
-        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, usagePercent: usage?.fiveHour), live: kind)
+        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer), live: kind)
         mochiLog("brief: \(kind) shown")
     }
 
@@ -5758,7 +6382,7 @@ final class NotePanel: NSPanel {
     /// While the morning brief or the wrap-up is open, its numbers and lists update every second
     func refreshBrief() {
         guard let kind = briefLiveKind, briefPanel.isVisible, let brief = currentBrief else { return }
-        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, usagePercent: usage?.fiveHour)
+        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer)
         let height = brief.fittingHeight()
         if height != briefPanel.frame.height {
             brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)

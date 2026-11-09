@@ -32,6 +32,16 @@ check("a report from an older plugin has no mode, so it cannot switch modes", ol
 // Usage colours, which her tired eyes follow
 let cursorBody = #"{"billingCycleStart":"2026-11-01T00:00:00Z","billingCycleEnd":"2026-12-01T00:00:00Z","planUsage":{"totalSpend":1288,"includedSpend":1288,"limit":2000,"autoPercentUsed":3.9,"apiPercentUsed":2.6,"totalPercentUsed":3.7},"spendLimitUsage":{"individualUsed":150}}"#.data(using: .utf8)!
 let cursorRead = parseCursorUsage(cursorBody, plan: "Pro", at: Date(timeIntervalSince1970: 0))
+check("after a failed poll, Cursor retries sooner than the live interval", cursorRefreshMinInterval(cursorFront: true, lastFailed: true) < cursorRefreshMinInterval(cursorFront: true, lastFailed: false))
+check("Cursor in front polls more often than when it is in the background",
+      cursorRefreshMinInterval(cursorFront: true, lastFailed: false) < cursorRefreshMinInterval(cursorFront: false, lastFailed: false))
+let pollNow = Date()
+check("a forced poll is always due", shouldRefreshCursor(now: pollNow, attemptedAt: pollNow, cursorFront: true, lastFailed: false, busy: false, force: true))
+check("a poll still running blocks another", !shouldRefreshCursor(now: pollNow, attemptedAt: nil, cursorFront: true, lastFailed: false, busy: true, force: false))
+check("a poll respects the wait after the last attempt",
+      !shouldRefreshCursor(now: pollNow, attemptedAt: pollNow, cursorFront: true, lastFailed: false, busy: false, force: false))
+check("a poll is due once the wait has passed",
+      shouldRefreshCursor(now: pollNow.addingTimeInterval(20), attemptedAt: pollNow, cursorFront: true, lastFailed: false, busy: false, force: false))
 check("included spend over the limit is the percent Cursor's sentence uses", cursorRead?.percent == 64)
 check("auto and api stay their own percents", cursorRead?.autoPercent == 4 && cursorRead?.apiPercent == 3)
 check("dollars and on-demand spend are kept", cursorRead?.spent == "$12.88 of $20" && cursorRead?.onDemand == "On-demand $1.50")
@@ -41,6 +51,37 @@ let weekBody = #"{"billingCycleStart":"1795300000000","billingCycleEnd":"1795904
 let weekRead = parseCursorUsage(weekBody, plan: "Premium", at: Date(timeIntervalSince1970: 0))
 check("a seven-day cycle is this week, even when the percent field disagrees", weekRead?.percent == 0 && weekRead?.period == "This week")
 check("a body with no plan usage reads nothing", parseCursorUsage(Data("{}".utf8), plan: "Pro", at: Date()) == nil)
+check("an encrypted Cursor token is not sent as a Bearer value",
+      !cursorAccessTokenUsable("cursor-safe-storage:v1:abc"))
+check("a Cursor JWT can be sent", cursorAccessTokenUsable("aaa.bbb.ccc"))
+let graphNow = Date(timeIntervalSince1970: 1_794_000_000)
+let graphFolder = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-usage-graph-\(UUID().uuidString)")
+try! FileManager.default.createDirectory(at: graphFolder, withIntermediateDirectories: true)
+let graphFile = graphFolder.appendingPathComponent("plan.json")
+let graphJSON = #"{"samples":[{"t":\#((graphNow.timeIntervalSince1970 - 3 * 24 * 3600) * 1000),"u":{"fh":10,"sd":20}},{"t":\#((graphNow.timeIntervalSince1970 - 3600) * 1000),"u":{"fh":40,"sd":50}},{"t":\#(graphNow.timeIntervalSince1970 * 1000),"u":{"fh":70,"sd":80}}]}"#
+try! graphJSON.data(using: .utf8)!.write(to: graphFile)
+let graphPoints = usageHistory(from: graphFile, now: graphNow)
+check("the usage graph is one reading per hour for the last 6 hours", graphPoints.count == 6)
+check("an hour uses the latest reading from that hour",
+      graphPoints.suffix(2).map(\.fiveHour) == [40, 70] && graphPoints.suffix(2).map(\.week) == [50, 80])
+check("hours with no new reading keep the last one", graphPoints.dropLast(2).allSatisfy { $0.fiveHour == 10 && $0.week == 20 })
+check("a live reading newer than the file is added",
+      usageHistory(from: graphFile, live: UsagePoint(at: (graphNow.timeIntervalSince1970 + 60) * 1000, fiveHour: 72, week: 81), now: graphNow).last?.fiveHour == 72)
+check("too many readings are thinned to a readable set",
+      thinUsagePoints((0..<200).map { UsagePoint(at: Double($0), fiveHour: $0, week: $0) }, limit: 48).count == 48)
+check("one reading is not enough for a graph",
+      drawUsageGraphBlock(points: [UsagePoint(at: 1, fiveHour: 10, week: 10)], host: .claude, x: 0, y: 0, width: 200, draw: false) == 0)
+check("two readings make a graph",
+      drawUsageGraphBlock(points: graphPoints, host: .claude, x: 0, y: 10, width: 200, draw: false) > 10)
+let cursorHist = graphFolder.appendingPathComponent("cursor-usage-history.json")
+recordCursorUsageSample(CursorUsage(plan: "Pro", percent: 22, spent: "", onDemand: "", period: "This week", at: graphNow.timeIntervalSince1970 * 1000), folder: graphFolder)
+recordCursorUsageSample(CursorUsage(plan: "Pro", percent: 30, spent: "", onDemand: "", period: "This week", at: (graphNow.timeIntervalSince1970 + 20 * 60) * 1000), folder: graphFolder)
+check("Cursor samples in the same hour keep the latest percent",
+      cursorUsageHistory(from: cursorHist, now: graphNow.addingTimeInterval(20 * 60)).map(\.week) == [30])
+check("a graph caption today is a clock", usageGraphCaption(graphNow.timeIntervalSince1970 * 1000, now: graphNow).contains(":"))
+check("a graph caption on another day is the date",
+      usageGraphCaption((graphNow.timeIntervalSince1970 - 3 * 24 * 3600) * 1000, now: graphNow).contains("Nov") ||
+      usageGraphCaption((graphNow.timeIntervalSince1970 - 3 * 24 * 3600) * 1000, now: graphNow).contains("Oct"))
 check("Cursor in front connects her to Cursor", companionHost(bundleID: cursorBundleID) == .cursor)
 check("Claude in front connects her to Claude", companionHost(bundleID: claudeBundleID) == .claude)
 check("another app does not switch her", companionHost(bundleID: "com.apple.Safari") == nil)
@@ -56,11 +97,38 @@ check("a plugin helper named Cursor Helper counts as Cursor", usageFront(bundleI
 check("Mochi herself leaves the pill alone", usageFront(bundleID: mochiBundleID) == .same)
 check("no front app leaves the pill alone", usageFront(bundleID: nil) == .same)
 check("a browser takes both readings off", usageFront(bundleID: "com.apple.Safari") == .other)
+check("an input service leaves the pill alone", usageFront(bundleID: "com.apple.TextInputUI.xpc.CursorUIViewService", appName: "CursorUIViewService") == .same)
+check("a non-regular helper leaves the pill alone", usageFront(bundleID: "com.apple.Safari", regular: false) == .same)
 check("Cursor in front with a reading shows Cursor", pillHost(front: .cursor, hasClaude: true, hasCursor: true) == .cursor)
 check("Cursor with no reading yet keeps the Claude one", pillHost(front: .cursor, hasClaude: true, hasCursor: false) == .claude)
 check("Claude with no reading yet keeps the Cursor one", pillHost(front: .claude, hasClaude: false, hasCursor: true) == .cursor)
-check("another app shows neither usage", pillHost(front: nil, hasClaude: true, hasCursor: true) == nil)
+check("with no front yet and both readings, the pill waits", pillHost(front: nil, hasClaude: true, hasCursor: true) == nil)
+check("another app is not Cursor or Claude", usageFront(bundleID: "com.apple.finder") == .other)
 check("a front app with no reading at all shows nothing", pillHost(front: .cursor, hasClaude: false, hasCursor: false) == nil)
+let cursorHead = "<timestamp>Saturday, Nov 7, 2026, 11:12 AM (UTC+7)</timestamp>\n<user_query>\nI want to view Cursor usage via Mochi.\n</user_query>"
+check("a Cursor transcript names the first question", cursorUserQuery(fromHead: cursorHead) == "I want to view Cursor usage via Mochi.")
+let cursorTail = "<timestamp>Monday, Nov 9, 2026, 7:51 AM (UTC+7)</timestamp>\n<user_query>\nLatest sessions from Cursor and Claude\n</user_query>"
+check("a later Cursor question becomes the session title",
+      lastCursorUserQuery(in: cursorHead + cursorTail) == "Latest sessions from Cursor and Claude")
+let cursorNow = Date(timeIntervalSince1970: 1_700_000_000)
+check("a Cursor chat still writing is running", cursorChatStatus(modified: cursorNow.addingTimeInterval(-30), now: cursorNow) == .running)
+check("a Cursor chat quiet for three minutes is done", cursorChatStatus(modified: cursorNow.addingTimeInterval(-180), now: cursorNow) == .ready)
+let cursorDone = cursorChat(id: "abc", project: "Claude-Mods", head: cursorHead, modified: cursorNow, created: cursorNow.addingTimeInterval(-600), now: cursorNow.addingTimeInterval(300))
+check("a finished Cursor chat is listed as Cursor", cursorDone?.host == .cursor && cursorDone?.status == .ready)
+check("a finished Cursor chat keeps the question in the title", cursorDone?.title == "Cursor · I want to view Cursor usage via Mochi.")
+check("a Cursor project slug is the folder on disk",
+      cursorWorkspacePath(fromProject: "Users-emma-Documents-Claude-Mods") == "/Users/emma/Documents/Claude Mods")
+check("an empty Cursor window has no folder", cursorWorkspacePath(fromProject: "empty-window") == nil)
+let cursorJump = cursorAgentLink(id: "abc", workspace: "/Users/emma/Documents/Claude Mods")
+check("a Cursor chat jumps through Cursor's agent link",
+      cursorJump.contains("anysphere.cursor-deeplink/agent") && cursorJump.contains("id=abc"))
+check("the listed Cursor chat carries that jump",
+      cursorDone?.link?.contains("anysphere.cursor-deeplink/agent") == true && cursorDone?.link?.contains("id=abc") == true)
+check("an old cursor://chat link still names the agent",
+      cursorAgentID(from: URL(string: "cursor://chat/abc")!) == "abc")
+let cursorBrief = briefContent(kind: "morning", chats: [cursorDone!], log: [:], now: cursorNow, offer: nil)
+check("the morning brief lists a Cursor chat", cursorBrief.latest.first?.left.hasPrefix("Cursor ·") == true)
+check("the morning brief counts a finished Cursor chat as not waiting", cursorBrief.stats.map(\.value).prefix(2) == ["0", "0"])
 check("discharging 580 mA at 12.864 V is about 7.5 W", abs(powerWatts(milliamps: -580, millivolts: 12864) - 7.461) < 0.01)
 check("charging current is not counted as draw", powerWatts(milliamps: 580, millivolts: 12864) < 0)
 check("a small draw reads with a decimal", powerWattsText(7.46) == "7.5 W")
@@ -364,9 +432,9 @@ let briefChats = [
     Chat(id: "b", title: "Redo the search", status: .running, log: [], updatedAt: 200, link: nil, waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "auto", canSwitchMode: true),
 ]
 let briefLog: DayLog = [:]
-let morning = briefContent(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
+let morning = briefContent(kind: "morning", chats: briefChats, log: briefLog, now: briefAt(8, 0), offer: nil)
 check("the morning brief counts the chats waiting and running", morning.stats.map { $0.value }.prefix(2) == ["1", "1"])
-let quietMorning = briefContent(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil, usagePercent: nil)
+let quietMorning = briefContent(kind: "morning", chats: [], log: briefLog, now: briefAt(8, 0), offer: nil)
 var dayWork: DayLog = [:]
 dayWork[dayKey(briefAt(20, 0))] = {
     var record = DayRecord()
@@ -374,13 +442,32 @@ dayWork[dayKey(briefAt(20, 0))] = {
     record.allowed = 12
     record.chats["a"] = ChatDay(title: "Redo the search", turns: 3, working: 7800, waiting: 600)
     record.chats["b"] = ChatDay(title: "Build the report", turns: 2, working: 3900, waiting: 480)
+    record.chats["cursor-mock"] = ChatDay(title: "Cursor · wrap-up chart", turns: 1, working: 329)
     return record
 }()
-let evening = briefContent(kind: "evening", chats: [], log: dayWork, now: briefAt(20, 0), offer: nil, usagePercent: 38)
-check("the wrap-up headline is today's working time", evening.headline?.big == "3h 15m")
-check("the wrap-up counts finished chats, approvals and usage", evening.stats.map { $0.value } == ["5", "12", "38%"])
+let evening = briefContent(kind: "evening", chats: [], log: dayWork, now: briefAt(20, 0), offer: nil, cursorByDay: [:])
+check("the wrap-up headline is today's working time", evening.headline?.big == "3h 20m")
+check("the wrap-up counts finished chats and approvals", evening.stats.map { $0.value } == ["5", "12"])
 check("the wrap-up chart has a bar for each day with today marked", evening.week.count == 7 && evening.week.filter { $0.isToday }.count == 1)
-let offerContent = briefContent(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23)), usagePercent: nil)
+check("the wrap-up week chart splits Cursor working time",
+      evening.week.first(where: \.isToday)?.cursorSeconds == 329 && evening.week.first(where: \.isToday)?.claudeSeconds == 11_700)
+check("a Cursor transcript stamp reads in the local time zone",
+      parseCursorTranscriptStamp("Wednesday, Oct 22, 2026, 9:00 AM (UTC+7)") == briefAt(9, 0))
+let weekRoot = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-cursor-week-\(UUID().uuidString)")
+try! FileManager.default.createDirectory(at: weekRoot.appendingPathComponent("p/agent-transcripts/s1/subagents", isDirectory: true), withIntermediateDirectories: true)
+let stampLine = #"{"text":"<timestamp>Wednesday, Oct 22, 2026, 9:00 AM (UTC+7)</timestamp>\n"}"#
+let stampEnd = #"{"text":"<timestamp>Wednesday, Oct 22, 2026, 11:00 AM (UTC+7)</timestamp>\n"}"#
+let weekFile = weekRoot.appendingPathComponent("p/agent-transcripts/s1/s1.jsonl")
+try! Data((stampLine + "\n" + stampEnd).utf8).write(to: weekFile)
+let subStart = #"{"text":"<timestamp>Wednesday, Oct 22, 2026, 2:00 PM (UTC+7)</timestamp>\n"}"#
+let subEnd = #"{"text":"<timestamp>Wednesday, Oct 22, 2026, 3:30 PM (UTC+7)</timestamp>\n"}"#
+let subFile = weekRoot.appendingPathComponent("p/agent-transcripts/s1/subagents/sub.jsonl")
+try! Data((subStart + "\n" + subEnd).utf8).write(to: subFile)
+let weekEvening = briefAt(20, 0)
+let transcriptWeek = cursorTranscriptSecondsByDay(containing: weekEvening, root: weekRoot)
+check("Cursor week bars use transcript message times, merged across agents",
+      transcriptWeek[dayKey(weekEvening)] == 2 * 3600 + 2 * 60 + 92 * 60)
+let offerContent = briefContent(kind: "evening", chats: [], log: briefLog, now: briefAt(20, 0), offer: ResetOffer(count: 1, useBy: briefAt(23, 23)))
 check("the brief shows an open reset offer", offerContent.footer?.hasPrefix("Reset offer: 1 left") == true)
 
 // Agents are read from their own transcripts: the task is the first user message, and an agent is running if it was active in the last two minutes
@@ -417,11 +504,20 @@ let manySessions = (0..<10).map { Chat(id: "s\($0)", title: "Session \($0)", sta
 let newestSeven = latestSessions(manySessions)
 check("the latest sessions are the seven most recently active", newestSeven.count == 7 && newestSeven.first?.id == "s9" && newestSeven.last?.id == "s3")
 check("with fewer than seven sessions, all of them are listed", latestSessions(Array(manySessions.prefix(3))).count == 3)
-check("the brief carries the latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.count == 7)
+let mixedLatest = latestSessions(manySessions + [
+    Chat(id: "cursor-old", title: "Cursor · older", status: .ready, log: [], updatedAt: -1, link: nil, waiting: "", isRecent: true, host: .cursor)
+])
+check("latest sessions still keep a Cursor row when Claude has newer chats",
+      mixedLatest.contains { $0.host == .cursor } && mixedLatest.contains { $0.host != .cursor })
+let continued = cursorChat(id: "abc", project: "Claude-Mods", head: cursorHead, modified: cursorNow,
+                           created: cursorNow.addingTimeInterval(-600), now: cursorNow.addingTimeInterval(300), tail: cursorTail)
+check("a continued Cursor chat uses the latest question",
+      continued?.title == "Cursor · Latest sessions from Cursor and Claude")
+check("the brief carries the latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil).latest.count == 7)
 
 // Each latest session carries its real chat link, so a click opens that chat
 let linked = [Chat(id: "L", title: "Linked session", status: .ready, log: [], updatedAt: 5, link: "claude://code/continue?session=abc", waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
-check("a session row carries its chat link", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.link == "claude://code/continue?session=abc")
+check("a session row carries its chat link", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil).latest.first?.link == "claude://code/continue?session=abc")
 
 // The week panel takes a new day record while it is open, so its chart moves live
 let liveWeek = WeekView(log: [:], usage: nil, now: Date(), colorFor: { _ in .gray })
@@ -478,7 +574,7 @@ check("a missing looks file reads as none", readChatLooks(from: looksFile.append
 try? FileManager.default.removeItem(at: looksFile)
 
 // The brief's rows carry the chat id, so each row can wear that chat's skin
-check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil, usagePercent: nil).latest.first?.chatID == "L")
+check("a latest-session row carries its chat id", briefContent(kind: "evening", chats: linked, log: [:], now: Date(), offer: nil).latest.first?.chatID == "L")
 
 // The wrap-up's top chats carry the chat id too, so each wears its skin and opens its own chat
 
