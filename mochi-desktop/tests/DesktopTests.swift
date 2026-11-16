@@ -51,9 +51,6 @@ let weekBody = #"{"billingCycleStart":"1795300000000","billingCycleEnd":"1795904
 let weekRead = parseCursorUsage(weekBody, plan: "Premium", at: Date(timeIntervalSince1970: 0))
 check("a seven-day cycle is this week, even when the percent field disagrees", weekRead?.percent == 0 && weekRead?.period == "This week")
 check("a body with no plan usage reads nothing", parseCursorUsage(Data("{}".utf8), plan: "Pro", at: Date()) == nil)
-check("an encrypted Cursor token is not sent as a Bearer value",
-      !cursorAccessTokenUsable("cursor-safe-storage:v1:abc"))
-check("a Cursor JWT can be sent", cursorAccessTokenUsable("aaa.bbb.ccc"))
 let graphNow = Date(timeIntervalSince1970: 1_794_000_000)
 let graphFolder = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-usage-graph-\(UUID().uuidString)")
 try! FileManager.default.createDirectory(at: graphFolder, withIntermediateDirectories: true)
@@ -79,6 +76,12 @@ recordCursorUsageSample(CursorUsage(plan: "Pro", percent: 30, spent: "", onDeman
 check("Cursor samples in the same hour keep the latest percent",
       cursorUsageHistory(from: cursorHist, now: graphNow.addingTimeInterval(20 * 60)).map(\.week) == [30])
 check("a graph caption today is a clock", usageGraphCaption(graphNow.timeIntervalSince1970 * 1000, now: graphNow).contains(":"))
+check("old readings keep their own times instead of filling today",
+      usageProgress([
+          UsagePoint(at: (graphNow.timeIntervalSince1970 - 4 * 24 * 3600) * 1000, fiveHour: 10, week: 20),
+          UsagePoint(at: (graphNow.timeIntervalSince1970 - 2 * 24 * 3600) * 1000, fiveHour: 40, week: 50),
+      ], now: graphNow).map(\.fiveHour) == [10, 40])
+check("a reading from the last six hours uses the hourly line", usageProgress(graphPoints, now: graphNow).count == 6)
 check("a graph caption on another day is the date",
       usageGraphCaption((graphNow.timeIntervalSince1970 - 3 * 24 * 3600) * 1000, now: graphNow).contains("Nov") ||
       usageGraphCaption((graphNow.timeIntervalSince1970 - 3 * 24 * 3600) * 1000, now: graphNow).contains("Oct"))
@@ -404,6 +407,21 @@ check("a session line with no reset time still reads", usageReading(in: usageAft
 check("a week line with a reset time reads both", usageReading(in: usageAfterReset, line: "Current week[^:]*")?.percent == 0 && usageReading(in: usageAfterReset, line: "Current week[^:]*")?.resets == "Oct 25 at 2am (Asia/Saigon)")
 check("a session line with a reset time reads both", usageReading(in: "Current session: 58% used · resets Oct 19 at 6:40pm (Asia/Saigon)", line: "Current session")?.percent == 58)
 check("text with no usage line reads nothing", usageReading(in: "nothing here", line: "Current session") == nil)
+check("a usage report wrapped in JSON still reads",
+      usageReportText("{\"result\":\"Current session: 9% used\"}").contains("Current session: 9%"))
+check("a usage line still reads through terminal colour codes",
+      usageReading(in: "\u{001B}[32mCurrent session: 12% used\u{001B}[0m", line: "Current session")?.percent == 12)
+let staleWeek = Usage(fiveHour: 2, week: 100, at: 1_000, fiveHourResets: Date(timeIntervalSince1970: 2_000), weekResets: Date(timeIntervalSince1970: 5_000))
+let afterReset = mergedUsage(live: staleWeek, history: nil, now: Date(timeIntervalSince1970: 9_000))
+check("a window whose reset has passed reads as empty", afterReset?.fiveHour == 0 && afterReset?.week == 0)
+let blankHistory = mergedUsage(live: staleWeek, history: (at: 8_000, five: nil, week: nil), now: Date(timeIntervalSince1970: 1_500))
+check("a blank usage sample does not wipe a real reading", blankHistory?.fiveHour == 2 && blankHistory?.week == 100)
+let oldHistory = mergedUsage(live: staleWeek, history: (at: 3_000, five: 2, week: 100), now: Date(timeIntervalSince1970: 9_000))
+check("a sample from before the week reset does not keep that week", oldHistory?.week == 0)
+check("a whole-number percent in the usage file still reads",
+      jsonNumber(1 as NSNumber) == 1 && jsonNumber(1.5 as NSNumber) == 1.5)
+check("an older Cursor reading stays on the pill while Cursor is in front",
+      pillHost(front: .cursor, hasClaude: true, hasCursor: true, cursorFresh: false) == .cursor)
 
 // The ring round her badge fills with progress, and goes green for a minute after a chat finishes
 check("the ring fills to 60 percent at 216 degrees", ringSweepDegrees(0.6) == 216)

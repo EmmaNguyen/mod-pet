@@ -9,9 +9,9 @@
 // the notifications; right-click for the menu.
 
 import AppKit
-import IOKit
 import AVFoundation
 import Carbon
+import IOKit
 import ServiceManagement
 import Speech
 import UserNotifications
@@ -1053,7 +1053,8 @@ final class MochiView: NSView {
         }
 
         // She looks tired from the usage still on the pill, or the battery below 30%
-        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil)
+        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil,
+                             cursorFresh: cursorUsageIsFresh(cursorUsage))
         let frontUsage = mark == .cursor ? (cursorUsage?.percent ?? 0) : mark == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
         usageTired = max(frontUsage, power.map { 100 - $0.percent } ?? 0) >= 70
 
@@ -1386,7 +1387,8 @@ final class MochiView: NSView {
     /// A host with no reading yet keeps the last reading on the pill.
     private func drawUsagePill() {
         enum Bit { case spark, cube, battery(Int), text(String), dot }
-        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil)
+        let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil,
+                             cursorFresh: cursorUsageIsFresh(cursorUsage))
         var stress = 0
         var rows: [[Bit]] = []
         if mark == .claude, let usage {
@@ -1773,13 +1775,39 @@ func buttonsShowFor(pointer: NSPoint, frame: NSRect) -> Bool {
     frame.insetBy(dx: -60, dy: -60).contains(pointer)
 }
 
+/// The /usage text, whether Claude printed it directly or wrapped it in a JSON result
+func usageReportText(_ output: String) -> String {
+    if output.contains("Current session") { return output }
+    func find(_ any: Any) -> String? {
+        if let text = any as? String, text.contains("Current session") { return text }
+        if let list = any as? [Any] {
+            for item in list { if let found = find(item) { return found } }
+        }
+        if let object = any as? [String: Any] {
+            for value in object.values { if let found = find(value) { return found } }
+        }
+        return nil
+    }
+    for line in output.split(separator: "\n") {
+        guard let data = String(line).data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data),
+              let found = find(json) else { continue }
+        return found
+    }
+    if let data = output.data(using: .utf8),
+       let json = try? JSONSerialization.jsonObject(with: data),
+       let found = find(json) { return found }
+    return output
+}
+
 /// Reads one line of /usage, such as "Current session: 58% used · resets Oct 19 at 6:40pm". The reset time may be missing
 func usageReading(in output: String, line: String) -> (percent: Int, resets: String?)? {
+    let plain = output.replacingOccurrences(of: "\u{001B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
     guard let regex = try? NSRegularExpression(pattern: "\(line): (\\d+)% used(?: · resets ([^\\n]+))?"),
-          let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
-          let percent = Range(match.range(at: 1), in: output) else { return nil }
-    let resets = Range(match.range(at: 2), in: output).map { String(output[$0]) }
-    return (Int(output[percent]) ?? 0, resets)
+          let match = regex.firstMatch(in: plain, range: NSRange(plain.startIndex..., in: plain)),
+          let percent = Range(match.range(at: 1), in: plain) else { return nil }
+    let resets = Range(match.range(at: 2), in: plain).map { String(plain[$0]) }
+    return (Int(plain[percent]) ?? 0, resets)
 }
 
 /// A colour that follows light or dark mode, for the glass: one value in light, one in dark
@@ -1868,6 +1896,19 @@ func hourlyUsagePoints(_ points: [UsagePoint], now: Date = Date(), hours: Int = 
     return out
 }
 
+/// The line in the usage box. A reading from the last six hours stays as that six-hour line.
+/// Older readings keep their own times, so a file that stopped updating is not drawn as if it were today.
+func usageProgress(_ points: [UsagePoint], now: Date = Date(), hours: Int = 6) -> [UsagePoint] {
+    let sorted = points.sorted { $0.at < $1.at }
+    guard let newest = sorted.last else { return [] }
+    let age = now.timeIntervalSince1970 * 1000 - newest.at
+    if age <= Double(hours) * 3600 * 1000 {
+        let recent = hourlyUsagePoints(sorted, now: now, hours: hours)
+        return recent.count >= 2 ? recent : sorted
+    }
+    return thinUsagePoints(sorted)
+}
+
 /// Readings for the last six hours, one per hour. A live point is added when it is newer than the file
 func usageHistory(from url: URL, live: UsagePoint? = nil, now: Date = Date(),
                   window: TimeInterval = 6 * 3600) -> [UsagePoint] {
@@ -1891,6 +1932,30 @@ func cursorUsageHistory(from url: URL, live: UsagePoint? = nil, now: Date = Date
     }
     if let live, points.last.map({ $0.at < live.at - 1 }) ?? true { points.append(live) }
     return hourlyUsagePoints(points.sorted { $0.at < $1.at }, now: now, hours: Int(window / 3600))
+}
+
+/// Claude's saved readings, newest last, without folding them into the last six hours
+func usageSamples(from url: URL, live: UsagePoint? = nil) -> [UsagePoint] {
+    var points: [UsagePoint] = []
+    if let data = try? Data(contentsOf: url),
+       let file = try? JSONDecoder().decode(UsageFile.self, from: data) {
+        points = file.samples.map {
+            UsagePoint(at: $0.t, fiveHour: Int(($0.u.fh ?? 0).rounded()), week: Int(($0.u.sd ?? 0).rounded()))
+        }
+    }
+    if let live, points.last.map({ $0.at < live.at - 1 }) ?? true { points.append(live) }
+    return points.sorted { $0.at < $1.at }
+}
+
+/// Cursor's saved readings, newest last, without folding them into the last six hours
+func cursorUsageSamples(from url: URL, live: UsagePoint? = nil) -> [UsagePoint] {
+    var points: [UsagePoint] = []
+    if let data = try? Data(contentsOf: url),
+       let file = try? JSONDecoder().decode(CursorHistoryFile.self, from: data) {
+        points = file.samples.map { UsagePoint(at: $0.t, fiveHour: $0.percent, week: $0.percent) }
+    }
+    if let live, points.last.map({ $0.at < live.at - 1 }) ?? true { points.append(live) }
+    return points.sorted { $0.at < $1.at }
 }
 
 func recordCursorUsageSample(_ usage: CursorUsage, folder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mochi")) {
@@ -1943,10 +2008,10 @@ func drawUsageGraph(points: [UsagePoint], value: (UsagePoint) -> Int, in rect: N
 }
 
 /// The usage box graph: tracks, the lines, and the dates at each end. Returns the y under it
-func drawUsageGraphBlock(points: [UsagePoint], host: CompanionHost, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) -> CGFloat {
+func drawUsageGraphBlock(points: [UsagePoint], host: CompanionHost, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool, title: String? = nil) -> CGFloat {
     guard points.count >= 2 else { return y }
-    let title = host == .cursor ? "Included, last 6 hours" : "Last 6 hours"
-    drawLine(title, .systemFont(ofSize: 11, weight: .medium), .secondaryLabelColor, x: x, y: y, width: width, draw: draw)
+    let heading = title ?? (host == .cursor ? "Included, last 6 hours" : "Last 6 hours")
+    drawLine(heading, .systemFont(ofSize: 11, weight: .medium), .secondaryLabelColor, x: x, y: y, width: width, draw: draw)
     var legendX = x + width
     if host == .claude {
         legendX -= 52
@@ -2140,8 +2205,12 @@ final class UsagePanelView: NSView {
     var wattHours: Double = 0
     /// A reset offer to show in the box, when there is one still open
     var resetOffer: ResetOffer?
+    /// Recorded percents, drawn as the progress line under the meters
+    var progress: [UsagePoint] = []
     /// True while Claude is being asked for a fresh reading
     var checking = false
+    /// When the box opened, so the click that opened it does not close it
+    var openedAt = Date.distantPast
     /// The last check, in a few words: "Checked 2:14 PM"
     var footnote = ""
     var onRefresh: (() -> Void)?
@@ -2203,6 +2272,12 @@ final class UsagePanelView: NSView {
             y = drawUsageMeterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
                                   color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw) + 6
         }
+        if progress.count >= 2 {
+            let newest = progress.map(\.at).max() ?? 0
+            let fresh = Date().timeIntervalSince1970 * 1000 - newest <= 6 * 3600 * 1000
+            let title = fresh ? (host == .cursor ? "Included, last 6 hours" : "Last 6 hours") : "Recorded progress"
+            y = drawUsageGraphBlock(points: progress, host: host, x: pad, y: y, width: inner, draw: draw, title: title) + 8
+        }
 
         drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
         refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
@@ -2210,8 +2285,10 @@ final class UsagePanelView: NSView {
         return y + 26
     }
 
-    // A click on Refresh asks for a fresh reading; anywhere else closes the box
+    // A click on Refresh asks for a fresh reading; anywhere else closes the box.
+    // The click that opened the box is ignored, so it can stay up long enough to read.
     override func mouseDown(with event: NSEvent) {
+        if Date().timeIntervalSince(openedAt) < 0.4 { return }
         let point = convert(event.locationInWindow, from: nil)
         if refreshRect.contains(point) {
             if !checking { onRefresh?() }
@@ -4034,31 +4111,11 @@ struct Usage {
     var weekResets: Date? = nil
 
     /// The newest reading: the mod's live one, or else what the Claude app last saved
-    static func read() -> Usage? {
+    static func read(now: Date = Date()) -> Usage? {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        var best: Usage?
-        if let data = try? Data(contentsOf: home.appendingPathComponent(".claude/mochi/usage.json")),
-           let live = try? JSONDecoder().decode(LiveUsageFile.self, from: data) {
-            let iso = ISO8601DateFormatter()
-            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let plain = ISO8601DateFormatter()
-            func date(_ text: String?) -> Date? { text.flatMap { iso.date(from: $0) ?? plain.date(from: $0) } }
-            best = Usage(fiveHour: Int((live.fiveHour ?? 0).rounded()), week: Int((live.week ?? 0).rounded()), at: live.at,
-                         fiveHourResets: date(live.fiveHourResetsAt), weekResets: date(live.weekResetsAt))
-        }
-        if let data = try? Data(contentsOf: home.appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json")),
-           let file = try? JSONDecoder().decode(UsageFile.self, from: data),
-           let last = file.samples.max(by: { $0.t < $1.t }), last.t > (best?.at ?? 0) {
-            best = Usage(fiveHour: Int(last.u.fh ?? 0), week: Int(last.u.sd ?? 0), at: last.t)
-        }
-        // A window that has reset since the reading is empty again
-        if var usage = best {
-            let now = Date()
-            if let reset = usage.fiveHourResets, reset < now { usage = Usage(fiveHour: 0, week: usage.week, at: usage.at, fiveHourResets: nil, weekResets: usage.weekResets) }
-            if let reset = usage.weekResets, reset < now { usage = Usage(fiveHour: usage.fiveHour, week: 0, at: usage.at, fiveHourResets: usage.fiveHourResets, weekResets: nil) }
-            return usage
-        }
-        return nil
+        let live = usageFile(home.appendingPathComponent(".claude/mochi/usage.json"))
+        let history = usageHistory(home.appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json"))
+        return mergedUsage(live: live, history: history, now: now)
     }
 
     /// The limit you have hit, if any: when you can use Claude again (nil date: reached, reset time unknown)
@@ -4489,15 +4546,82 @@ func appsToHide(frontBundleID: String?, appName: String? = nil, regular: Bool = 
     }
 }
 
-/// The usage the pill draws. The front app wins once its reading exists. Until that read arrives,
-/// the pill keeps the other reading it already has. Another app shows neither.
-func pillHost(front: CompanionHost?, hasClaude: Bool, hasCursor: Bool) -> CompanionHost? {
+/// A JSON number, whether it was written as `1` or `1.5`
+func jsonNumber(_ any: Any?) -> Double? {
+    (any as? NSNumber)?.doubleValue ?? (any as? String).flatMap(Double.init)
+}
+
+/// The reading in ~/.claude/mochi/usage.json. Whole-number percents are still numbers.
+func usageFile(_ url: URL) -> Usage? {
+    guard let data = try? Data(contentsOf: url),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let at = jsonNumber(json["at"]) else { return nil }
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let plain = ISO8601DateFormatter()
+    func date(_ key: String) -> Date? {
+        guard let text = json[key] as? String else { return nil }
+        return iso.date(from: text) ?? plain.date(from: text)
+    }
+    return Usage(fiveHour: Int((jsonNumber(json["fiveHour"]) ?? 0).rounded()),
+                 week: Int((jsonNumber(json["week"]) ?? 0).rounded()), at: at,
+                 fiveHourResets: date("fiveHourResetsAt"), weekResets: date("weekResetsAt"))
+}
+
+/// The newest Claude history sample that actually has a percent
+func usageHistory(_ url: URL) -> (at: Double, five: Double?, week: Double?)? {
+    guard let data = try? Data(contentsOf: url),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let samples = json["samples"] as? [[String: Any]] else { return nil }
+    var best: (at: Double, five: Double?, week: Double?)?
+    for sample in samples {
+        guard let at = jsonNumber(sample["t"]), let used = sample["u"] as? [String: Any] else { continue }
+        let five = jsonNumber(used["fh"])
+        let week = jsonNumber(used["sd"])
+        guard five != nil || week != nil else { continue }
+        if at > (best?.at ?? 0) { best = (at, five, week) }
+    }
+    return best
+}
+
+/// A Cursor reading newer than this is still the one the pill may show. Older than this, Claude's reading is the live one.
+func cursorUsageIsFresh(_ usage: CursorUsage?, now: Date = Date(), limit: TimeInterval = 20 * 60) -> Bool {
+    guard let usage else { return false }
+    return now.timeIntervalSince1970 * 1000 - usage.at < limit * 1000
+}
+
+/// Picks the reading to show. A blank history sample is ignored. A sample from before a reset that has passed does not restore the old percent.
+func mergedUsage(live: Usage?, history: (at: Double, five: Double?, week: Double?)?, now: Date) -> Usage? {
+    var usage = live
+    if let history, history.five != nil || history.week != nil, history.at > (live?.at ?? 0) {
+        func take(_ value: Double?, reset: Date?) -> Int {
+            guard let value else { return 0 }
+            if let reset, history.at < reset.timeIntervalSince1970 * 1000 { return 0 }
+            return Int(value.rounded())
+        }
+        usage = Usage(fiveHour: take(history.five, reset: live?.fiveHourResets), week: take(history.week, reset: live?.weekResets),
+                      at: history.at, fiveHourResets: live?.fiveHourResets, weekResets: live?.weekResets)
+    }
+    guard var usage else { return nil }
+    if let reset = usage.fiveHourResets, reset < now {
+        usage = Usage(fiveHour: 0, week: usage.week, at: usage.at, fiveHourResets: nil, weekResets: usage.weekResets)
+    }
+    if let reset = usage.weekResets, reset < now {
+        usage = Usage(fiveHour: usage.fiveHour, week: 0, at: usage.at, fiveHourResets: usage.fiveHourResets, weekResets: nil)
+    }
+    return usage
+}
+
+/// The usage the pill draws. Cursor in front shows Cursor's percent, including an older one, until the next reading arrives.
+func pillHost(front: CompanionHost?, hasClaude: Bool, hasCursor: Bool, cursorFresh: Bool = true) -> CompanionHost? {
     switch front {
-    case .claude where hasClaude: return .claude
     case .cursor where hasCursor: return .cursor
-    case .claude where hasCursor: return .cursor
+    case .claude where hasClaude: return .claude
     case .cursor where hasClaude: return .claude
-    default: return nil
+    case .claude where hasCursor: return .cursor
+    default:
+        _ = cursorFresh
+        return nil
     }
 }
 
@@ -4720,14 +4844,10 @@ func cursorPlanName(_ data: Data) -> String? {
     return name
 }
 
-/// Whether a Cursor access token can be sent as a Bearer value. Encrypted-at-rest blobs are not JWTs.
-func cursorAccessTokenUsable(_ value: String) -> Bool {
-    !value.hasPrefix("cursor-safe-storage:") && value.contains(".")
-}
-
-/// One value from Cursor's state database, read only. The key has to be one Mochi asks for
+/// One value from Cursor's state database, read only. The key has to be one Mochi asks for.
+/// The access token stays in Cursor. Mochi does not read it or the Keychain.
 func cursorStateValue(_ key: String) -> String? {
-    let allowed = ["cursorAuth/accessToken", "cursorAuth/stripeMembershipType"]
+    let allowed = ["cursorAuth/stripeMembershipType"]
     guard allowed.contains(key) else { return nil }
     let db = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
@@ -4758,7 +4878,7 @@ struct CursorFetch {
 func cursorRefreshMinInterval(cursorFront: Bool, lastFailed: Bool) -> TimeInterval {
     if lastFailed { return 8 }
     if cursorFront { return 12 }
-    return 45
+    return 60
 }
 
 /// Whether another Cursor usage poll is due.
@@ -4785,37 +4905,9 @@ func cursorPostWithRetry(_ token: String, path: String, attempts: Int = 3) -> (c
     return nil
 }
 
-/// Asks Cursor for this cycle's usage. The sign-in Cursor saved on this Mac is used, and it is not written anywhere
+/// Cursor's login stays in Cursor. Mochi does not read it, the Keychain, or the dashboard.
 func refreshCursorUsage(_ done: @escaping (CursorFetch) -> Void) {
-    DispatchQueue.global(qos: .utility).async {
-        let db = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
-        guard FileManager.default.fileExists(atPath: db.path) else {
-            done(CursorFetch(problem: "Cursor is not installed on this Mac.")); return
-        }
-        guard let token = cursorStateValue("cursorAuth/accessToken") else {
-            done(CursorFetch(problem: "Sign in to Cursor, then press Refresh.")); return
-        }
-        guard cursorAccessTokenUsable(token) else {
-            done(CursorFetch(problem: "Couldn't refresh from Cursor.")); return
-        }
-        let fallback = cursorPlanLabel(cursorStateValue("cursorAuth/stripeMembershipType") ?? "")
-        guard let response = cursorPostWithRetry(token, path: "/aiserver.v1.DashboardService/GetCurrentPeriodUsage") else {
-            done(CursorFetch(problem: "Cursor usage did not come through.")); return
-        }
-        if response.code == 401 || response.code == 403 {
-            done(CursorFetch(problem: "Cursor needs you to sign in again.")); return
-        }
-        guard response.code == 200, var usage = parseCursorUsage(response.body, plan: fallback, at: Date()) else {
-            done(CursorFetch(problem: "Cursor usage did not come through.")); return
-        }
-        if let plan = cursorPostWithRetry(token, path: "/aiserver.v1.DashboardService/GetPlanInfo"),
-           plan.code == 200, let name = cursorPlanName(plan.body) {
-            usage.plan = name
-        }
-        usage.save()
-        done(CursorFetch(usage: usage))
-    }
+    done(CursorFetch())
 }
 
 /// One read of a Cursor dashboard call. The body is empty. Nothing but the status and the reply comes back
@@ -4842,6 +4934,8 @@ func cursorPost(_ token: String, path: String) -> (code: Int, body: Data)? {
 
 /// Finds the Claude command-line tool the app ships with (the newest version), or the one on the PATH
 func claudeToolPath() -> String? {
+    let local = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude").path
+    if FileManager.default.isExecutableFile(atPath: local) { return local }
     let root = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Claude/claude-code")
     let versions = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
@@ -4884,21 +4978,27 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
         process.arguments = ["-p", "/usage"]
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         let pipe = Pipe()
+        let errors = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = errors
         process.standardInput = FileHandle.nullDevice // never wait for keyboard input
         do { try process.run() } catch { done(false); return }
         // Never wait more than 30 seconds
         let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: killer)
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        DispatchQueue.global().asyncAfter(deadline: .now() + 45, execute: killer)
+        let output = (String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+            + (String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
         process.waitUntilExit()
         killer.cancel()
 
         // After a reset, /usage says "Current session: 0% used" with no reset time, so the time is optional
-        guard let fiveRead = usageReading(in: output, line: "Current session"),
-              let weekRead = usageReading(in: output, line: "Current week[^:]*")
-        else { done(false); return }
+        let text = usageReportText(output)
+        guard let fiveRead = usageReading(in: text, line: "Current session"),
+              let weekRead = usageReading(in: text, line: "Current week[^:]*")
+        else {
+            mochiLog("usage refresh failed exit \(process.terminationStatus)")
+            done(false); return
+        }
         let fiveNow = (fiveRead.percent, fiveRead.resets.flatMap(parseResetDate))
         let weekNow = (weekRead.percent, weekRead.resets.flatMap(parseResetDate))
 
@@ -4915,6 +5015,7 @@ func refreshUsageFromClaude(_ done: @escaping (Bool) -> Void) {
         if let data = try? JSONSerialization.data(withJSONObject: report) {
             try? data.write(to: folder.appendingPathComponent("usage.json"))
         }
+        mochiLog("usage \(fiveNow.0)% session, \(weekNow.0)% week")
         done(true)
     }
 }
@@ -5006,6 +5107,7 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var cursorBusy = false
     var cursorCheckedAt: Date?
     var cursorAttemptedAt: Date?
+    var cursorFilePolledAt = Date.distantPast
     /// The Mac's draw, and today's energy, saved every half minute
     var power: PowerReading?
     var powerLog = PowerLog.read() ?? PowerLog(day: dayKey(Date()), wattHours: 0, at: Date())
@@ -5251,12 +5353,9 @@ func playAtTwoThirds(_ sound: NSSound?) {
             if cursorUsage != nil { view.shownHost = .cursor }
             else if usage != nil { view.shownHost = .claude }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            self?.refreshUsageQuietly()
-            self?.refreshCursorQuietly()
-        }
-        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            self?.refreshUsageQuietly()
+        // Cursor writes a new percent about once a minute. Claude's plan usage is not polled.
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.pollCursorUsageFile()
         }
         look()
     }
@@ -5288,7 +5387,19 @@ func playAtTwoThirds(_ sound: NSSound?) {
         if let testChat { chats.append(testChat) }
         checkUsage()
         samplePower()
-        followHost(NSWorkspace.shared.frontmostApplication)
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        followHost(frontApp)
+        // Claude stays hidden unless she is the app in front, and the pill keeps Cursor's saved reading
+        let front = usageFront(bundleID: frontApp?.bundleIdentifier, appName: frontApp?.localizedName,
+                               regular: frontApp?.activationPolicy == .regular)
+        if front != .claude {
+            NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundleID).forEach { $0.hide() }
+            if let fresh = CursorUsage.read() {
+                if cursorUsage == nil || fresh.at > (cursorUsage?.at ?? 0) { cursorUsage = fresh }
+            }
+        }
+        settleUsagePill()
+        pollCursorUsageFile()
         maybeRefreshCursorUsage()
         view.host = host
         if let cursorUsage { view.cursorUsage = cursorUsage }
@@ -5425,6 +5536,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         let isFirst = usage == nil
         usage = now
         view.usage = now
+        settleUsagePill()
         if recordPeak(&dayLog, day: dayKey(Date()), percent: now.fiveHour) { dayLogDirty = true }
         func level(_ percent: Int) -> Int { percent >= 100 ? 100 : percent >= 80 ? 80 : 0 }
         let five = level(now.fiveHour), week = level(now.week)
@@ -5462,6 +5574,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
     func followHost(_ bundleID: String?, name: String? = nil, regular: Bool = true) {
         let switched = usageFront(bundleID: bundleID, appName: name, regular: regular)
         if switched == .same { return }
+        if switched == .cursor, host == .cursor { return }
+        if switched == .claude, host == .claude { return }
         if switched == .other {
             for bundle in appsToHide(frontBundleID: bundleID, appName: name, regular: regular) {
                 NSRunningApplication.runningApplications(withBundleIdentifier: bundle).forEach { $0.hide() }
@@ -5469,21 +5583,17 @@ func playAtTwoThirds(_ sound: NSSound?) {
             return
         }
         let next: CompanionHost = switched == .cursor ? .cursor : .claude
-        if view.shownHost != next {
-            view.shownHost = next
-            view.needsDisplay = true
-            mochiLog(next == .cursor ? "pill: Cursor" : "pill: Claude")
-        }
         let changed = next != host
         host = next
-        view.host = next
+        settleUsagePill()
+        view.host = host
         if let cursorUsage { view.cursorUsage = cursorUsage }
         view.needsDisplay = true
         let shownBundle = next == .cursor ? cursorBundleID : claudeBundleID
         NSRunningApplication.runningApplications(withBundleIdentifier: shownBundle).forEach { $0.unhide() }
-        if changed, next == .cursor { refreshCursorQuietly(force: true) }
         if changed {
             mochiLog(next == .cursor ? "connected to Cursor" : "connected to Claude")
+            if next == .cursor { refreshCursorQuietly() }
             if bubble.isVisible {
                 if bubbleFrame.scroll.documentView === chatList {
                     fillChatList()
@@ -5536,6 +5646,42 @@ func playAtTwoThirds(_ sound: NSSound?) {
         }
     }
 
+    /// The pill shows Cursor's percent while Cursor is in front. Claude's reading stays off that pill.
+    func settleUsagePill() {
+        let show: CompanionHost
+        if host == .cursor, cursorUsage != nil {
+            show = .cursor
+        } else if host == .claude, usage != nil {
+            show = .claude
+        } else if cursorUsage != nil {
+            show = .cursor
+        } else if usage != nil {
+            show = .claude
+        } else {
+            return
+        }
+        if view.shownHost != show {
+            view.shownHost = show
+            view.needsDisplay = true
+            mochiLog(show == .cursor ? "pill: Cursor" : "pill: Claude")
+        }
+    }
+
+    /// Picks up a newer `cursor-usage.json` about once a minute without opening Keychain
+    func pollCursorUsageFile(now: Date = Date()) {
+        guard now.timeIntervalSince(cursorFilePolledAt) >= 60 else { return }
+        cursorFilePolledAt = now
+        guard let fresh = CursorUsage.read() else { return }
+        let oldAt = cursorUsage?.at ?? 0
+        guard fresh.at > oldAt || cursorUsage == nil else { return }
+        cursorUsage = fresh
+        view.cursorUsage = fresh
+        view.needsDisplay = true
+        if bubble.isVisible, bubbleFrame.scroll.documentView === usagePanel {
+            usagePanel.needsDisplay = true
+        }
+    }
+
     /// Polls Cursor for usage when the timer in `look()` says it is due
     func maybeRefreshCursorUsage(now: Date = Date()) {
         let failed = !cursorProblem.isEmpty
@@ -5546,7 +5692,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     }
 
     /// Asks Cursor for usage in the background. While Cursor is in front, polls about every 12 seconds;
-    /// after a failure, retries about every 8 seconds until a read comes through.
+    /// in the background, about every minute; after a failure, retries about every 8 seconds.
     func refreshCursorQuietly(force: Bool = false, _ done: ((Bool) -> Void)? = nil) {
         let failed = !cursorProblem.isEmpty
         let front = isCursorFrontNow() || host == .cursor
@@ -5563,6 +5709,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 guard let self else { return }
                 self.cursorBusy = false
                 let usageChanged = fetch.usage != nil
+                let hadProblem = !self.cursorProblem.isEmpty
                 let problemChanged = fetch.problem != nil && fetch.problem != self.cursorProblem
                 if let usage = fetch.usage {
                     self.cursorCheckedAt = Date()
@@ -5572,11 +5719,13 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 } else if let problem = fetch.problem {
                     if problemChanged { mochiLog("cursor usage: \(problem)") }
                     self.cursorProblem = problem
+                } else {
+                    self.cursorProblem = ""
                 }
                 if let cursorUsage = self.cursorUsage { self.view.cursorUsage = cursorUsage }
                 self.chatList.cursor = self.host == .cursor ? self.cursorUsage : nil
                 self.view.needsDisplay = true
-                guard usageChanged || problemChanged else { done?(fetch.usage != nil); return }
+                guard usageChanged || problemChanged || hadProblem else { done?(fetch.usage != nil); return }
                 if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.chatList {
                     self.showList()
                 } else if self.bubble.isVisible, self.host == .cursor, self.bubbleFrame.scroll.documentView === self.usagePanel {
@@ -5596,9 +5745,19 @@ func playAtTwoThirds(_ sound: NSSound?) {
             return
         }
         let worst = shown.map { max($0.fiveHour, $0.week) } ?? cursor?.percent ?? power.map { 100 - $0.percent } ?? 0
+        let readingAt = Date(timeIntervalSince1970: (shown?.at ?? cursor?.at ?? Date().timeIntervalSince1970 * 1000) / 1000)
         let clock = DateFormatter()
-        clock.dateFormat = "h:mm a"
-        let when = clock.string(from: Date(timeIntervalSince1970: (shown?.at ?? cursor?.at ?? Date().timeIntervalSince1970 * 1000) / 1000))
+        clock.dateFormat = Calendar.current.isDateInToday(readingAt) ? "h:mm a" : "d MMM, h:mm a"
+        let when = clock.string(from: readingAt)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let samples: [UsagePoint]
+        if host == .cursor {
+            let live = cursor.map { UsagePoint(at: $0.at, fiveHour: $0.percent, week: $0.percent) }
+            samples = cursorUsageSamples(from: home.appendingPathComponent(".claude/mochi/cursor-usage-history.json"), live: live)
+        } else {
+            let live = shown.map { UsagePoint(at: $0.at, fiveHour: $0.fiveHour, week: $0.week) }
+            samples = usageSamples(from: home.appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json"), live: live)
+        }
         usagePanel.host = host
         usagePanel.usage = shown
         usagePanel.cursor = cursor
@@ -5606,6 +5765,8 @@ func playAtTwoThirds(_ sound: NSSound?) {
         usagePanel.resetOffer = host == .claude ? resetOffer : nil
         usagePanel.power = power
         usagePanel.wattHours = powerLog.day == dayKey(Date()) ? powerLog.wattHours : 0
+        usagePanel.progress = usageProgress(samples)
+        usagePanel.openedAt = Date()
         usagePanel.checking = updating
         if updating {
             usagePanel.footnote = "Checking now…"
@@ -5618,12 +5779,14 @@ func playAtTwoThirds(_ sound: NSSound?) {
         } else {
             usagePanel.footnote = fresh ? "Checked \(when)" : "Last read \(when)"
         }
+        if briefPanel.isVisible { briefPanel.orderOut(nil) }
         showUsagePanel(accent: Usage.color(worst))
         mochiLog("usage box shown: \(usageState(worst: worst)), \(updating ? "checking" : fresh ? "fresh" : "last read")")
-        // It closes on its own fifteen seconds after a reading, long enough to read it, and stays open while Claude is being asked
+        // It stays up long enough to read the progress line, and stays open while a fresh reading is on its way
         hideBubble?.invalidate()
         guard !updating else { return }
-        hideBubble = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
+        let stay: TimeInterval = usagePanel.progress.count >= 2 ? 45 : 15
+        hideBubble = Timer.scheduledTimer(withTimeInterval: stay, repeats: false) { [weak self] _ in
             self?.bubble.orderOut(nil)
             self?.placeCards()
         }
@@ -5939,6 +6102,11 @@ func playAtTwoThirds(_ sound: NSSound?) {
         // The morning brief or wrap-up takes the place nearest her, so it never covers the cards
         let briefShown = briefPanel.isVisible
         if briefShown { stack.insert(briefPanel, at: 0) }
+        // The usage box stays nearest her, so the brief does not take its place
+        if bubble.isVisible, bubbleFrame.scroll.documentView === usagePanel {
+            stack.removeAll { $0 === bubble }
+            stack.insert(bubble, at: 0)
+        }
         func stackHeight(_ panels: [NSPanel]) -> CGFloat {
             panels.map { $0.frame.height }.reduce(0, +) + CGFloat(max(panels.count - 1, 0)) * gap
         }
@@ -6246,6 +6414,7 @@ final class NotePanel: NSPanel {
         bubbleFrame.accent = accent
         tintGlass(bubbleGlass, accent)
         content.needsDisplay = true
+        bubble.level = content === usagePanel ? .statusBar : .floating
         bubble.orderFrontRegardless()
         mochiLog("bubble: shown \(Int(width))x\(Int(height)) at \(bubble.frame), content \(content.frame), scroll \(bubbleFrame.scroll.documentView?.frame ?? .zero)")
         placeCards()
@@ -6395,6 +6564,14 @@ final class NotePanel: NSPanel {
     /// The brief hides on its own until the pointer comes near Mochi or the brief; closing it with the cross ends this.
     /// Once the pointer leaves, the brief waits a few seconds before it hides, so there is time to reach it
     func refreshBriefVisibility() {
+        // The usage box is what was asked for. The brief stays away until that box closes.
+        if bubble.isVisible, bubbleFrame.scroll.documentView === usagePanel {
+            if briefPanel.isVisible {
+                briefPanel.orderOut(nil)
+                placeCards()
+            }
+            return
+        }
         let near = pointerNearBrief(pointer: NSEvent.mouseLocation, mochi: window.frame,
                                     brief: briefPanel.isVisible ? briefPanel.frame : .zero, margin: 120)
         // Nothing open: the pointer near her shows the brief for now, unless the cross closed it and the pointer has not left since
