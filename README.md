@@ -121,6 +121,16 @@ A label above her shows your 5-hour and weekly limits. Clicking it opens a box w
   <img src="media/screenshots/07-usage-panel.png" alt="The usage box: on track, with the 5-hour and weekly limits as bars" width="400">
 </p>
 
+### Cursor
+
+Mochi follows [Cursor](https://cursor.com) as well as Claude. Cursor's agent chats from the last seven days join her chat list and the briefs, and a click opens the chat in Cursor. While Cursor is in front, the label shows Cursor's cube and its included-usage percent, and the usage box shows that percent and when it resets. The reading comes from `~/.claude/mochi/cursor-usage.json`, which a small Cursor extension writes about once a minute. Mochi also keeps the window you are using clear: Claude and Cursor each hide unless they are the app in front.
+
+### Kiro credits
+
+While [Kiro](https://kiro.dev) is open, the label shows a ghost and the percent of your Kiro credits used. With Kiro and Cursor both open, the label shows both on one row and the battery on a second row. When Kiro is closed, the label works as before. Clicking it opens the usage box with the credits left, a bar against the starting amount, and the days until the credits expire. It uses the same words as Claude's box (on track, getting high, almost out, out of usage). Her eyes get a lid past 70% used, as they do for Claude.
+
+The credits update as you work, with no sign-in. Kiro writes an official reading to its own log every so often, and each chat turn records the credits it used when it ends. Mochi takes the last reading and subtracts the turns since, checking every 3 seconds while Kiro is open. Each new reading starts the count again. The count changes when a turn ends, not during it.
+
 ### Quick note and talk
 
 Three round buttons appear under her when you move the pointer near her.
@@ -159,7 +169,7 @@ Now and then she thinks out loud in a bubble above her: how long is left in her 
 
 ### Morning brief and 6 PM wrap-up
 
-Once a day she opens a brief under her. The morning brief shows at 8:00 AM, and the wrap-up at 6:00 PM. Each shows big numbers for what is waiting, running, and finished yesterday, what needs you, the latest seven sessions, a week chart and your usage. A brief shows once a day when it first comes due, so a missed 8:00 still shows it. It stays until you close it with its cross, and a pin keeps it above other windows. Waiting chats in the brief underline when you hover over them, and a click opens the real chat in Claude.
+Once a day she opens a brief under her. The morning brief shows at 8:00 AM, and the wrap-up at 6:00 PM. Each shows big numbers for what is waiting, running, and finished yesterday, what needs you, the latest seven sessions, a week chart and your usage. Kiro chats join the latest sessions with a ghost marker, and the wrap-up's week chart shows Kiro time as a teal band. Claude, Cursor and Kiro each keep at least one row when they have chats. Kiro time is counted from the first to the last message of each chat on a day. A brief shows once a day when it first comes due, so a missed 8:00 still shows it. It stays until you close it with its cross, and a pin keeps it above other windows. Waiting chats in the brief underline when you hover over them, and a click opens the real chat in Claude.
 
 You can open either brief by hand, from her right-click menu or with a `mochi://brief` link. Add `?kind=evening` to the link for the wrap-up.
 
@@ -290,7 +300,9 @@ The desktop tests run against the real code: `test.sh` appends the test file to 
 
 ## Privacy
 
-- Mochi reads and writes files only in `~/.claude/mochi/` and in the Claude app's own folders.
+- Mochi writes files only in `~/.claude/mochi/`. It reads that folder, the Claude app's own folders, and the Cursor and Kiro files below.
+- For Cursor, Mochi reads the start and end of each agent transcript in `~/.cursor/projects/` for its title and state, and your plan name from Cursor's settings. It does not read Cursor's sign-in token.
+- For Kiro, Mochi only reads. It reads the usage readings in Kiro's log (`~/Library/Application Support/Kiro/logs/`). From each chat in `~/.kiro/sessions/`, it reads the title, the state, the message times, and the credits each turn used. It never reads chat text or Kiro's sign-in token.
 - Mochi's own code makes no network requests.
 - The usage check runs the copy of Claude that comes with the app. That copy contacts Anthropic's servers to read your usage, the same way `/usage` does. Nothing is sent that you haven't already sent through Claude.
 
@@ -321,6 +333,8 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 12. **Jump, colours, and tidying.** A shortcut and badge click to reach the chat waiting for you, a colour dot for each chat, and old status files cleaned up.
 13. **Quiet hour, and tidier files.** A right-click item that silences her for an hour, and old answer files cleaned up along with the status files.
 14. **A clearer chat list and usage box.** Chats grouped by what they are doing, with the running and last finished session named at the top, larger text, and a usage box with bars and a Refresh button. Quiet can now last until you turn it off.
+15. **Cursor.** Cursor chats in the list and briefs, Cursor's usage on the label, and Claude and Cursor hiding when the other is in front.
+16. **Kiro.** Kiro credits on the label and in the usage box, updated live as you work, and Kiro chats and time in the morning brief and wrap-up.
 
 </details>
 

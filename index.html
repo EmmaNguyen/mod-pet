@@ -264,7 +264,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   <div>
     <p class="label">Open source · macOS · MIT</p>
     <h1 id="hero-title">A pixel cat that tells you what Claude is doing.</h1>
-    <p class="lede">Mochi is a companion for Claude Code on macOS. She floats above your message box, shows the state of every chat, lets you allow or deny requests from her card, and keeps an eye on your usage limits.</p>
+    <p class="lede">Mochi is a companion for Claude Code on macOS. She floats above your message box, shows the state of every chat, lets you allow or deny requests from her card, and keeps an eye on your usage limits. She follows Cursor and Kiro too.</p>
     <div class="cta">
       <a class="button primary" href="#install">Install Mochi</a>
       <a class="button ghost" href="https://github.com/EmmaNguyen/mod-pet">View the code</a>
@@ -308,6 +308,14 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <p>A label shows your 5-hour and weekly limits. Her eyes get tired past 70%, and a countdown appears in the last hour.</p>
     </div>
     <div class="feature">
+      <h3>Cursor too</h3>
+      <p>Cursor's agent chats join her list and briefs, and the label shows Cursor's usage while Cursor is in front. Claude and Cursor each hide unless they are the app you are using.</p>
+    </div>
+    <div class="feature">
+      <h3>Kiro credits, live</h3>
+      <p>While Kiro is open, the label shows the share of your credits used, updated as each chat turn ends. Click it for the credits left and the days until they expire.</p>
+    </div>
+    <div class="feature">
       <h3>Quick note and talk</h3>
       <p>Start a new session with a typed note, or speak it with your Mac's speech recognition. Nothing is sent until you press Enter.</p>
     </div>
@@ -321,7 +329,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     </div>
     <div class="feature">
       <h3>Morning brief and wrap-up</h3>
-      <p>A brief at 8:00 AM and a wrap-up at 6:00 PM show what is waiting, what ran, and your usage, with the latest sessions. Pin it, or close it with its cross.</p>
+      <p>A brief at 8:00 AM and a wrap-up at 6:00 PM show what is waiting, what ran, and your usage, with the latest sessions from Claude, Cursor and Kiro. Pin it, or close it with its cross.</p>
     </div>
     <div class="feature">
       <h3>Status ring and agents</h3>
@@ -430,7 +438,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   <p class="label">Privacy</p>
   <h2 id="privacy-title">It stays on your Mac.</h2>
   <ul class="privacy-list">
-    <li>Mochi reads and writes only <code>~/.claude/mochi/</code>.</li>
+    <li>Mochi writes only to <code>~/.claude/mochi/</code>. It reads Cursor's and Kiro's own files for chats and usage, never their sign-in tokens.</li>
     <li>The diary keeps daily counts, not chat content.</li>
     <li>Nothing is sent until you press Enter on a note you typed or spoke.</li>
     <li>The code is MIT licensed, so you can read every line.</li>
