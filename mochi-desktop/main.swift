@@ -1008,6 +1008,21 @@ final class MochiView: NSView {
     /// The last Cursor or Claude that was in front. Other apps leave this as it is, so the cube stays on the pill
     var shownHost: CompanionHost?
     var cursorUsage: CursorUsage?
+    /// Kiro's credits, and whether Kiro is the app in front. The pill shows them only while it is
+    var kiroUsage: KiroUsage?
+    var kiroFront = false
+    /// Whether Kiro, Cursor and Claude are open
+    var kiroRunning = false
+    var cursorRunning = false
+    var claudeRunning = false
+    /// Kiro is on the pill while it is in front, and while it is open and the pill would otherwise show Cursor,
+    /// or Claude's old reading with Claude closed
+    var kiroOnPill: Bool {
+        kiroUsage != nil && (kiroFront || (kiroRunning && (shownHost == .cursor || !claudeRunning)))
+    }
+    /// With Cursor open too, the pill shows Kiro and Cursor together
+    var showsBoth: Bool { kiroOnPill && cursorRunning && cursorUsage != nil }
+    var showsKiro: Bool { kiroOnPill && !showsBoth }
     var power: PowerReading?
     /// Where the usage label is drawn, so a click on it can be told from a click on her
     var usagePill: NSRect = .zero
@@ -1055,7 +1070,7 @@ final class MochiView: NSView {
         // She looks tired from the usage still on the pill, or the battery below 30%
         let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil,
                              cursorFresh: cursorUsageIsFresh(cursorUsage))
-        let frontUsage = mark == .cursor ? (cursorUsage?.percent ?? 0) : mark == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
+        let frontUsage = showsBoth ? max(kiroUsage?.usedPercent ?? 0, cursorUsage?.percent ?? 0) : showsKiro ? (kiroUsage?.usedPercent ?? 0) : mark == .cursor ? (cursorUsage?.percent ?? 0) : mark == .claude ? (usage.map { max($0.fiveHour, $0.week) } ?? 0) : 0
         usageTired = max(frontUsage, power.map { 100 - $0.percent } ?? 0) >= 70
 
         let originX = (bounds.width - petSize) / 2
@@ -1090,9 +1105,9 @@ final class MochiView: NSView {
             drawCountCircle(taskMinutesLeft, color: NSColor(hex: 0x0A6CF0), at: NSPoint(x: originX + 4, y: originY + 6))
         }
         if unread > 0 { drawUnread(at: NSPoint(x: originX + 4, y: taskMinutesLeft == nil ? originY + 6 : originY + 24)) }
-        if usage != nil || cursorUsage != nil || power != nil {
+        if usage != nil || cursorUsage != nil || power != nil || kiroOnPill {
             drawUsagePill()
-            if mark == .claude, let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
+            if mark == .claude, !kiroOnPill, let minutesLeft = lowTimeMinutes(resets: usage?.fiveHourResets, now: Date()) {
                 drawCountdown(minutesLeft, at: NSPoint(x: usagePill.maxX - 1, y: usagePill.midY))
             }
         }
@@ -1386,17 +1401,26 @@ final class MochiView: NSView {
     /// Claude's spark, Cursor's cube, and a battery. The percent stays beside each mark.
     /// A host with no reading yet keeps the last reading on the pill.
     private func drawUsagePill() {
-        enum Bit { case spark, cube, battery(Int), text(String), dot }
+        enum Bit { case spark, cube, ghost, battery(Int), text(String), dot }
         let mark = pillHost(front: shownHost, hasClaude: usage != nil, hasCursor: cursorUsage != nil,
                              cursorFresh: cursorUsageIsFresh(cursorUsage))
         var stress = 0
         var rows: [[Bit]] = []
-        if mark == .claude, let usage {
+        if mark == .claude, !kiroOnPill, let usage {
             rows.append([.spark, .text("\(usage.fiveHour)%"), .dot, .text("\(usage.week)%")])
             stress = max(usage.fiveHour, usage.week)
         }
         var tail: [Bit] = []
-        if mark == .cursor, let cursorUsage {
+        // Kiro shows percent used, like Cursor and Claude. With Kiro and Cursor both open they share the top row
+        // and the battery goes below, since all three do not fit in her width
+        if showsBoth, let kiroUsage, let cursorUsage {
+            rows.append([.ghost, .text("\(kiroUsage.usedPercent)%"), .dot, .cube, .text("\(cursorUsage.percent)%")])
+            stress = max(kiroUsage.usedPercent, cursorUsage.percent)
+        } else if showsKiro, let kiroUsage {
+            tail.append(.ghost)
+            tail.append(.text("\(kiroUsage.usedPercent)%"))
+            stress = max(stress, kiroUsage.usedPercent)
+        } else if mark == .cursor, let cursorUsage {
             tail.append(.cube)
             tail.append(.text("\(cursorUsage.percent)%"))
             stress = max(stress, cursorUsage.percent)
@@ -1414,7 +1438,7 @@ final class MochiView: NSView {
         func bitWidth(_ bit: Bit) -> CGFloat {
             switch bit {
             case .spark, .battery: return 16
-            case .cube: return 14
+            case .cube, .ghost: return 14
             case .dot: return 3
             case .text(let words): return (words as NSString).size(withAttributes: [.font: font]).width
             }
@@ -1438,6 +1462,7 @@ final class MochiView: NSView {
                 switch bit {
                 case .spark: drawClaudeSpark(in: NSRect(x: x, y: y, width: 16, height: 16))
                 case .cube: drawCursorCube(in: NSRect(x: x, y: y, width: 14, height: 16), crease: Usage.color(stress).withAlphaComponent(0.9))
+                case .ghost: drawKiroGhost(in: NSRect(x: x, y: y, width: 14, height: 16), eyes: Usage.color(stress).withAlphaComponent(0.9))
                 case .battery(let percent): drawPillBattery(percent, in: NSRect(x: x, y: y, width: 16, height: 16))
                 case .dot:
                     NSBezierPath(ovalIn: NSRect(x: x, y: y + 6.5, width: 3, height: 3)).fill()
@@ -1451,6 +1476,10 @@ final class MochiView: NSView {
         }
     }
 
+    /// Kiro's ghost, a stand-in until the official mark is added
+    private func drawKiroGhost(in rect: NSRect, eyes: NSColor) {
+        drawKiroGhostShape(in: rect, body: .white, eyes: eyes)
+    }
     /// Claude's spark: four rounded bars through the centre
     private func drawClaudeSpark(in rect: NSRect) {
         let path = NSBezierPath()
@@ -1853,6 +1882,31 @@ func drawUsageMeterRow(name: String, percent: Int, time: String, color: NSColor,
     return y + 22
 }
 
+/// A row in Kiro's box: label, value, bar, time on the right. Every row uses the same columns, so the bars line up
+@discardableResult
+func drawKiroMeterRow(name: String, value: String, fraction: Double, time: String, color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat, draw: Bool) -> CGFloat {
+    let nameW: CGFloat = 44
+    let valueW: CGFloat = 52
+    let timeW: CGFloat = 52
+    let gap: CGFloat = 8
+    drawLine(name, .systemFont(ofSize: 12), .secondaryLabelColor, x: x, y: y, width: nameW, draw: draw)
+    drawLine(value, .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: x + nameW + gap, y: y - 1, width: valueW, draw: draw)
+    let barX = x + nameW + valueW + gap * 2
+    let barW = max(24, width - (barX - x) - timeW - gap)
+    if draw {
+        let track = NSRect(x: barX, y: y + 5, width: barW, height: 6)
+        NSColor.labelColor.withAlphaComponent(0.12).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+        color.setFill()
+        let clamped = min(1, max(0, fraction))
+        let filled = max(clamped > 0 ? 6 : 0, track.width * CGFloat(clamped))
+        NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: min(filled, track.width), height: 6),
+                     xRadius: 3, yRadius: 3).fill()
+    }
+    drawLine(time, .systemFont(ofSize: 12), .secondaryLabelColor, x: x + width - timeW, y: y, width: timeW, align: .right, draw: draw)
+    return y + 22
+}
+
 /// One reading on the usage graph: 5-hour and week percents, at a time in milliseconds
 struct UsagePoint {
     let at: Double
@@ -2200,6 +2254,11 @@ final class UsagePanelView: NSView {
     /// Cursor's included usage, and a short reason when it could not be read
     var cursor: CursorUsage?
     var cursorProblem = ""
+    /// Kiro's credits. When this is on, the box shows them and nothing from Claude or Cursor
+    var kiro: KiroUsage?
+    var kiroMode = false
+    /// Cursor's reading, when Kiro and Cursor are both open; it gets its own row under Kiro's
+    var kiroCursor: CursorUsage?
     /// The Mac's power draw right now, and how much energy today has added up to
     var power: PowerReading?
     var wattHours: Double = 0
@@ -2226,6 +2285,7 @@ final class UsagePanelView: NSView {
 
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
+        if kiroMode, let kiro { return renderKiro(kiro, draw: draw) }
         let pad: CGFloat = 12
         let inner = Self.width - pad * 2
         var y: CGFloat = 10
@@ -2285,6 +2345,43 @@ final class UsagePanelView: NSView {
         return y + 26
     }
 
+    /// Kiro's box: one "Usage" header, then a row each for Kiro, Cursor (when open too) and the battery, all on the same columns
+    private func renderKiro(_ kiro: KiroUsage, draw: Bool) -> CGFloat {
+        let pad: CGFloat = 12
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 8
+        let used = kiro.usedPercent
+        let worst = max(used, kiroCursor?.percent ?? 0)
+        drawLine("Usage", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.5, draw: draw)
+        let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let state = usageState(worst: worst)
+        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
+        let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
+        if draw {
+            Usage.color(worst).withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
+        }
+        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
+        y += 24
+        let days = kiro.daysLeft().map { "\($0) d" } ?? ""
+        y = drawKiroMeterRow(name: "Kiro", value: kiro.leftText, fraction: kiro.limit > 0 ? kiro.left / kiro.limit : 0, time: days,
+                             color: Usage.color(used), x: pad, y: y, width: inner, draw: draw)
+        if let cursor = kiroCursor {
+            y = drawKiroMeterRow(name: "Cursor", value: "\(cursor.percent)%", fraction: Double(cursor.percent) / 100,
+                                 time: Usage.until(cursor.resets) ?? "", color: Usage.color(cursor.percent),
+                                 x: pad, y: y, width: inner, draw: draw)
+        }
+        if let power {
+            y = drawKiroMeterRow(name: "Power", value: "\(power.percent)%", fraction: Double(power.percent) / 100,
+                                 time: power.minutes.map(powerClock) ?? "", color: Usage.color(100 - power.percent),
+                                 x: pad, y: y, width: inner, draw: draw)
+        }
+        y += 4
+        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
+        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
+        drawButton(refreshRect, checking ? "Checking…" : "Refresh", filled: false, draw: draw)
+        return y + 26
+    }
     // A click on Refresh asks for a fresh reading; anywhere else closes the box.
     // The click that opened the box is ignored, so it can stay up long enough to read.
     override func mouseDown(with event: NSEvent) {
@@ -2402,11 +2499,27 @@ final class BriefView: NSView {
         // The week: working time per day, Claude below and Cursor on top when both were active
         if !content.week.isEmpty {
             drawLine("This week", .systemFont(ofSize: 12, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner * 0.5, draw: draw)
-            drawLine("Claude", .systemFont(ofSize: 10), content.duet ? NSColor(hex: 0xC97A8F) : NSColor(hex: 0xF4A259),
-                     x: pad, y: y + 1, width: inner, align: .right, draw: draw)
-            let cursorLegendX = pad + inner - 52
-            drawLine("·", .systemFont(ofSize: 10), .tertiaryLabelColor, x: cursorLegendX - 6, y: y + 1, width: 8, align: .center, draw: draw)
-            drawLine("Cursor", .systemFont(ofSize: 10), NSColor(hex: 0x7C6BB0), x: cursorLegendX, y: y + 1, width: 52, align: .right, draw: draw)
+            let claudeLegend = content.duet ? NSColor(hex: 0xC97A8F) : NSColor(hex: 0xF4A259)
+            if content.week.contains(where: { $0.kiroSeconds > 0 }) {
+                // Claude · Cursor · Kiro, laid out from the right edge
+                let font = NSFont.systemFont(ofSize: 10)
+                var right = pad + inner
+                for (i, (name, color)) in [("Kiro", kiroTeal), ("Cursor", NSColor(hex: 0x7C6BB0)), ("Claude", claudeLegend)].enumerated() {
+                    if i > 0 {
+                        drawLine("·", font, .tertiaryLabelColor, x: right - 10, y: y + 1, width: 10, align: .center, draw: draw)
+                        right -= 10
+                    }
+                    let w = ceil((name as NSString).size(withAttributes: [.font: font]).width) + 1
+                    drawLine(name, font, color, x: right - w, y: y + 1, width: w, align: .right, draw: draw)
+                    right -= w
+                }
+            } else {
+                drawLine("Claude", .systemFont(ofSize: 10), claudeLegend,
+                         x: pad, y: y + 1, width: inner, align: .right, draw: draw)
+                let cursorLegendX = pad + inner - 52
+                drawLine("·", .systemFont(ofSize: 10), .tertiaryLabelColor, x: cursorLegendX - 6, y: y + 1, width: 8, align: .center, draw: draw)
+                drawLine("Cursor", .systemFont(ofSize: 10), NSColor(hex: 0x7C6BB0), x: cursorLegendX, y: y + 1, width: 52, align: .right, draw: draw)
+            }
             y += 22
             let slot = inner / CGFloat(content.week.count)
             let peak = max(1, content.week.map(\.seconds).max() ?? 1)
@@ -2418,7 +2531,8 @@ final class BriefView: NSView {
                 let barX = x + slot * 0.2
                 if draw, height > 0 {
                     let claudeH = height * CGFloat(bar.claudeSeconds) / CGFloat(max(1, bar.seconds))
-                    let cursorH = height - claudeH
+                    let kiroH = height * CGFloat(bar.kiroSeconds) / CGFloat(max(1, bar.seconds))
+                    let cursorH = height - claudeH - kiroH
                     let claudeColor = content.duet
                         ? (bar.isToday ? NSColor(hex: 0x3D2C3A) : NSColor(hex: 0xC97A8F))
                         : (bar.isToday ? NSColor(hex: 0x3B2A20) : NSColor(hex: 0xF4A259))
@@ -2428,9 +2542,15 @@ final class BriefView: NSView {
                     }
                     if cursorH > 0.5 {
                         NSColor(hex: 0x7C6BB0).setFill()
-                        let cursorY = baseY - height
+                        let cursorY = baseY - height + kiroH
                         let corners = claudeH > 0 ? 0 : 4
                         NSBezierPath(roundedRect: NSRect(x: barX, y: cursorY, width: barW, height: cursorH),
+                                     xRadius: CGFloat(corners), yRadius: CGFloat(corners)).fill()
+                    }
+                    if kiroH > 0.5 {
+                        kiroTeal.setFill()
+                        let corners = claudeH > 0 || cursorH > 0.5 ? 0 : 4
+                        NSBezierPath(roundedRect: NSRect(x: barX, y: baseY - height, width: barW, height: kiroH),
                                      xRadius: CGFloat(corners), yRadius: CGFloat(corners)).fill()
                     }
                 }
@@ -2459,7 +2579,9 @@ final class BriefView: NSView {
 
     /// A row's marker: the chat's own pixel cat with its skin, or a coloured dot when the row has no chat
     private func drawRowMarker(_ row: BriefRow, x: CGFloat, y: CGFloat) {
-        if let id = row.chatID {
+        if row.kiro {
+            drawKiroGhostShape(in: NSRect(x: x + 1, y: y + 1, width: 16, height: 18), body: kiroTeal, eyes: .white)
+        } else if let id = row.chatID {
             let look = chatLooks[id] ?? ChatLook()
             drawCatAvatar(chatSkin(id: id, look: look), look: look, in: NSRect(x: x, y: y + 1, width: 18, height: 18), resting: false)
         } else {
@@ -3333,7 +3455,7 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 /// One big number in a tile: its value, label, and the two colours it is drawn in
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
-struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil }
+struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil; var kiro = false }
 /// The width of a waiting chat's reason chip: its text at 12 points, with 8 points of room each side
 func waitingChipWidth(_ reason: String) -> CGFloat {
     ceil((reason as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 16
@@ -3345,6 +3467,8 @@ struct BriefBar {
     let claudeSeconds: Int
     let cursorSeconds: Int
     let isToday: Bool
+    /// Kiro's share, drawn on top of Cursor's
+    var kiroSeconds = 0
 }
 /// A chat in the top list, with its working time today
 
@@ -3391,7 +3515,7 @@ func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
 }
 
 /// The morning brief ("morning") or the 6 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
-func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil) -> BriefContent {
+func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil, kiro: KiroBrief? = nil) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
     // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
     let red = (ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)), fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)))
@@ -3421,6 +3545,7 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         let todayKey = dayKey(now)
         let today = log[todayKey] ?? DayRecord()
         let todayWorking = dayWorking(today, host: .claude) + cursorWorking(on: todayKey, log: log, transcriptTotals: transcripts)
+            + (kiro?.secondsByDay[todayKey] ?? 0)
         content.headline = (clockText(todayWorking), "working today · \(clockText(waited(today))) waiting for you")
         content.stats = [
             BriefStat(value: "\(today.turns)", label: "Finished", ink: plain.ink, fill: plain.fill),
@@ -3433,12 +3558,21 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             let record = log[key] ?? DayRecord()
             let claude = dayWorking(record, host: .claude)
             let cursor = cursorWorking(on: key, log: log, transcriptTotals: transcripts)
-            return BriefBar(label: names.string(from: date), seconds: claude + cursor,
-                            claudeSeconds: claude, cursorSeconds: cursor, isToday: key == todayKey)
+            let kiroTime = kiro?.secondsByDay[key] ?? 0
+            return BriefBar(label: names.string(from: date), seconds: claude + cursor + kiroTime,
+                            claudeSeconds: claude, cursorSeconds: cursor, isToday: key == todayKey, kiroSeconds: kiroTime)
         }
     }
     content.latest = latestSessions(chats).map { chat in
         BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link, chatID: chat.id)
+    }
+    if let kiro, !kiro.sessions.isEmpty {
+        let others = latestSessions(chats).map { chat in
+            (at: chat.updatedAt,
+             row: BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link, chatID: chat.id),
+             app: chat.host == .cursor ? 1 : 0)
+        }
+        content.latest = mergeLatestWithKiro(others, kiro: kiro.sessions)
     }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
         content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"
@@ -4173,6 +4307,348 @@ struct Usage {
         let wk = Usage.until(weekResets).map { " (resets \($0))" } ?? ""
         return "5h \(Usage.bar(fiveHour)) \(fiveHour)%\(five)  ·  Week \(Usage.bar(week)) \(week)%\(wk)  ·  \(ago(at))"
     }
+}
+
+// MARK: - Kiro credits, from the usage check Kiro already writes to its own log
+
+let kiroBundleID = "dev.kiro.desktop"
+
+/// Kiro's colour in the briefs
+let kiroTeal = NSColor(hex: 0x4FA3A5)
+
+/// Kiro's ghost, a stand-in until the official mark is added: a rounded body with a wavy hem and two eyes.
+/// Drawn in a flipped view, top down
+func drawKiroGhostShape(in rect: NSRect, body: NSColor, eyes: NSColor) {
+    let sx = rect.width / 14, sy = rect.height / 16
+    func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: rect.minX + x * sx, y: rect.minY + y * sy) }
+    let path = NSBezierPath()
+    path.move(to: pt(2, 13.5))
+    path.line(to: pt(2, 7))
+    path.curve(to: pt(7, 1.5), controlPoint1: pt(2, 3.8), controlPoint2: pt(3.8, 1.5))
+    path.curve(to: pt(12, 7), controlPoint1: pt(10.2, 1.5), controlPoint2: pt(12, 3.8))
+    path.line(to: pt(12, 13.5))
+    path.line(to: pt(10.4, 12.2))
+    path.line(to: pt(8.7, 13.6))
+    path.line(to: pt(7, 12.2))
+    path.line(to: pt(5.3, 13.6))
+    path.line(to: pt(3.6, 12.2))
+    path.close()
+    body.setFill()
+    path.fill()
+    eyes.setFill()
+    NSBezierPath(ovalIn: NSRect(x: pt(4.3, 5.6).x, y: pt(4.3, 5.6).y, width: 2 * sx, height: 2 * sy)).fill()
+    NSBezierPath(ovalIn: NSRect(x: pt(7.7, 5.6).x, y: pt(7.7, 5.6).y, width: 2 * sx, height: 2 * sy)).fill()
+}
+
+/// Kiro itself, or one of its helpers
+func isKiroBundle(_ bundleID: String?) -> Bool {
+    guard let bundleID else { return false }
+    return bundleID == kiroBundleID || bundleID.hasPrefix(kiroBundleID + ".")
+}
+
+/// Credits left on Kiro's bonus grant, read from a `GetUsageLimitsCommand` line in Kiro's own log.
+/// Nothing here needs a login: Kiro writes the reading as you use it.
+struct KiroUsage: Equatable {
+    var left: Double
+    var limit: Double
+    var expires: Date?
+    var at: Date
+
+    /// How much of the starting amount is gone, 0 to 100
+    var usedPercent: Int {
+        guard limit > 0 else { return 0 }
+        return min(100, max(0, Int((100 * (limit - left) / limit).rounded())))
+    }
+    /// "3,963"
+    var leftText: String { kiroNumber(left) }
+    /// Whole days until the credits expire, counting a part day as a day
+    func daysLeft(now: Date = Date()) -> Int? {
+        guard let expires else { return nil }
+        return max(0, Int((expires.timeIntervalSince(now) / 86400).rounded(.up)))
+    }
+}
+
+func kiroNumber(_ value: Double) -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    formatter.maximumFractionDigits = 0
+    formatter.locale = Locale(identifier: "en_US")
+    return formatter.string(from: NSNumber(value: value.rounded())) ?? "\(Int(value.rounded()))"
+}
+
+/// One log line: `2026-11-15 18:57:08.988 [info] {"commandName":"GetUsageLimitsCommand","output":{...}}`.
+/// The active bonus grants count as the balance; with none, the main allowance does.
+func parseKiroUsage(line: String) -> KiroUsage? {
+    guard line.contains("GetUsageLimitsCommand"), let brace = line.firstIndex(of: "{"),
+          let json = try? JSONSerialization.jsonObject(with: Data(line[brace...].utf8)) as? [String: Any],
+          json["commandName"] as? String == "GetUsageLimitsCommand",
+          let output = json["output"] as? [String: Any],
+          let item = (output["usageBreakdownList"] as? [[String: Any]])?.first else { return nil }
+    let stamp = DateFormatter()
+    stamp.locale = Locale(identifier: "en_US_POSIX")
+    stamp.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+    let at = stamp.date(from: String(line.prefix(23))) ?? Date()
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    func date(_ any: Any?) -> Date? { (any as? String).flatMap { iso.date(from: $0) } }
+    let bonuses = (item["bonuses"] as? [[String: Any]] ?? []).filter {
+        ($0["status"] as? String) == "ACTIVE" && (jsonNumber($0["usageLimit"]) ?? 0) > 0
+    }
+    if !bonuses.isEmpty {
+        let limit = bonuses.reduce(0.0) { $0 + (jsonNumber($1["usageLimit"]) ?? 0) }
+        let used = bonuses.reduce(0.0) { $0 + (jsonNumber($1["currentUsage"]) ?? 0) }
+        let expiry = bonuses.compactMap { date($0["expiresAt"]) }.min()
+        return KiroUsage(left: max(0, limit - used), limit: limit, expires: expiry, at: at)
+    }
+    let limit = jsonNumber(item["usageLimitWithPrecision"]) ?? jsonNumber(item["usageLimit"]) ?? 0
+    let used = jsonNumber(item["currentUsageWithPrecision"]) ?? jsonNumber(item["currentUsage"]) ?? 0
+    guard limit > 0 else { return nil }
+    return KiroUsage(left: max(0, limit - used), limit: limit, expires: date(item["nextDateReset"] ?? output["nextDateReset"]), at: at)
+}
+
+/// The newest reading in Kiro's log files. Only the end of each file is read.
+func readKiroUsage(logs: URL = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Library/Application Support/Kiro/logs")) -> KiroUsage? {
+    let fm = FileManager.default
+    var files: [(URL, Date)] = []
+    for session in (try? fm.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil)) ?? [] {
+        for window in (try? fm.contentsOfDirectory(at: session, includingPropertiesForKeys: nil)) ?? [] where window.lastPathComponent.hasPrefix("window") {
+            let file = window.appendingPathComponent("exthost/kiro.kiroAgent/q-client.log")
+            if let when = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+                files.append((file, when))
+            }
+        }
+    }
+    var best: KiroUsage?
+    for (file, _) in files.sorted(by: { $0.1 > $1.1 }).prefix(6) {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
+        defer { try? handle.close() }
+        let size = handle.seekToEndOfFile()
+        handle.seek(toFileOffset: size > 1_000_000 ? size - 1_000_000 : 0)
+        let text = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() where line.contains("GetUsageLimitsCommand") {
+            if let found = parseKiroUsage(line: String(line)) {
+                if best == nil || found.at > best!.at { best = found }
+                break
+            }
+        }
+    }
+    return best
+}
+
+// MARK: - Kiro credits between Kiro's own readings
+
+let kiroLogsFolder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Kiro/logs")
+
+/// The credits one Kiro chat turn used, from a `usage_summary` line in a session's `messages.jsonl`
+func kiroTurnCredits(line: Substring) -> (at: Date, credits: Double)? {
+    guard line.contains("\"usage_summary\""),
+          let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+          let stamp = (json["timestamp"] as? String).flatMap({ kiroISO.date(from: $0) }),
+          let payload = json["payload"] as? [String: Any], payload["type"] as? String == "usage_summary" else { return nil }
+    let turns = payload["promptTurnSummaries"] as? [[String: Any]] ?? []
+    let credits = turns.filter { ($0["unit"] as? String ?? "credit") == "credit" }.reduce(0.0) { $0 + (jsonNumber($1["usage"]) ?? 0) }
+    return (stamp, credits)
+}
+
+/// Kiro's balance in real time. Kiro writes an official reading to its log only now and then, but every chat turn
+/// records the credits it used as it ends. So the balance is the last reading less the turns since; each new reading
+/// starts the count again. Only the new end of each chat file is read. Use from one queue at a time.
+final class KiroLiveCredits {
+    private var anchor: KiroUsage?
+    private var logStamp = ""
+    private var files: [String: (offset: UInt64, credits: Double, last: Date?)] = [:]
+    private let logs: URL
+    private let sessions: URL
+
+    init(logs: URL = kiroLogsFolder, sessions: URL = kiroSessionsFolder) {
+        self.logs = logs
+        self.sessions = sessions
+    }
+
+    /// Kiro's log files and their sizes and times, so the log is only read again when it changed
+    private func logFingerprint() -> String {
+        let fm = FileManager.default
+        var parts: [String] = []
+        for session in (try? fm.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil)) ?? [] {
+            for window in (try? fm.contentsOfDirectory(at: session, includingPropertiesForKeys: nil)) ?? [] where window.lastPathComponent.hasPrefix("window") {
+                let file = window.appendingPathComponent("exthost/kiro.kiroAgent/q-client.log")
+                guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
+                parts.append("\(file.path):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)")
+            }
+        }
+        return parts.sorted().joined(separator: "|")
+    }
+
+    func update() -> KiroUsage? {
+        let stamp = logFingerprint()
+        if stamp != logStamp || anchor == nil {
+            logStamp = stamp
+            if let fresh = readKiroUsage(logs: logs), anchor == nil || fresh.at != anchor!.at {
+                anchor = fresh
+                files = [:]
+            }
+        }
+        guard let anchor else { return nil }
+        let fm = FileManager.default
+        var spent = 0.0
+        var latest = anchor.at
+        for workspace in (try? fm.contentsOfDirectory(at: sessions, includingPropertiesForKeys: nil)) ?? [] {
+            for folder in (try? fm.contentsOfDirectory(at: workspace, includingPropertiesForKeys: nil)) ?? [] where folder.lastPathComponent.hasPrefix("sess_") {
+                let file = folder.appendingPathComponent("messages.jsonl")
+                guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                      let modified = values.contentModificationDate, modified >= anchor.at else { continue }
+                let size = UInt64(values.fileSize ?? 0)
+                var state = files[file.path] ?? (offset: 0, credits: 0, last: nil)
+                if size < state.offset { state = (offset: 0, credits: 0, last: nil) } // the file was rewritten
+                if size > state.offset, let handle = try? FileHandle(forReadingFrom: file) {
+                    handle.seek(toFileOffset: state.offset)
+                    let data = handle.readData(ofLength: Int(size - state.offset))
+                    try? handle.close()
+                    // Only whole lines; a line still being written is read next time
+                    if let end = data.lastIndex(of: UInt8(ascii: "\n")) {
+                        let chunk = data[data.startIndex...end]
+                        for line in String(decoding: chunk, as: UTF8.self).split(separator: "\n") {
+                            guard let turn = kiroTurnCredits(line: line), turn.at > anchor.at else { continue }
+                            state.credits += turn.credits
+                            state.last = max(state.last ?? turn.at, turn.at)
+                        }
+                        state.offset += UInt64(chunk.count)
+                    }
+                }
+                files[file.path] = state
+                spent += state.credits
+                if let last = state.last { latest = max(latest, last) }
+            }
+        }
+        return KiroUsage(left: max(0, anchor.left - spent), limit: anchor.limit, expires: anchor.expires, at: latest)
+    }
+}
+
+// MARK: - Kiro sessions, for the morning brief and the wrap-up
+
+let kiroSessionsFolder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kiro/sessions")
+
+/// One Kiro chat, from its `session.json`: only the title, state and times are read
+struct KiroSession {
+    let id: String
+    let title: String
+    let status: Status
+    let updatedAt: Date
+    let folder: URL
+}
+
+/// Kiro's states, in Mochi's words. Nil for a session that was never used
+func kiroStatus(_ raw: String?) -> Status? {
+    switch raw {
+    case "in_progress": return .running
+    case "failed": return .blocked
+    case .some: return .idle
+    case nil: return nil
+    }
+}
+
+/// Your own chats only: Kiro Crew's workers and empty "New Session" stubs stay out of the briefs
+func isOwnKiroSession(workspace: String?, status: String?) -> Bool {
+    guard status != nil else { return false }
+    if let workspace, workspace.contains("/.kiro/") || workspace.contains("kirocrew-workspace") { return false }
+    return true
+}
+
+let kiroISO: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+func readKiroSessions(root: URL = kiroSessionsFolder) -> [KiroSession] {
+    let fm = FileManager.default
+    var found: [KiroSession] = []
+    for workspace in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where workspace.lastPathComponent != "cli" {
+        for folder in (try? fm.contentsOfDirectory(at: workspace, includingPropertiesForKeys: nil)) ?? [] where folder.lastPathComponent.hasPrefix("sess_") {
+            guard let data = try? Data(contentsOf: folder.appendingPathComponent("session.json")),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            let raw = json["status"] as? String
+            guard isOwnKiroSession(workspace: (json["workspacePaths"] as? [String])?.first, status: raw),
+                  let status = kiroStatus(raw),
+                  let updated = (json["lastModifiedAt"] as? String).flatMap({ kiroISO.date(from: $0) }) else { continue }
+            let title = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Kiro chat"
+            found.append(KiroSession(id: folder.lastPathComponent, title: title, status: status, updatedAt: updated, folder: folder))
+        }
+    }
+    return found.sorted { $0.updatedAt > $1.updatedAt }
+}
+
+/// The time of each message in a Kiro chat. Each line starts `{"id":…,"timestamp":"…"`, so only its start is read
+func kiroMessageStamps(in file: URL) -> [Date] {
+    guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+    let key = "\"timestamp\":\""
+    var stamps: [Date] = []
+    for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        let head = line.prefix(240)
+        guard let open = head.range(of: key), let close = head[open.upperBound...].firstIndex(of: "\"") else { continue }
+        if let date = kiroISO.date(from: String(head[open.upperBound..<close])) { stamps.append(date) }
+    }
+    return stamps
+}
+
+/// Kiro working time for each day of this week, measured the same way as Cursor's: first to last message of each chat
+/// on a day, joined where chats overlap
+func kiroSecondsByDay(containing date: Date, sessions: [KiroSession]) -> [String: Int] {
+    let keys = weekDates(containing: date).map { dayKey($0) }
+    let bounds: [(String, Date, Date)] = keys.compactMap { key in
+        guard let start = dayStart(key) else { return nil }
+        return (key, start, start.addingTimeInterval(86_400))
+    }
+    guard let weekStart = bounds.first?.1 else { return [:] }
+    var rangesByDay = Dictionary(uniqueKeysWithValues: keys.map { ($0, [(Date, Date)]()) })
+    for session in sessions where session.updatedAt >= weekStart {
+        let stamps = kiroMessageStamps(in: session.folder.appendingPathComponent("messages.jsonl"))
+        for (key, start, end) in bounds {
+            if let range = cursorTranscriptRangeOnDay(stamps: stamps, dayStart: start, dayEnd: end) {
+                rangesByDay[key, default: []].append(range)
+            }
+        }
+    }
+    var totals: [String: Int] = [:]
+    for key in keys {
+        let merged = mergeDateRanges(rangesByDay[key] ?? [])
+        totals[key] = merged.isEmpty ? 0 : min(86_400, secondsFromMergedRanges(merged))
+    }
+    return totals
+}
+
+/// What the briefs show from Kiro: its chats, and its working time this week
+struct KiroBrief {
+    var sessions: [KiroSession] = []
+    var secondsByDay: [String: Int] = [:]
+}
+
+func readKiroBrief(now: Date) -> KiroBrief {
+    let sessions = readKiroSessions()
+    return KiroBrief(sessions: sessions, secondsByDay: kiroSecondsByDay(containing: now, sessions: sessions))
+}
+
+/// Adds Kiro's chats to the latest sessions, newest first. An app with chats but no row gets its newest one, in place
+/// of the oldest row from an app that still has another, so Claude, Cursor and Kiro each keep one
+func mergeLatestWithKiro(_ others: [(at: Double, row: BriefRow, app: Int)], kiro: [KiroSession], limit: Int = 7) -> [BriefRow] {
+    let kiroRows = kiro.prefix(limit).map { session in
+        (at: session.updatedAt.timeIntervalSince1970 * 1000,
+         row: BriefRow(left: clip(session.title, 26), right: "\(listStateLabel(session.status)) · \(ago(session.updatedAt.timeIntervalSince1970 * 1000))",
+                       dot: session.status.color, kiro: true),
+         app: 2)
+    }
+    let all = (others + kiroRows).sorted { $0.at > $1.at }
+    var picked = Array(all.prefix(limit))
+    for app in [0, 1, 2] where !picked.contains(where: { $0.app == app }) {
+        guard let newest = all.first(where: { $0.app == app }) else { continue }
+        let counts = Dictionary(grouping: picked, by: \.app).mapValues(\.count)
+        if let drop = picked.indices.reversed().first(where: { counts[picked[$0].app, default: 0] > 1 }) {
+            picked.remove(at: drop)
+            picked.append(newest)
+        }
+    }
+    return picked.sorted { $0.at > $1.at }.map(\.row)
 }
 
 // MARK: - Cursor usage, from the dashboard call Cursor already uses
@@ -5105,6 +5581,16 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var cursorUsage: CursorUsage?
     var cursorProblem = ""
     var cursorBusy = false
+    /// Kiro's credits, read from its log while Kiro is in front
+    var kiroUsage: KiroUsage?
+    var kiroBusy = false
+    /// Counts Kiro's credits between its own readings, on its own queue
+    let kiroLive = KiroLiveCredits()
+    let kiroQueue = DispatchQueue(label: "local.claude-mods.mochi.kiro", qos: .utility)
+    /// Kiro's chats and time for the briefs, re-read in the background at most every 30 seconds
+    var kiroBriefCache: KiroBrief?
+    var kiroBriefAt = Date.distantPast
+    var kiroBriefBusy = false
     var cursorCheckedAt: Date?
     var cursorAttemptedAt: Date?
     var cursorFilePolledAt = Date.distantPast
@@ -5357,6 +5843,10 @@ func playAtTwoThirds(_ sound: NSSound?) {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.pollCursorUsageFile()
         }
+        // Kiro's credits follow each chat turn: checked every 3 seconds while Kiro is open
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            if self?.view.kiroRunning == true { self?.refreshKiroQuietly() }
+        }
         look()
     }
 
@@ -5389,6 +5879,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
         samplePower()
         let frontApp = NSWorkspace.shared.frontmostApplication
         followHost(frontApp)
+        updateKiroRunning()
         // Claude stays hidden unless she is the app in front, and the pill keeps Cursor's saved reading
         let front = usageFront(bundleID: frontApp?.bundleIdentifier, appName: frontApp?.localizedName,
                                regular: frontApp?.activationPolicy == .regular)
@@ -5574,6 +6065,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
     func followHost(_ bundleID: String?, name: String? = nil, regular: Bool = true) {
         let switched = usageFront(bundleID: bundleID, appName: name, regular: regular)
         if switched == .same { return }
+        setKiroFront(isKiroBundle(bundleID)) // Kiro changes only her pill; Claude and Cursor are handled below as before
         if switched == .cursor, host == .cursor { return }
         if switched == .claude, host == .claude { return }
         if switched == .other {
@@ -5610,6 +6102,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// Click the usage label: shows the numbers Mochi already has at once, then refreshes Claude and Cursor
     func showUsageDetails() {
+        if view.kiroOnPill { showKiroDetails(); return }
         if let known = Usage.read() { usage = known; view.usage = known }
         if cursorUsage == nil { cursorUsage = CursorUsage.read() }
         renderUsagePanel(fresh: false, updating: true)
@@ -5643,6 +6136,100 @@ func playAtTwoThirds(_ sound: NSSound?) {
                 self.view.needsDisplay = true
                 done?(ok)
             }
+        }
+    }
+
+    /// Kiro came to the front or left it. Credits are read when it opens and while it stays in front; never when it is not
+    func setKiroFront(_ front: Bool) {
+        guard view.kiroFront != front else { return }
+        view.kiroFront = front
+        view.needsDisplay = true
+        mochiLog(front ? "pill: Kiro" : "pill: Kiro hidden")
+        if front { refreshKiroQuietly() }
+    }
+
+    /// Notices Kiro and Cursor opening and closing. Kiro's credits are read when it opens; once closed, they leave the pill
+    func updateKiroRunning() {
+        let kiro = !NSRunningApplication.runningApplications(withBundleIdentifier: kiroBundleID).isEmpty
+        let cursor = !NSRunningApplication.runningApplications(withBundleIdentifier: cursorBundleID).isEmpty
+        let claude = !NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundleID).isEmpty
+        if view.cursorRunning != cursor { view.cursorRunning = cursor; view.needsDisplay = true }
+        if view.claudeRunning != claude { view.claudeRunning = claude; view.needsDisplay = true }
+        if view.kiroRunning != kiro {
+            view.kiroRunning = kiro
+            view.needsDisplay = true
+            mochiLog(kiro ? "Kiro open" : "Kiro closed")
+            if kiro { refreshKiroQuietly() }
+        }
+    }
+
+    /// Reads Kiro's log in the background and puts the newest credits on the pill
+    func refreshKiroQuietly(_ done: ((Bool) -> Void)? = nil) {
+        if kiroBusy { done?(false); return }
+        kiroBusy = true
+        let live = kiroLive
+        kiroQueue.async { [weak self] in
+            let found = live.update()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.kiroBusy = false
+                if let found, found != self.kiroUsage {
+                    self.kiroUsage = found
+                    self.view.kiroUsage = found
+                    self.view.needsDisplay = true
+                    self.updateOpenKiroBox(found)
+                }
+                done?(found != nil)
+            }
+        }
+    }
+
+    /// The usage box follows the live count while it is open on Kiro
+    func updateOpenKiroBox(_ kiro: KiroUsage) {
+        guard bubble.isVisible, bubbleFrame.scroll.documentView === usagePanel, usagePanel.kiroMode, !usagePanel.checking else { return }
+        let clock = DateFormatter()
+        clock.dateFormat = Calendar.current.isDateInToday(kiro.at) ? "h:mm a" : "d MMM, h:mm a"
+        usagePanel.kiro = kiro
+        usagePanel.kiroCursor = view.showsBoth ? cursorUsage : nil
+        usagePanel.footnote = "Updated \(clock.string(from: kiro.at))"
+        usagePanel.needsDisplay = true
+    }
+
+    /// A click on the pill while Kiro is in front: the credits at once, then a fresh read
+    func showKiroDetails() {
+        renderKiroPanel(updating: true)
+        let group = DispatchGroup()
+        var kiroOK = false
+        group.enter()
+        refreshKiroQuietly { ok in kiroOK = ok; group.leave() }
+        if view.showsBoth {
+            group.enter()
+            refreshCursorQuietly(force: true) { _ in group.leave() }
+        }
+        group.notify(queue: .main) { [weak self] in self?.renderKiroPanel(updating: false, fresh: kiroOK) }
+    }
+
+    func renderKiroPanel(updating: Bool, fresh: Bool = false) {
+        guard let kiro = kiroUsage else {
+            say("No Kiro credit reading yet. Use Kiro and I'll pick one up.", color: Status.idle.color)
+            return
+        }
+        let clock = DateFormatter()
+        clock.dateFormat = Calendar.current.isDateInToday(kiro.at) ? "h:mm a" : "d MMM, h:mm a"
+        usagePanel.kiroMode = true
+        usagePanel.kiro = kiro
+        usagePanel.kiroCursor = view.showsBoth ? cursorUsage : nil
+        usagePanel.power = power
+        usagePanel.openedAt = Date()
+        usagePanel.checking = updating
+        usagePanel.footnote = updating ? "Checking now…" : "\(fresh ? "Checked" : "Last read") \(clock.string(from: kiro.at))"
+        if briefPanel.isVisible { briefPanel.orderOut(nil) }
+        showUsagePanel(accent: Usage.color(max(kiro.usedPercent, usagePanel.kiroCursor?.percent ?? 0)))
+        hideBubble?.invalidate()
+        guard !updating else { return }
+        hideBubble = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
+            self?.bubble.orderOut(nil)
+            self?.placeCards()
         }
     }
 
@@ -5738,6 +6325,7 @@ func playAtTwoThirds(_ sound: NSSound?) {
 
     /// The glass panel: Claude's limits and Cursor's included usage, and how fresh the reading is
     func renderUsagePanel(fresh: Bool, updating: Bool = false) {
+        usagePanel.kiroMode = false
         let cursor = host == .cursor ? (cursorUsage ?? CursorUsage.read()) : nil
         let shown = host == .claude ? usage : nil
         guard shown != nil || cursor != nil || (host == .cursor && !cursorProblem.isEmpty) || power != nil else {
@@ -6504,7 +7092,7 @@ final class NotePanel: NSPanel {
             mochiLog("brief: wrap-up held until 6:00 PM")
             return
         }
-        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer), live: kind)
+        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, kiro: kiroBriefData(now: now)), live: kind)
         mochiLog("brief: \(kind) shown")
     }
 
@@ -6549,9 +7137,30 @@ final class NotePanel: NSPanel {
     }
 
     /// While the morning brief or the wrap-up is open, its numbers and lists update every second
+    /// Kiro's part of the briefs. The first call reads it at once; later ones use the last read and refresh it in the background
+    func kiroBriefData(now: Date = Date()) -> KiroBrief {
+        guard let cached = kiroBriefCache else {
+            let fresh = readKiroBrief(now: now)
+            kiroBriefCache = fresh
+            kiroBriefAt = now
+            return fresh
+        }
+        if now.timeIntervalSince(kiroBriefAt) >= 30, !kiroBriefBusy {
+            kiroBriefBusy = true
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let fresh = readKiroBrief(now: now)
+                DispatchQueue.main.async {
+                    self?.kiroBriefCache = fresh
+                    self?.kiroBriefAt = Date()
+                    self?.kiroBriefBusy = false
+                }
+            }
+        }
+        return cached
+    }
     func refreshBrief() {
         guard let kind = briefLiveKind, briefPanel.isVisible, let brief = currentBrief else { return }
-        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer)
+        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, kiro: kiroBriefData())
         let height = brief.fittingHeight()
         if height != briefPanel.frame.height {
             brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)

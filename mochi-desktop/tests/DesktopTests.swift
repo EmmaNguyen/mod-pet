@@ -648,4 +648,76 @@ check("A chat in Auto gets no Allow and Deny card, a chat in the other modes doe
 check("Choosing Auto on the test request shows no card, the other choices do", !choiceCardShows(for: "auto") && choiceCardShows(for: "allow") && choiceCardShows(for: "deny"))
 check("chats are still given skins from the first six", (0..<50).allSatisfy { chatSkinIndex("chat-\($0)", count: chatSkinCount) < chatSkinCount })
 
+// Kiro: credits from Kiro's own log, live turn credits, its chats in the briefs, and the pill
+let kiroLine = #"2026-11-15 18:57:08.988 [info] {"commandName":"GetUsageLimitsCommand","output":{"nextDateReset":"2026-12-01T00:00:00.000Z","usageBreakdownList":[{"currentUsage":50,"usageLimit":50,"bonuses":[{"status":"ACTIVE","usageLimit":4000,"currentUsage":42.3,"expiresAt":"2027-01-01T08:00:00.000Z"},{"status":"EXPIRED","usageLimit":500,"currentUsage":0}]}]}}"#
+let kiroRead = parseKiroUsage(line: kiroLine)
+check("Kiro's active bonus is the balance, and an expired one is left out", kiroRead?.limit == 4000 && abs((kiroRead?.left ?? 0) - 3957.7) < 0.001)
+check("Kiro's percent is the share of the starting amount used", kiroRead?.usedPercent == 1)
+check("Kiro's credits left read with a thousands comma", kiroRead?.leftText == "3,958")
+check("Kiro's days left count to the bonus expiry", kiroRead?.daysLeft(now: kiroISO.date(from: "2026-11-15T12:00:00.000Z")!) == 47)
+check("with no bonus, Kiro's own allowance is the balance",
+      parseKiroUsage(line: #"2026-11-15 18:57:08.988 [info] {"commandName":"GetUsageLimitsCommand","output":{"usageBreakdownList":[{"currentUsage":10,"usageLimit":50,"bonuses":[]}]}}"#)?.left == 40)
+check("a Kiro log line that is not a usage reading reads nothing",
+      parseKiroUsage(line: "hello") == nil && parseKiroUsage(line: "x {bad GetUsageLimitsCommand") == nil)
+check("Kiro's states read in Mochi's words", kiroStatus("in_progress") == .running && kiroStatus("idle") == .idle && kiroStatus("failed") == .blocked && kiroStatus(nil) == nil)
+check("Kiro Crew's workers and unused sessions stay out of the briefs",
+      !isOwnKiroSession(workspace: "/Users/me/.kiro/crew/workspace", status: "idle") &&
+      !isOwnKiroSession(workspace: "/Users/me/kirocrew-workspace/x", status: "idle") &&
+      !isOwnKiroSession(workspace: "/Users/me/code", status: nil) && isOwnKiroSession(workspace: "/Users/me/code", status: "idle"))
+check("a Kiro turn's credits read from its usage summary",
+      kiroTurnCredits(line: #"{"id":"a","timestamp":"2026-11-15T13:08:17.216Z","payload":{"type":"usage_summary","promptTurnSummaries":[{"unit":"credit","usage":7.25},{"unit":"credit","usage":0.75}]}}"#)?.credits == 8)
+// Live credits: the last log reading, less the turns since
+let kiroTemp = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-kiro-\(UUID().uuidString)")
+let kiroLogDir = kiroTemp.appendingPathComponent("logs/20261115T100000/window1/exthost/kiro.kiroAgent")
+let kiroSess = kiroTemp.appendingPathComponent("sessions/ws/sess_1")
+try! FileManager.default.createDirectory(at: kiroLogDir, withIntermediateDirectories: true)
+try! FileManager.default.createDirectory(at: kiroSess, withIntermediateDirectories: true)
+try! (kiroLine + "\n").write(to: kiroLogDir.appendingPathComponent("q-client.log"), atomically: true, encoding: .utf8)
+func kiroTurn(_ at: String, _ credits: Double) -> String {
+    #"{"id":"t","timestamp":""# + at + #"","payload":{"type":"usage_summary","promptTurnSummaries":[{"unit":"credit","usage":"# + "\(credits)" + "}]}}\n"
+}
+let kiroMessages = kiroSess.appendingPathComponent("messages.jsonl")
+let kiroStampFormat = DateFormatter()
+kiroStampFormat.locale = Locale(identifier: "en_US_POSIX")
+kiroStampFormat.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+let kiroAnchorAt = kiroStampFormat.date(from: "2026-11-15 18:57:08.988")!
+let before = kiroISO.string(from: kiroAnchorAt.addingTimeInterval(-60))
+let after1 = kiroISO.string(from: kiroAnchorAt.addingTimeInterval(60))
+let after2 = kiroISO.string(from: kiroAnchorAt.addingTimeInterval(120))
+try! (kiroTurn(before, 5) + kiroTurn(after1, 2)).write(to: kiroMessages, atomically: true, encoding: .utf8)
+let kiroLive = KiroLiveCredits(logs: kiroTemp.appendingPathComponent("logs"), sessions: kiroTemp.appendingPathComponent("sessions"))
+check("live Kiro credits take off only the turns after the last reading", abs((kiroLive.update()?.left ?? 0) - 3955.7) < 0.001)
+let kiroAppend = try! FileHandle(forWritingTo: kiroMessages)
+kiroAppend.seekToEndOfFile()
+kiroAppend.write(Data((kiroTurn(after2, 1.5) + #"{"id":"half"#).utf8))
+try! kiroAppend.close()
+check("a new turn is added, and a half-written line waits for the next read", abs((kiroLive.update()?.left ?? 0) - 3954.2) < 0.001)
+try? FileManager.default.removeItem(at: kiroTemp)
+// Kiro's chats join the latest sessions, and Claude, Cursor and Kiro each keep a row
+func kiroRow(_ n: String) -> BriefRow { BriefRow(left: n, right: "", dot: .gray) }
+func kiroSession(_ n: String, _ minutesAgo: Double) -> KiroSession {
+    KiroSession(id: n, title: n, status: .idle, updatedAt: Date(timeIntervalSinceNow: -minutesAgo * 60), folder: URL(fileURLWithPath: "/tmp"))
+}
+let nowMs = Date().timeIntervalSince1970 * 1000
+var briefOthers: [(at: Double, row: BriefRow, app: Int)] = (0..<6).map { (at: nowMs - Double($0) * 60_000, row: kiroRow("claude\($0)"), app: 0) }
+briefOthers.append((at: nowMs - 10 * 60_000, row: kiroRow("cursor0"), app: 1))
+let oldKiro = mergeLatestWithKiro(briefOthers, kiro: [kiroSession("kiro", 600)]).map(\.left)
+check("an old Kiro chat still gets a row", oldKiro.count == 7 && oldKiro.contains("kiro") && oldKiro.contains("cursor0"))
+let newKiro = mergeLatestWithKiro(briefOthers, kiro: [kiroSession("k1", 0.5), kiroSession("k2", 2.5)]).map(\.left)
+check("newer Kiro chats do not push out the only Cursor row", newKiro.count == 7 && newKiro.contains("cursor0") && newKiro.first == "claude0")
+// The pill: Kiro while it is open and in front, with Cursor beside it when both are open
+let kiroPill = MochiView(frame: .zero)
+kiroPill.kiroUsage = kiroRead
+kiroPill.cursorUsage = CursorUsage(plan: "Pro", percent: 18, spent: "", onDemand: "", period: "", resets: nil, at: 0)
+kiroPill.kiroRunning = true
+kiroPill.claudeRunning = true
+kiroPill.shownHost = .claude
+check("Kiro stays off the pill while Claude is open, Claude was last and Kiro is not in front", !kiroPill.kiroOnPill)
+kiroPill.kiroFront = true
+check("Kiro in front puts it on the pill", kiroPill.showsKiro && !kiroPill.showsBoth)
+kiroPill.cursorRunning = true
+check("Kiro and Cursor open together share the pill", kiroPill.showsBoth && !kiroPill.showsKiro)
+kiroPill.kiroFront = false
+kiroPill.claudeRunning = false
+check("with Claude closed, Kiro stays on the pill when another app is in front", kiroPill.kiroOnPill)
 print("ALL PASSED")
