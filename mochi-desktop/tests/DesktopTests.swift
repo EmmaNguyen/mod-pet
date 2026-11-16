@@ -720,4 +720,18 @@ check("Kiro and Cursor open together share the pill", kiroPill.showsBoth && !kir
 kiroPill.kiroFront = false
 kiroPill.claudeRunning = false
 check("with Claude closed, Kiro stays on the pill when another app is in front", kiroPill.kiroOnPill)
+// The morning brief's Yesterday and the wrap-up count the same: Claude, Cursor (the larger of live and transcripts) and Kiro
+var totalLog: DayLog = [:]
+var totalDay = DayRecord()
+totalDay.chats["claude-1"] = ChatDay(title: "c", turns: 1, working: 600)
+totalDay.chats["cursor-1"] = ChatDay(title: "u", turns: 1, working: 300)
+totalLog["2026-11-15"] = totalDay
+check("a day's total adds Claude, the larger Cursor count, and Kiro",
+      dayWorkingTotal(on: "2026-11-15", log: totalLog, cursorTranscripts: ["2026-11-15": 1200], kiroByDay: ["2026-11-15": 900]) == 600 + 1200 + 900)
+check("a day's total with no Kiro data still counts Claude and Cursor",
+      dayWorkingTotal(on: "2026-11-15", log: totalLog, cursorTranscripts: [:], kiroByDay: nil) == 900)
+let mondayMorning = dayStart("2026-11-16")!.addingTimeInterval(9 * 3600)
+let mondayBrief = briefContent(kind: "morning", chats: [], log: totalLog, now: mondayMorning, offer: nil,
+                               cursorByDay: ["2026-11-15": 1200], kiro: KiroBrief(sessions: [], secondsByDay: ["2026-11-15": 900]))
+check("Monday's Yesterday counts last Sunday, Cursor and Kiro included", mondayBrief.stats.last?.value == clockText(600 + 1200 + 900))
 print("ALL PASSED")

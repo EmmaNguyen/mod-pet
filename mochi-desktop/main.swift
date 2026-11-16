@@ -3533,19 +3533,23 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
     let running = chats.filter { $0.status == .running }
     if kind == "morning" {
         content.title = "Good morning."
-        let yesterday = log[dayKey(now.addingTimeInterval(-86_400))] ?? DayRecord()
+        // Yesterday counts Claude, Cursor and Kiro the same way as the wrap-up. On a Monday it is last week's Sunday,
+        // so Cursor's transcripts are read for the week that holds yesterday
+        let yesterdayDate = now.addingTimeInterval(-86_400)
+        let yesterdayKey = dayKey(yesterdayDate)
+        let transcripts = cursorByDay ?? cursorTranscriptSecondsByDay(containing: yesterdayDate)
+        let yesterday = dayWorkingTotal(on: yesterdayKey, log: log, cursorTranscripts: transcripts, kiroByDay: kiro?.secondsByDay)
         content.stats = [
             BriefStat(value: "\(waiting.count)", label: "Waiting", ink: red.ink, fill: red.fill),
             BriefStat(value: "\(running.count)", label: "Running", ink: blue.ink, fill: blue.fill),
-            BriefStat(value: clockText(working(yesterday)), label: "Yesterday", ink: green.ink, fill: green.fill),
+            BriefStat(value: clockText(yesterday), label: "Yesterday", ink: green.ink, fill: green.fill),
         ]
     } else {
         content.title = "Today's wrap-up."
         let transcripts = cursorByDay ?? cursorTranscriptSecondsByDay(containing: now)
         let todayKey = dayKey(now)
         let today = log[todayKey] ?? DayRecord()
-        let todayWorking = dayWorking(today, host: .claude) + cursorWorking(on: todayKey, log: log, transcriptTotals: transcripts)
-            + (kiro?.secondsByDay[todayKey] ?? 0)
+        let todayWorking = dayWorkingTotal(on: todayKey, log: log, cursorTranscripts: transcripts, kiroByDay: kiro?.secondsByDay)
         content.headline = (clockText(todayWorking), "working today · \(clockText(waited(today))) waiting for you")
         content.stats = [
             BriefStat(value: "\(today.turns)", label: "Finished", ink: plain.ink, fill: plain.fill),
@@ -4624,9 +4628,15 @@ struct KiroBrief {
     var secondsByDay: [String: Int] = [:]
 }
 
+/// This week's Kiro time, plus last week's when yesterday was in it, so a Monday morning still has Sunday
 func readKiroBrief(now: Date) -> KiroBrief {
     let sessions = readKiroSessions()
-    return KiroBrief(sessions: sessions, secondsByDay: kiroSecondsByDay(containing: now, sessions: sessions))
+    var seconds = kiroSecondsByDay(containing: now, sessions: sessions)
+    let yesterday = now.addingTimeInterval(-86_400)
+    if seconds[dayKey(yesterday)] == nil {
+        seconds.merge(kiroSecondsByDay(containing: yesterday, sessions: sessions)) { current, _ in current }
+    }
+    return KiroBrief(sessions: sessions, secondsByDay: seconds)
 }
 
 /// Adds Kiro's chats to the latest sessions, newest first. An app with chats but no row gets its newest one, in place
@@ -5005,6 +5015,11 @@ func dayWorking(_ record: DayRecord, host: CompanionHost) -> Int {
     }
 }
 
+/// All working time on a day: Claude, Cursor and Kiro. The morning brief's Yesterday and the wrap-up's today both use it
+func dayWorkingTotal(on day: String, log: DayLog, cursorTranscripts: [String: Int], kiroByDay: [String: Int]?) -> Int {
+    dayWorking(log[day] ?? DayRecord(), host: .claude) + cursorWorking(on: day, log: log, transcriptTotals: cursorTranscripts)
+        + (kiroByDay?[day] ?? 0)
+}
 /// Cursor working time for a day: live tally from Mochi, or transcript spans when Mochi was not open
 func cursorWorking(on day: String, log: DayLog, transcriptTotals: [String: Int]) -> Int {
     let record = log[day] ?? DayRecord()
