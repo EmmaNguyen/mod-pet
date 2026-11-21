@@ -734,4 +734,149 @@ let mondayMorning = dayStart("2026-11-16")!.addingTimeInterval(9 * 3600)
 let mondayBrief = briefContent(kind: "morning", chats: [], log: totalLog, now: mondayMorning, offer: nil,
                                cursorByDay: ["2026-11-15": 1200], kiro: KiroBrief(sessions: [], secondsByDay: ["2026-11-15": 900]))
 check("Monday's Yesterday counts last Sunday, Cursor and Kiro included", mondayBrief.stats.last?.value == clockText(600 + 1200 + 900))
+// Agents and schedules: cron times, what ran, what was missed, and the three apps' files
+let autoCal = Calendar.current
+func autoAt(_ y: Int, _ mo: Int, _ d: Int, _ h: Int, _ mi: Int = 0) -> Date { autoCal.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi))! }
+check("a cron with a bad minute does not read", CronSpec("61 * * * *") == nil && CronSpec("0 9 * *") == nil)
+check("a autoDaily cron fires once a day", CronSpec("0 10 * * *")!.fires(from: autoAt(2026, 11, 20, 0), to: autoAt(2026, 11, 22, 0)) == [autoAt(2026, 11, 20, 10), autoAt(2026, 11, 21, 10)])
+check("a stepped cron fires four times an hour", CronSpec("*/15 * * * *")!.fires(from: autoAt(2026, 11, 20, 9), to: autoAt(2026, 11, 20, 10)).count == 4)
+// 19 Nov 2026 is a Thursday
+check("weekday and hour lists fire on those days only",
+      CronSpec("0 9,17 * * 4,5")!.fires(from: autoAt(2026, 11, 18, 0), to: autoAt(2026, 11, 21, 0)) == [autoAt(2026, 11, 19, 9), autoAt(2026, 11, 19, 17), autoAt(2026, 11, 20, 9), autoAt(2026, 11, 20, 17)])
+check("a day range in one month fires on those days", CronSpec("30 9 1-5 11 *")!.fires(from: autoAt(2026, 11, 4, 0), to: autoAt(2026, 11, 7, 0)).count == 2)
+check("with both day fields set, either one matching is enough", CronSpec("0 9 1 * 1")!.dayMatches(15, weekday: 1) && CronSpec("0 9 1 * 1")!.dayMatches(1, weekday: 3))
+check("schedules read in words",
+      CronSpec("0 10 * * *")!.describe() == "Every day at 10:00" && CronSpec("0 9,17 * * 4,5")!.describe() == "Thu, Fri at 09:00, 17:00" &&
+      CronSpec("0 8 * * 1-5")!.describe() == "Weekdays at 08:00")
+let autoNoon = autoAt(2026, 11, 21, 12)
+var autoDaily = ScheduledTask(app: .claude, id: "d", name: "Daily")
+autoDaily.cron = "0 9 * * *"; autoDaily.created = autoAt(2026, 11, 1, 0)
+autoDaily.lastRun = autoAt(2026, 11, 20, 9, 2)
+var autoSnap = automationSnapshot(sources: AutomationSources(tasks: [autoDaily]), agents: [], now: autoNoon)
+check("a autoDaily run that has not happened today is missed", autoSnap.today.first?.right == "Missed" && autoSnap.missed.count == 1 && autoSnap.missed[0].at == autoAt(2026, 11, 21, 9))
+autoDaily.lastRun = autoAt(2026, 11, 21, 11, 40)
+autoSnap = automationSnapshot(sources: AutomationSources(tasks: [autoDaily]), agents: [], now: autoNoon)
+check("a run caught up late still counts as run", autoSnap.today.first?.right == "✓ Ran" && autoSnap.missed.isEmpty)
+autoSnap = automationSnapshot(sources: AutomationSources(tasks: [autoDaily]), agents: [], now: autoAt(2026, 11, 21, 9, 5))
+check("a run a few minutes late is due, not missed yet", autoSnap.missed.isEmpty)
+var autoEvening = ScheduledTask(app: .claude, id: "e", name: "Evening")
+autoEvening.cron = "0 18 * * *"; autoEvening.created = autoAt(2026, 11, 1, 0); autoEvening.lastRun = autoAt(2026, 11, 20, 18, 1)
+autoSnap = automationSnapshot(sources: AutomationSources(tasks: [autoEvening]), agents: [], now: autoNoon)
+check("a later run today is coming up with the time left", autoSnap.upcoming.first?.right == "in 6h 0m" && autoSnap.upcoming.first?.tone == .upcoming)
+var autoPaused = ScheduledTask(app: .kiro, id: "k", name: "Report")
+autoPaused.cron = "0 9 * * *"; autoPaused.enabled = false
+var autoOneOff = ScheduledTask(app: .claude, id: "o", name: "Once")
+autoOneOff.fireAt = autoAt(2026, 11, 21, 15); autoOneOff.enabled = false
+autoSnap = automationSnapshot(sources: AutomationSources(tasks: [autoPaused, autoOneOff]), agents: [], now: autoAt(2026, 11, 21, 8))
+check("a autoPaused Kiro job shows as autoPaused and is never missed", autoSnap.upcoming.map(\.right) == ["Paused"] && autoSnap.missed.isEmpty)
+check("a Claude one-off that is switched off is not coming up", !autoSnap.upcoming.contains { $0.title == "Once" })
+let autoCloud = [CloudAgentRun(name: "Live", started: autoNoon.addingTimeInterval(-600), lastActivity: autoNoon.addingTimeInterval(-30)),
+             CloudAgentRun(name: "Old", started: autoNoon.addingTimeInterval(-7200), lastActivity: autoNoon.addingTimeInterval(-6900))]
+autoSnap = automationSnapshot(sources: AutomationSources(cloud: autoCloud), agents: [], now: autoNoon)
+check("a Cursor autoCloud agent active lately is running, an older one is recent", autoSnap.running.map(\.title) == ["Live"] && autoSnap.recent.map(\.title) == ["Old"])
+// The files, read from temporary copies
+let autoTemp = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-auto-\(UUID().uuidString)")
+let claudeSpace = autoTemp.appendingPathComponent("claude/acct/space")
+try! FileManager.default.createDirectory(at: claudeSpace, withIntermediateDirectories: true)
+try! #"{"scheduledTasks":[{"id":"t1","displayName":"Daily check","cronExpression":"0 10 * * *","enabled":true,"createdAt":1792033095817,"lastRunAt":"2026-11-06T07:23:23.266Z","filePath":"x"}]}"#
+    .write(to: claudeSpace.appendingPathComponent("scheduled-tasks.json"), atomically: true, encoding: .utf8)
+let claudeTasks = readClaudeScheduledTasks(root: autoTemp.appendingPathComponent("claude"))
+check("Claude's scheduled tasks read their name, schedule and last run",
+      claudeTasks.count == 1 && claudeTasks[0].name == "Daily check" && claudeTasks[0].cron == "0 10 * * *" && claudeTasks[0].lastRun != nil)
+let cronFile = autoTemp.appendingPathComponent("crons.json")
+try! #"{"version":1,"jobs":[{"id":"b0","name":"QCC report","schedule":{"kind":"cron","cron_expr":"0 9 * * *"},"enabled":true,"user_paused":true,"last_run_ts":1794000000,"last_status":"error","message":"secret"}]}"#
+    .write(to: cronFile, atomically: true, encoding: .utf8)
+let kiroJobs = readKiroCrons(file: cronFile)
+check("Kiro Crew jobs read their schedule, pause and last run in seconds",
+      kiroJobs.count == 1 && kiroJobs[0].paused && kiroJobs[0].cron == "0 9 * * *" && kiroJobs[0].lastRun == Date(timeIntervalSince1970: 1_794_000_000) && kiroJobs[0].failed)
+let cloudRows = parseCursorCloudAgents(Data(#"[{"value":"[{\"name\":\"Fix\",\"createdAt\":1794000000000,\"lastMessageActivityAtMs\":1794000300000}]"}]"#.utf8))
+check("Cursor's autoCloud agents read their name and times", cloudRows.count == 1 && cloudRows[0].name == "Fix" && cloudRows[0].lastActivity.timeIntervalSince(cloudRows[0].started) == 300)
+check("an empty Cursor answer reads no agents", parseCursorCloudAgents(Data()).isEmpty)
+try? FileManager.default.removeItem(at: autoTemp)
+autoDaily.lastRun = autoAt(2026, 11, 20, 9, 2)
+let schedBrief = briefContent(kind: "morning", chats: [], log: [:], now: autoNoon, offer: nil, cursorByDay: [:],
+                              automations: automationSnapshot(sources: AutomationSources(tasks: [autoDaily, autoEvening]), agents: [], now: autoNoon))
+check("the morning brief lists today's schedule with each app, and what was missed",
+      schedBrief.schedule.count == 2 && schedBrief.schedule.allSatisfy { $0.app == .claude } && schedBrief.missed.count == 1 && schedBrief.missed[0].right.hasSuffix("Missed"))
+check("the wrap-up has no schedule", briefContent(kind: "evening", chats: [], log: [:], now: autoAt(2026, 11, 21, 19), offer: nil, cursorByDay: [:],
+                                                 automations: automationSnapshot(sources: AutomationSources(tasks: [autoDaily]), agents: [], now: autoNoon)).schedule.isEmpty)
+// Each row links back to the app it came from
+check("a Cursor cloud agent links to that agent in Cursor", cursorCloudAgentLink("bc-6d3f_a.1") == "cursor://anysphere.cursor-deeplink/background-agent?bcId=bc-6d3f_a.1")
+check("odd characters in a link are encoded", cursorCloudAgentLink("a b&c") == "cursor://anysphere.cursor-deeplink/background-agent?bcId=a%20b%26c")
+check("a Kiro Crew job with a session opens it, and one without opens Kiro Crew",
+      kiroCrewLink(slot: "slot-1") == "kirocrew://chat?sid=slot-1" && kiroCrewLink(slot: "") == "kirocrew://" && kiroCrewLink(slot: nil) == "kirocrew://")
+check("an app with no link to the item is brought to the front", claudeAppLink == "mochi-app://com.anthropic.claudefordesktop" && cursorAppLink.hasPrefix("mochi-app://"))
+let linkTemp = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-links-\(UUID().uuidString)")
+let linkSpace = linkTemp.appendingPathComponent("acct/space")
+try! FileManager.default.createDirectory(at: linkSpace, withIntermediateDirectories: true)
+for (name, body) in [("local_a.json", #"{"sessionId":"local_a","cliSessionId":"cli-a","scheduledTaskId":"daily","lastActivityAt":100}"#),
+                     ("local_b.json", #"{"sessionId":"local_b","cliSessionId":"cli-b","scheduledTaskId":"daily","lastActivityAt":200}"#),
+                     ("local_c.json", #"{"sessionId":"local_c","cliSessionId":"cli-c","scheduledTaskId":"daily","lastActivityAt":300,"isArchived":true}"#)] {
+    try! body.write(to: linkSpace.appendingPathComponent(name), atomically: true, encoding: .utf8)
+}
+let linkIndex = readClaudeRunIndex(root: linkTemp)
+check("a scheduled task links to its newest run that is not archived", linkIndex.latestRunByTask["daily"] == "local_b")
+check("a Claude Code session maps to its chat in the Claude app", linkIndex.localByCli["cli-a"] == "local_a")
+try? FileManager.default.removeItem(at: linkTemp)
+var linkTask = ScheduledTask(app: .claude, id: "daily", name: "Daily")
+linkTask.cron = "0 9 * * *"; linkTask.created = autoAt(2026, 11, 1, 0); linkTask.link = claudeSessionLink("local_b")
+var linkSources = AutomationSources(tasks: [linkTask], cloud: [CloudAgentRun(name: "Fix", started: autoNoon.addingTimeInterval(-60), lastActivity: autoNoon, id: "bc-1")])
+linkSources.claude.localByCli["cli-s"] = "local_s"
+let linkSnap = automationSnapshot(sources: linkSources, agents: [AgentRun(id: "x", task: "Sub", started: autoNoon.addingTimeInterval(-30), lastActivity: autoNoon, session: "cli-s")], now: autoNoon)
+check("every row carries its link: the task's run, the cloud agent, and the agent's chat",
+      linkSnap.missed.first?.link == "claude://code/continue?session=local_b&source=mochi" &&
+      linkSnap.running.contains { $0.link == cursorCloudAgentLink("bc-1") } &&
+      linkSnap.running.contains { $0.link == "claude://code/continue?session=local_s&source=mochi" })
+let linkBrief = briefContent(kind: "morning", chats: [], log: [:], now: autoNoon, offer: nil, cursorByDay: [:], automations: linkSnap)
+check("the morning brief's schedule rows open their task", linkBrief.schedule.first?.link == "claude://code/continue?session=local_b&source=mochi")
+// Row actions: hide from Mochi, and pause, resume or delete Kiro Crew jobs through Kiro Crew's own command
+var actKiro = ScheduledTask(app: .kiro, id: "b09c4bcf", name: "QCC report")
+actKiro.cron = "0 9 * * *"; actKiro.paused = true
+var actClaude = ScheduledTask(app: .claude, id: "daily", name: "Daily")
+actClaude.cron = "0 9 * * *"; actClaude.created = autoAt(2026, 11, 1, 0)
+let actSnap = automationSnapshot(sources: AutomationSources(tasks: [actKiro, actClaude]), agents: [], now: autoAt(2026, 11, 21, 12))
+let actKiroRow = actSnap.upcoming.first { $0.app == .kiro }
+check("a paused Kiro Crew job stays in Coming up after its time, with its job ID", actKiroRow?.kiroJob == "b09c4bcf" && actKiroRow?.kiroPaused == true && actKiroRow?.right == "Paused")
+check("every row of one task shares its key", Set((actSnap.today + actSnap.missed + actSnap.recent).filter { $0.app == .claude }.map(\.key)) == ["claude:task:daily"])
+check("Claude rows have no Kiro job to pause or delete", actSnap.missed.allSatisfy { $0.kiroJob == nil })
+let actHidden = withoutHidden(actSnap, hidden: ["claude:task:daily"])
+check("hiding a task takes all its rows away, and leaves the rest", actHidden.missed.isEmpty && actHidden.today.allSatisfy { $0.app == .kiro } && actHidden.upcoming.count == actSnap.upcoming.filter { $0.app != .claude }.count)
+check("hiding nothing changes nothing", withoutHidden(actSnap, hidden: []).today.count == actSnap.today.count)
+let hiddenFile = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-hidden-\(UUID().uuidString)/hidden.json")
+check("with no file, nothing is hidden", readHiddenAutomations(hiddenFile).isEmpty)
+writeHiddenAutomations([HiddenAutomation(key: "cursor:cloud:bc-1", title: "Fix", app: "cursor", detail: "Cloud agent")], to: hiddenFile)
+check("what you hide is kept with its name", readHiddenAutomations(hiddenFile) == [HiddenAutomation(key: "cursor:cloud:bc-1", title: "Fix", app: "cursor", detail: "Cloud agent")])
+try? FileManager.default.removeItem(at: hiddenFile.deletingLastPathComponent())
+check("Kiro Crew commands are built as separate arguments", kiroCronArguments(.pause, job: "b09c4bcf") == ["cron", "pause", "b09c4bcf"] && kiroCronArguments(.remove, job: "a-1_b") == ["cron", "remove", "a-1_b"])
+check("a job ID that could be read as anything else is refused",
+      kiroCronArguments(.remove, job: "") == nil && kiroCronArguments(.remove, job: "--managed-by") == nil && kiroCronArguments(.remove, job: "a;rm -rf /") == nil && kiroCronArguments(.remove, job: "a b") == nil)
+// A stand-in for kirocrew that records what it was given
+let fakeDir = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-kirocrew-\(UUID().uuidString)")
+try! FileManager.default.createDirectory(at: fakeDir, withIntermediateDirectories: true)
+let fakeBin = fakeDir.appendingPathComponent("kirocrew"), fakeOut = fakeDir.appendingPathComponent("args.txt")
+try! "#!/bin/sh\nprintf '%s|' \"$@\" > '\(fakeOut.path)'\n".write(to: fakeBin, atomically: true, encoding: .utf8)
+try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeBin.path)
+var cronOK: Bool?
+runKiroCron(.remove, job: "b09c4bcf", binary: fakeBin) { cronOK = $0 }
+let cronDeadline = Date().addingTimeInterval(10)
+while cronOK == nil && Date() < cronDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+check("deleting runs kirocrew cron remove with the job ID", cronOK == true && (try? String(contentsOf: fakeOut, encoding: .utf8)) == "cron|remove|b09c4bcf|")
+var refused: Bool?
+runKiroCron(.remove, job: "bad id", binary: fakeBin) { refused = $0 }
+check("a bad job ID never reaches kirocrew", refused == false)
+var missing: Bool?
+runKiroCron(.pause, job: "b09c4bcf", binary: fakeDir.appendingPathComponent("none")) { missing = $0 }
+check("without kirocrew installed the action reports it could not run", missing == false)
+try? FileManager.default.removeItem(at: fakeDir)
+// The brief's schedule rows offer the same icons as the box
+let briefActs = briefContent(kind: "morning", chats: [], log: [:], now: autoAt(2026, 11, 21, 8), offer: nil, cursorByDay: [:], automations: actSnap)
+let briefKiroRow = briefActs.schedule.first { $0.app == .kiro }
+check("a brief schedule row keeps its key and Kiro Crew job", briefKiroRow?.key == "kiro:task:b09c4bcf" && briefKiroRow?.kiroJob == "b09c4bcf" && briefKiroRow?.kiroPaused == true)
+check("a paused Kiro Crew job offers open, hide, resume and delete",
+      automationIcons(link: "kirocrew://", key: "k", kiroJob: "b09c4bcf", kiroPaused: true, canRunKiroCrew: true).map(\.1) == [.open, .hide, .resume, .confirmDelete])
+check("a running Kiro Crew job offers pause instead of resume",
+      automationIcons(link: nil, key: "k", kiroJob: "b09c4bcf", kiroPaused: false, canRunKiroCrew: true).map(\.1) == [.hide, .pause, .confirmDelete])
+check("without kirocrew, or for Claude and Cursor, only open and hide",
+      automationIcons(link: "x", key: "k", kiroJob: "b09c4bcf", kiroPaused: true, canRunKiroCrew: false).map(\.1) == [.open, .hide] &&
+      automationIcons(link: "x", key: "k", kiroJob: nil, kiroPaused: false, canRunKiroCrew: true).map(\.1) == [.open, .hide])
 print("ALL PASSED")

@@ -171,6 +171,8 @@ Now and then she thinks out loud in a bubble above her: how long is left in her 
 
 Once a day she opens a brief under her. The morning brief shows at 8:00 AM, and the wrap-up at 6:00 PM. Each shows big numbers for what is waiting, running, and finished yesterday, what needs you, the latest seven sessions, a week chart and your usage. Kiro chats join the latest sessions with a ghost marker, and the wrap-up's week chart shows Kiro time as a teal band. Claude, Cursor and Kiro each keep at least one row when they have chats. Kiro time is counted from the first to the last message of each chat on a day. A brief shows once a day when it first comes due, so a missed 8:00 still shows it. It stays until you close it with its cross, and a pin keeps it above other windows. Waiting chats in the brief underline when you hover over them, and a click opens the real chat in Claude.
 
+The morning brief also lists **Today's schedule** from Claude and Kiro Crew, and what was **missed in the last day**. Point at one of these rows for the same actions as in Agents and schedules: open, hide, and for Kiro Crew jobs pause, resume or delete.
+
 You can open either brief by hand, from her right-click menu or with a `mochi://brief` link. Add `?kind=evening` to the link for the wrap-up.
 
 <p align="center">
@@ -188,6 +190,27 @@ A running chat shows how long it has run and the time left on its estimate, with
 <p align="center">
   <img src="media/screenshots/15-agents-box.png" alt="The Agents box: two agents running, each with its task, how long it has run and when it was last active" width="400">
 </p>
+
+### Agents and schedules
+
+Right-click her and choose **Agents and schedules**, or click an agent's dot, for everything that runs without you typing, from Claude, Cursor and Kiro. Filters at the top show all three apps or one.
+
+- **Running now:** Claude's agents, Cursor's cloud agents and Kiro Crew's runs.
+- **Coming up:** today's scheduled runs from Claude and Kiro Crew, with the time left, or Paused.
+- **Recent:** the last 24 hours, each marked ✓ Ran, Failed or **Missed**. Claude only runs scheduled tasks while its app is open, so a run due while it was closed shows as missed.
+
+Each row shows its app's mark, and a click opens it where it came from: a Claude task opens the chat from its latest run, a Cursor cloud agent opens that agent in Cursor, and a Kiro Crew job opens Kiro Crew.
+
+Point at a row and its time is replaced by its actions:
+
+| Icon | What it does | Claude | Cursor | Kiro Crew |
+| --- | --- | --- | --- | --- |
+| Open | Opens it in its app | Yes | Yes | Yes |
+| Hide | Takes it off Mochi. It still runs in its app | Yes | Yes | Yes |
+| Pause, resume | Runs `kirocrew cron pause` or `resume` | | | Yes |
+| Delete | Asks in the row, then runs `kirocrew cron remove` | | | Yes |
+
+A hidden row turns into **Undo** for 5 seconds. "2 hidden · Show" at the bottom lists what you hid, with Show and Show all. Claude tasks and Cursor agents are deleted in their own apps: Mochi doesn't edit Claude's task files, and Cursor's agents and automations live on Cursor's servers.
 
 ### Chat inbox and skins for each chat
 
@@ -279,6 +302,7 @@ The plugin and the apps talk to each other only through plain files in this fold
 | `presence.json` | Mochi tells the plugin she is here and which requests she is showing. The plugin waits for her answer only while she is. |
 | `usage.json` | The newest plan-usage reading. |
 | `days.json` | The daily counts behind This week and Diary, with no chat content. |
+| `hidden-automations.json` | The agents and scheduled tasks you hid from Mochi, with their names. They still run in their apps. |
 | `look.json` | Her look. Mochi Studio saves it, Mochi reads it. |
 | `shortcuts.json` | Which global shortcuts macOS accepted (0 is accepted, anything else is an error code). |
 | `mochi.log` | A log with times, so a failed step can be found afterwards. |
@@ -301,8 +325,9 @@ The desktop tests run against the real code: `test.sh` appends the test file to 
 ## Privacy
 
 - Mochi writes files only in `~/.claude/mochi/`. It reads that folder, the Claude app's own folders, and the Cursor and Kiro files below.
-- For Cursor, Mochi reads the start and end of each agent transcript in `~/.cursor/projects/` for its title and state, and your plan name from Cursor's settings. It does not read Cursor's sign-in token.
-- For Kiro, Mochi only reads. It reads the usage readings in Kiro's log (`~/Library/Application Support/Kiro/logs/`). From each chat in `~/.kiro/sessions/`, it reads the title, the state, the message times, and the credits each turn used. It never reads chat text or Kiro's sign-in token.
+- For Cursor, Mochi reads the start and end of each agent transcript in `~/.cursor/projects/` for its title and state, your plan name, and the names and times of your cloud agents from Cursor's settings. It does not read Cursor's sign-in token.
+- For Claude's scheduled tasks, Mochi reads each task's name, schedule, on/off switch and run times from the Claude app's files. It never reads the task's prompt.
+- For Kiro, Mochi only reads. It reads the usage readings in Kiro's log (`~/Library/Application Support/Kiro/logs/`). From each chat in `~/.kiro/sessions/`, it reads the title, the state, the message times, and the credits each turn used. It never reads chat text or Kiro's sign-in token. From Kiro Crew's scheduled jobs (`~/.kiro/crew/crons.json`) it reads each job's name, schedule, state and run times, not its message. Mochi pauses, resumes or deletes a Kiro Crew job only when you click, by running Kiro Crew's own `kirocrew cron` command.
 - Mochi's own code makes no network requests.
 - The usage check runs the copy of Claude that comes with the app. That copy contacts Anthropic's servers to read your usage, the same way `/usage` does. Nothing is sent that you haven't already sent through Claude.
 
@@ -335,6 +360,7 @@ Claude didn't have a pet, so I made one for myself. I wanted a companion that li
 14. **A clearer chat list and usage box.** Chats grouped by what they are doing, with the running and last finished session named at the top, larger text, and a usage box with bars and a Refresh button. Quiet can now last until you turn it off.
 15. **Cursor.** Cursor chats in the list and briefs, Cursor's usage on the label, and Claude and Cursor hiding when the other is in front.
 16. **Kiro.** Kiro credits on the label and in the usage box, updated live as you work, and Kiro chats and time in the morning brief and wrap-up.
+17. **Agents and schedules.** Agents, scheduled tasks and cloud agents from Claude, Cursor and Kiro in one box and in the morning brief, each linked back to its app, with missed runs flagged, and Hide, Pause and Delete on the row.
 
 </details>
 

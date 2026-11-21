@@ -200,6 +200,18 @@ func openCursorChat(_ url: URL) {
 /// Brings Claude or Cursor to the front on that chat
 func openChat(_ link: String?) {
     guard let link, let url = URL(string: link) else { return }
+    if url.scheme == "kirocrew" {
+        NSWorkspace.shared.open(url)
+        return
+    }
+    // "mochi-app://<bundle id>": an app that has no link to the one item, so it is brought to the front
+    if url.scheme == "mochi-app", let bundle = url.host {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.openApplication(at: app, configuration: cfg)
+        return
+    }
     if url.scheme == "cursor" {
         openCursorChat(url)
         return
@@ -852,43 +864,312 @@ let scale: CGFloat = 5
 let petSize = CGFloat(16) * scale
 
 /// The Agents box: each agent running now, with its task and how long it has run. It redraws as the runs change
+/// What a row's icons and links do
+enum AutomationAction { case open, hide, undo, pause, resume, confirmDelete, cancelDelete, delete, unhide, unhideAll, showHidden, closeHidden }
+
+/// The icons a row offers on its right: open if it has a link, hide always, and for a Kiro Crew job pause or resume and delete
+func automationIcons(link: String?, key: String, kiroJob: String?, kiroPaused: Bool, canRunKiroCrew: Bool) -> [(String, AutomationAction, Bool)] {
+    var out: [(String, AutomationAction, Bool)] = []
+    if link != nil { out.append(("arrow.up.right.square", .open, false)) }
+    if !key.isEmpty { out.append(("eye.slash", .hide, false)) }
+    if kiroJob != nil, canRunKiroCrew {
+        out.append(kiroPaused ? ("play.fill", .resume, false) : ("pause.fill", .pause, false))
+        out.append(("trash", .confirmDelete, true))
+    }
+    return out
+}
+
+/// A small SF Symbol, centred in a rect, for the row actions
+func drawSymbol(_ name: String, in rect: NSRect, color: NSColor, size: CGFloat = 12) {
+    let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+    guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return }
+    let s = image.size
+    image.draw(in: NSRect(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2, width: s.width, height: s.height),
+               from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+}
+
+/// Agents and schedules: what runs without you typing, from Claude, Cursor and Kiro. Running now, coming up today, and the last day.
+/// Pointing at a row swaps its time for its actions: open, hide, and for Kiro Crew jobs pause or resume and delete
 final class AgentsBoxView: NSView {
     static let width: CGFloat = 340
     var runs: [AgentRun] = []
+    var snapshot = AutomationSnapshot()
     var now = Date()
+    var checkedAt: Date?
+    /// Which app the rows are for; nil shows all three
+    var filter: AutomationApp?
+    /// What you hid, the rows just hidden that still offer Undo, and the row asking whether to delete
+    var hiddenItems: [HiddenAutomation] = []
+    var undoKeys: Set<String> = []
+    var confirmKey: String?
+    var showingHidden = false
+    /// Whether Kiro Crew's command line is installed, so its jobs can be paused and deleted from here
+    var canRunKiroCrew = false
+    var onRefresh: (() -> Void)?
+    var onFilter: (() -> Void)?
+    var onAction: ((AutomationAction, String) -> Void)?
+    private var rowItems: [(NSRect, String, String?)] = []
+    private var actionHits: [(NSRect, AutomationAction, String)] = []
+    private var hoveredKey: String?
+    private var filterRects: [(NSRect, AutomationApp?)] = []
+    private var refreshRect = NSRect.zero
+    private let pad: CGFloat = 16
+    private var inner: CGFloat { Self.width - pad * 2 }
     override var isFlipped: Bool { true }
-
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     func fittingHeight() -> CGFloat { render(draw: false) }
     override func draw(_ dirtyRect: NSRect) { render(draw: true) }
 
+    private var hiddenKeys: Set<String> { Set(hiddenItems.map(\.key)) }
+    private func shown(_ rows: [AutomationRow], limit: Int) -> [AutomationRow] {
+        let hide = hiddenKeys
+        return Array(rows.filter { (filter == nil || $0.app == filter) && (!hide.contains($0.key) || undoKeys.contains($0.key)) }.prefix(limit))
+    }
+
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
-        let pad: CGFloat = 16
-        let inner = Self.width - pad * 2
+        rowItems = []
+        actionHits = []
         var y: CGFloat = 14
-        drawLine("Agents running", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.7, draw: draw)
-        drawLine(runs.isEmpty ? "" : "\(runs.count) now", .systemFont(ofSize: 12, weight: .semibold), NSColor(hex: 0x1864AB), x: pad, y: y + 2, width: inner, align: .right, draw: draw)
-        y += 30
-        if runs.isEmpty {
-            drawLine("No agent is running right now", .systemFont(ofSize: 13), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
-            y += 24
-        }
-        for run in runs.prefix(8) {
+        drawLine("Agents and schedules", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.7, draw: draw)
+        if showingHidden { return renderHidden(from: y + 28, draw: draw) }
+        let running = shown(snapshot.running, limit: 99).count
+        if running > 0 {
+            let chipFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            let text = "\(running) running"
+            let w = drawLine(text, chipFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 14
+            let chip = NSRect(x: pad + inner - w, y: y, width: w, height: 18)
             if draw {
-                let card = NSRect(x: pad, y: y, width: inner, height: 56)
-                NSColor.labelColor.withAlphaComponent(0.05).setFill()
-                NSBezierPath(roundedRect: card, xRadius: 12, yRadius: 12).fill()
-                NSColor(hex: 0x1C7ED6).setFill()
-                NSBezierPath(ovalIn: NSRect(x: pad + 12, y: y + 12, width: 9, height: 9)).fill()
+                NSColor(hex: 0x1C7ED6).withAlphaComponent(0.15).setFill()
+                NSBezierPath(roundedRect: chip, xRadius: 9, yRadius: 9).fill()
             }
-            drawLine(clip(run.task, 34), .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: pad + 30, y: y + 9, width: inner - 40, draw: draw)
-            drawLine(agentLine(run, now: now), .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad + 30, y: y + 30, width: inner - 40, draw: draw)
-            y += 64
+            drawLine(text, chipFont, NSColor(hex: 0x1C7ED6), x: chip.minX, y: y + 1, width: w, align: .center, draw: draw)
         }
-        return y + 6
+        y += 26
+        // The filters: All, Claude, Cursor, Kiro
+        filterRects = []
+        var x = pad
+        let chipFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        for (name, app) in [("All", nil), ("Claude", AutomationApp.claude), ("Cursor", .cursor), ("Kiro", .kiro)] as [(String, AutomationApp?)] {
+            let textW = drawLine(name, chipFont, .labelColor, x: 0, y: 0, width: 0, draw: false)
+            let w = textW + (app == nil ? 16 : 32)
+            let rect = NSRect(x: x, y: y, width: w, height: 20)
+            let on = filter == app
+            if draw {
+                (on ? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.07)).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
+                if let app { drawAppBadge(app, in: NSRect(x: x + 7, y: y + 4, width: 12, height: 12)) }
+            }
+            drawLine(name, chipFont, on ? .windowBackgroundColor : .labelColor, x: x + (app == nil ? 8 : 24), y: y + 2, width: textW + 2, draw: draw)
+            filterRects.append((rect, app))
+            x += w + 6
+        }
+        y += 30
+        y = section("Running now", nil, shown(snapshot.running, limit: 6), empty: "Nothing is running", y: y, draw: draw)
+        y = section("Coming up", "today", shown(snapshot.upcoming, limit: 6), empty: "Nothing else today", y: y, draw: draw)
+        y = section("Recent", "last 24 h", shown(snapshot.recent, limit: 6), empty: "Nothing in the last day", y: y, draw: draw)
+        // One line for what you hid
+        let hiddenCount = hiddenItems.filter { filter == nil || automationApp($0.app) == filter }.count
+        if hiddenCount > 0 {
+            if draw {
+                NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+            }
+            drawLine("\(hiddenCount) hidden", .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad, y: y + 7, width: inner * 0.6, draw: draw)
+            linkText("Show", action: .showHidden, key: "", rightEdge: pad + inner, y: y + 7, draw: draw)
+            y += 28
+        }
+        y += 4
+        let foot = checkedAt.map { "Checked " + shortWhen($0, now: now) } ?? "Checking…"
+        drawLine(foot, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
+        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
+        drawButton(refreshRect, "Refresh", filled: false, draw: draw)
+        return y + 30
+    }
+
+    /// The Hidden list: everything you hid, each with Show, then Show all
+    private func renderHidden(from start: CGFloat, draw: Bool) -> CGFloat {
+        var y = start
+        drawLine("Hidden · \(hiddenItems.count)", .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner * 0.6, draw: draw)
+        linkText("Done", action: .closeHidden, key: "", rightEdge: pad + inner, y: y, draw: draw, size: 11)
+        y += 18
+        if hiddenItems.isEmpty {
+            drawLine("Nothing is hidden", .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y + 4, width: inner, draw: draw)
+            y += 28
+        }
+        for item in hiddenItems {
+            let rect = NSRect(x: pad, y: y, width: inner, height: 40)
+            let hovered = hoveredKey == item.key
+            if draw {
+                NSColor.labelColor.withAlphaComponent(0.06).setFill()
+                NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+                if hovered {
+                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                    NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 2), xRadius: 8, yRadius: 8).fill()
+                }
+                drawAppBadge(automationApp(item.app) ?? .claude, in: NSRect(x: pad, y: y + 11, width: 18, height: 18))
+            }
+            let iconsW: CGFloat = hovered ? 28 : 0
+            drawLine(clip(item.title, 40), .systemFont(ofSize: 12.5, weight: .semibold), .labelColor, x: pad + 28, y: y + 5, width: inner - 36 - iconsW, draw: draw)
+            drawLine(item.detail, .systemFont(ofSize: 11), .secondaryLabelColor, x: pad + 28, y: y + 21, width: inner - 36 - iconsW, draw: draw)
+            if hovered { icon("eye", action: .unhide, key: item.key, x: pad + inner - 24, y: y + 8, draw: draw, on: true) }
+            rowItems.append((rect, item.key, nil))
+            y += 40
+        }
+        if draw {
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
+            NSRect(x: pad, y: y + 2, width: inner, height: 0.5).fill()
+        }
+        drawLine("Hidden items still run in their app", .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad, y: y + 9, width: inner - 70, draw: draw)
+        if !hiddenItems.isEmpty { linkText("Show all", action: .unhideAll, key: "", rightEdge: pad + inner, y: y + 9, draw: draw) }
+        return y + 38
+    }
+
+    /// A blue text link on the right, such as Show or Undo
+    private func linkText(_ text: String, action: AutomationAction, key: String, rightEdge: CGFloat, y: CGFloat, draw: Bool, size: CGFloat = 11.5) {
+        let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+        let w = drawLine(text, font, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2
+        drawLine(text, font, .linkColor, x: rightEdge - w, y: y, width: w, align: .right, draw: draw)
+        actionHits.append((NSRect(x: rightEdge - w - 6, y: y - 4, width: w + 12, height: size + 10), action, key))
+    }
+
+    /// A 24-point icon button
+    private func icon(_ symbol: String, action: AutomationAction, key: String, x: CGFloat, y: CGFloat, draw: Bool, red: Bool = false, on: Bool = false) {
+        let rect = NSRect(x: x, y: y, width: 24, height: 24)
+        if draw {
+            if on {
+                (red ? NSColor(hex: 0xE03131).withAlphaComponent(0.12) : NSColor.labelColor.withAlphaComponent(0.1)).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            }
+            drawSymbol(symbol, in: rect, color: red ? NSColor(hex: 0xE03131) : .secondaryLabelColor)
+        }
+        actionHits.append((rect, action, key))
+    }
+
+    /// The icons a row offers: open if it has a link, hide always, and for a Kiro Crew job pause or resume and delete
+    private func actions(for row: AutomationRow) -> [(String, AutomationAction, Bool)] {
+        automationIcons(link: row.link, key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused, canRunKiroCrew: canRunKiroCrew)
+    }
+
+    private func section(_ title: String, _ note: String?, _ rows: [AutomationRow], empty: String, y start: CGFloat, draw: Bool) -> CGFloat {
+        var y = start
+        drawLine(title, .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner * 0.6, draw: draw)
+        if let note { drawLine(note, .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw) }
+        y += 18
+        if rows.isEmpty {
+            drawLine(empty, .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y + 4, width: inner, draw: draw)
+            return y + 28
+        }
+        for row in rows {
+            let rect = NSRect(x: pad, y: y, width: inner, height: 40)
+            if draw {
+                NSColor.labelColor.withAlphaComponent(0.06).setFill()
+                NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+            }
+            // Just hiddenItems: the row becomes its own Undo for a few seconds
+            if undoKeys.contains(row.key) {
+                if draw {
+                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                    NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 3), xRadius: 8, yRadius: 8).fill()
+                }
+                drawLine("Hidden from Mochi", .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 4, y: y + 12, width: inner * 0.7, draw: draw)
+                linkText("Undo", action: .undo, key: row.key, rightEdge: pad + inner - 4, y: y + 12, draw: draw, size: 12)
+                y += 40
+                continue
+            }
+            // Delete asks in the row
+            if confirmKey == row.key {
+                let box = rect.insetBy(dx: -6, dy: 3)
+                if draw {
+                    NSColor(hex: 0xE03131).withAlphaComponent(0.07).setFill()
+                    NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
+                    NSColor(hex: 0xE03131).withAlphaComponent(0.25).setStroke()
+                    let edge = NSBezierPath(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+                    edge.lineWidth = 1
+                    edge.stroke()
+                    drawAppBadge(row.app, in: NSRect(x: pad, y: y + 11, width: 18, height: 18))
+                }
+                drawLine("Delete in Kiro Crew?", .systemFont(ofSize: 12), .labelColor, x: pad + 28, y: y + 12, width: inner - 160, draw: draw)
+                let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+                let deleteRect = NSRect(x: pad + inner - 58, y: y + 9, width: 56, height: 22)
+                let cancelRect = NSRect(x: deleteRect.minX - 64, y: y + 9, width: 58, height: 22)
+                if draw {
+                    NSColor(hex: 0xE03131).setFill()
+                    NSBezierPath(roundedRect: deleteRect, xRadius: 6, yRadius: 6).fill()
+                    NSColor.labelColor.withAlphaComponent(0.08).setFill()
+                    NSBezierPath(roundedRect: cancelRect, xRadius: 6, yRadius: 6).fill()
+                }
+                drawLine("Delete", font, .white, x: deleteRect.minX, y: deleteRect.minY + 3, width: deleteRect.width, align: .center, draw: draw)
+                drawLine("Cancel", font, .labelColor, x: cancelRect.minX, y: cancelRect.minY + 3, width: cancelRect.width, align: .center, draw: draw)
+                actionHits.append((deleteRect, .delete, row.key))
+                actionHits.append((cancelRect, .cancelDelete, row.key))
+                y += 40
+                continue
+            }
+            let hovered = hoveredKey == row.key
+            let icons = hovered ? actions(for: row) : []
+            if draw {
+                if hovered {
+                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                    NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 2), xRadius: 8, yRadius: 8).fill()
+                }
+                drawAppBadge(row.app, in: NSRect(x: pad, y: y + 11, width: 18, height: 18))
+            }
+            let rightFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+            let rightW = icons.isEmpty ? drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2 : CGFloat(icons.count) * 26
+            let titleWidth = drawLine(clip(row.title, 40), .systemFont(ofSize: 12.5, weight: .semibold), .labelColor, x: pad + 28, y: y + 5, width: inner - 36 - rightW, draw: draw)
+            if draw, hovered, row.link != nil {
+                underline(from: pad + 28, width: min(titleWidth, inner - 36 - rightW), y: y + 20, color: .labelColor)
+            }
+            drawLine(row.detail, .systemFont(ofSize: 11), .secondaryLabelColor, x: pad + 28, y: y + 21, width: inner - 36 - rightW, draw: draw)
+            if icons.isEmpty {
+                drawLine(row.right, rightFont, automationToneColor(row.tone), x: pad + inner - rightW, y: y + 12, width: rightW, align: .right, draw: draw)
+            } else {
+                var ix = pad + inner - CGFloat(icons.count) * 26 + 2
+                for (symbol, action, red) in icons {
+                    icon(symbol, action: action, key: row.key, x: ix, y: y + 8, draw: draw, red: red)
+                    ix += 26
+                }
+            }
+            rowItems.append((rect, row.key, row.link))
+            y += 40
+        }
+        return y + 4
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackHover(self)
+    }
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let key = rowItems.first { $0.0.contains(point) }?.1
+        if key != hoveredKey {
+            hoveredKey = key
+            needsDisplay = true
+        }
+    }
+    override func mouseExited(with event: NSEvent) {
+        hoveredKey = nil
+        needsDisplay = true
+    }
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let hit = actionHits.first(where: { $0.0.contains(point) }) {
+            onAction?(hit.1, hit.2)
+            return
+        }
+        if !showingHidden, refreshRect.contains(point) { onRefresh?(); return }
+        if !showingHidden, let hit = filterRects.first(where: { $0.0.contains(point) }) {
+            filter = hit.1
+            onFilter?()
+            return
+        }
+        if !showingHidden, let item = rowItems.first(where: { $0.0.contains(point) }), item.2 != nil {
+            onAction?(.open, item.1)
+        }
     }
 }
-
 /// How many chats need you, are working, and finished lately: what her ring and pill show
 struct StatusCounts: Equatable {
     var needs = 0
@@ -1480,60 +1761,6 @@ final class MochiView: NSView {
     private func drawKiroGhost(in rect: NSRect, eyes: NSColor) {
         drawKiroGhostShape(in: rect, body: .white, eyes: eyes)
     }
-    /// Claude's spark: four rounded bars through the centre
-    private func drawClaudeSpark(in rect: NSRect) {
-        let path = NSBezierPath()
-        let bar = NSRect(x: rect.midX - rect.width * 0.053, y: rect.midY - rect.height * 0.425, width: rect.width * 0.106, height: rect.height * 0.85)
-        for degrees in [0, 45, 90, 135] as [CGFloat] {
-            let piece = NSBezierPath(roundedRect: bar, xRadius: bar.width / 2, yRadius: bar.width / 2)
-            let turn = NSAffineTransform()
-            turn.translateX(by: rect.midX, yBy: rect.midY)
-            turn.rotate(byDegrees: degrees)
-            turn.translateX(by: -rect.midX, yBy: -rect.midY)
-            path.append(turn.transform(piece))
-        }
-        path.fill()
-    }
-
-    /// Cursor's official 2D cube from cursor.com/brand. Even-odd cuts the arrow out of the hexagon
-    private func drawCursorCube(in rect: NSRect, crease _: NSColor) {
-        // viewBox 0 0 466.73 532.09 — General Logos/Cube/SVG/CUBE_2D
-        let p = NSBezierPath()
-        p.move(to: NSPoint(x: 457.43, y: 125.94))
-        p.line(to: NSPoint(x: 244.42, y: 2.96))
-        p.curve(to: NSPoint(x: 222.30, y: 2.96), controlPoint1: NSPoint(x: 237.58, y: -0.99), controlPoint2: NSPoint(x: 229.14, y: -0.99))
-        p.line(to: NSPoint(x: 9.30, y: 125.94))
-        p.curve(to: NSPoint(x: 0.00, y: 142.05), controlPoint1: NSPoint(x: 3.55, y: 129.26), controlPoint2: NSPoint(x: 0.00, y: 135.40))
-        p.line(to: NSPoint(x: 0.00, y: 390.04))
-        p.curve(to: NSPoint(x: 9.30, y: 406.15), controlPoint1: NSPoint(x: 0.00, y: 396.69), controlPoint2: NSPoint(x: 3.55, y: 402.83))
-        p.line(to: NSPoint(x: 222.31, y: 529.13))
-        p.curve(to: NSPoint(x: 244.43, y: 529.13), controlPoint1: NSPoint(x: 229.15, y: 533.08), controlPoint2: NSPoint(x: 237.59, y: 533.08))
-        p.line(to: NSPoint(x: 457.44, y: 406.15))
-        p.curve(to: NSPoint(x: 466.74, y: 390.04), controlPoint1: NSPoint(x: 463.19, y: 402.83), controlPoint2: NSPoint(x: 466.74, y: 396.69))
-        p.line(to: NSPoint(x: 466.74, y: 142.05))
-        p.curve(to: NSPoint(x: 457.44, y: 125.94), controlPoint1: NSPoint(x: 466.74, y: 135.40), controlPoint2: NSPoint(x: 463.19, y: 129.26))
-        p.close()
-        // The arrow cut
-        p.move(to: NSPoint(x: 444.05, y: 151.99))
-        p.line(to: NSPoint(x: 238.42, y: 508.15))
-        p.curve(to: NSPoint(x: 233.36, y: 506.79), controlPoint1: NSPoint(x: 237.03, y: 510.55), controlPoint2: NSPoint(x: 233.36, y: 509.57))
-        p.line(to: NSPoint(x: 233.36, y: 273.58))
-        p.curve(to: NSPoint(x: 226.83, y: 262.27), controlPoint1: NSPoint(x: 233.36, y: 268.92), controlPoint2: NSPoint(x: 230.87, y: 264.61))
-        p.line(to: NSPoint(x: 24.87, y: 145.67))
-        p.curve(to: NSPoint(x: 26.23, y: 140.61), controlPoint1: NSPoint(x: 22.47, y: 144.28), controlPoint2: NSPoint(x: 23.45, y: 140.61))
-        p.line(to: NSPoint(x: 437.49, y: 140.61))
-        p.curve(to: NSPoint(x: 444.06, y: 152.00), controlPoint1: NSPoint(x: 443.33, y: 140.61), controlPoint2: NSPoint(x: 446.98, y: 146.94))
-        p.close()
-        p.windingRule = .evenOdd
-        NSGraphicsContext.saveGraphicsState()
-        let fit = NSAffineTransform()
-        fit.translateX(by: rect.minX, yBy: rect.minY)
-        fit.scaleX(by: rect.width / 466.73, yBy: rect.height / 532.09)
-        fit.concat()
-        p.fill()
-        NSGraphicsContext.restoreGraphicsState()
-    }
-
     /// A battery whose fill is the charge left
     private func drawPillBattery(_ percent: Int, in rect: NSRect) {
         let s = rect.width / 16
@@ -2414,6 +2641,16 @@ final class BriefView: NSView {
     /// The latest-session rows that open a chat, with their links, and the one under the pointer
     private var latestHits: [(NSRect, String)] = []
     private var hovered: Int?
+    /// The schedule rows, the one under the pointer, and their icons. Each row is "<section>|<key>", so a task in both
+    /// lists lights up only where the pointer is
+    private var scheduleItems: [(NSRect, String, String?)] = []
+    private var scheduleHover: String?
+    private var actionHits: [(NSRect, AutomationAction, String)] = []
+    /// Shared with the Agents and schedules box: rows just hidden, the row asking whether to delete, and whether Kiro Crew is there
+    var undoKeys: Set<String> = []
+    var confirmKey: String?
+    var canRunKiroCrew = false
+    var onAction: ((AutomationAction, String) -> Void)?
     /// The top-chat rows that open a chat, and the one under the pointer
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
@@ -2478,6 +2715,84 @@ final class BriefView: NSView {
             y += 22
         }
 
+        // The morning's schedule from Claude and Kiro, then what was missed
+        scheduleItems = []
+        actionHits = []
+        for (index, (title, rows)) in [("Today's schedule", content.schedule), ("Missed in the last day", content.missed)].enumerated() where !rows.isEmpty {
+            let heading = title == "Today's schedule" ? "\(title) · \(rows.count)" : title
+            drawLine(heading, .systemFont(ofSize: 12, weight: .semibold), content.duet ? duetPlum : .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+            for row in rows {
+                let rowRect = NSRect(x: pad, y: y - 2, width: inner, height: 24)
+                // Just hidden: the row becomes its own Undo for a few seconds
+                if !row.key.isEmpty, undoKeys.contains(row.key) {
+                    if draw {
+                        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                        NSBezierPath(roundedRect: rowRect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
+                    }
+                    drawLine("Hidden from Mochi", .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 2, y: y + 1, width: inner * 0.7, draw: draw)
+                    briefLink("Undo", action: .undo, key: row.key, rightEdge: pad + inner - 2, y: y + 1, draw: draw)
+                    y += 26
+                    continue
+                }
+                // Delete asks in the row
+                if !row.key.isEmpty, confirmKey == row.key {
+                    let box = rowRect.insetBy(dx: -6, dy: 0)
+                    if draw {
+                        NSColor(hex: 0xE03131).withAlphaComponent(0.07).setFill()
+                        NSBezierPath(roundedRect: box, xRadius: 7, yRadius: 7).fill()
+                        if let app = row.app { drawAppBadge(app, in: NSRect(x: pad + 1, y: y + 1, width: 18, height: 18)) }
+                    }
+                    drawLine("Delete in Kiro Crew?", .systemFont(ofSize: 12.5), .labelColor, x: pad + 28, y: y + 1, width: inner - 160, draw: draw)
+                    let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+                    let deleteRect = NSRect(x: pad + inner - 56, y: y - 1, width: 54, height: 20)
+                    let cancelRect = NSRect(x: deleteRect.minX - 62, y: y - 1, width: 56, height: 20)
+                    if draw {
+                        NSColor(hex: 0xE03131).setFill()
+                        NSBezierPath(roundedRect: deleteRect, xRadius: 6, yRadius: 6).fill()
+                        NSColor.labelColor.withAlphaComponent(0.08).setFill()
+                        NSBezierPath(roundedRect: cancelRect, xRadius: 6, yRadius: 6).fill()
+                    }
+                    drawLine("Delete", font, .white, x: deleteRect.minX, y: deleteRect.minY + 2, width: deleteRect.width, align: .center, draw: draw)
+                    drawLine("Cancel", font, .labelColor, x: cancelRect.minX, y: cancelRect.minY + 2, width: cancelRect.width, align: .center, draw: draw)
+                    actionHits.append((deleteRect, .delete, row.key))
+                    actionHits.append((cancelRect, .cancelDelete, row.key))
+                    y += 26
+                    continue
+                }
+                let hoverID = "\(index)|\(row.key)|\(row.left)"
+                let hovered = scheduleHover == hoverID
+                let icons = hovered ? automationIcons(link: row.link, key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused,
+                                                      canRunKiroCrew: canRunKiroCrew) : []
+                if draw {
+                    if hovered {
+                        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                        NSBezierPath(roundedRect: rowRect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
+                    }
+                    if let app = row.app { drawAppBadge(app, in: NSRect(x: pad + 1, y: y + 1, width: 18, height: 18)) }
+                }
+                let rightFont = NSFont.systemFont(ofSize: 12)
+                let rightW = icons.isEmpty ? drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2 : CGFloat(icons.count) * 24
+                let nameWidth = drawLine(row.left, .systemFont(ofSize: 13), .labelColor, x: pad + 28, y: y, width: inner - 32 - rightW, draw: draw)
+                if draw, hovered, row.link != nil {
+                    underline(from: pad + 28, width: min(nameWidth, inner - 32 - rightW), y: y + 18, color: .labelColor)
+                }
+                if icons.isEmpty {
+                    drawLine(row.right, rightFont, row.rightColor ?? .secondaryLabelColor, x: pad + inner - rightW, y: y + 1, width: rightW, align: .right, draw: draw)
+                } else {
+                    var ix = pad + inner - CGFloat(icons.count) * 24 + 2
+                    for (symbol, action, red) in icons {
+                        let rect = NSRect(x: ix, y: y - 1, width: 22, height: 22)
+                        if draw { drawSymbol(symbol, in: rect, color: red ? NSColor(hex: 0xE03131) : .secondaryLabelColor, size: 11.5) }
+                        actionHits.append((rect, action, row.key))
+                        ix += 24
+                    }
+                }
+                scheduleItems.append((rowRect, hoverID, row.link))
+                y += 26
+            }
+            y += 6
+        }
         // The latest sessions, newest first
         if !content.latest.isEmpty {
             drawLine("Latest sessions", .systemFont(ofSize: 12, weight: .semibold), content.duet ? duetPlum : .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
@@ -2595,18 +2910,27 @@ final class BriefView: NSView {
         trackHover(self)
     }
 
-    // Underlines the session under the pointer, so it reads as a link
+    /// A blue text link on the right of a schedule row, such as Undo
+    private func briefLink(_ text: String, action: AutomationAction, key: String, rightEdge: CGFloat, y: CGFloat, draw: Bool) {
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let w = drawLine(text, font, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2
+        drawLine(text, font, .linkColor, x: rightEdge - w, y: y, width: w, align: .right, draw: draw)
+        actionHits.append((NSRect(x: rightEdge - w - 6, y: y - 3, width: w + 12, height: 22), action, key))
+    }
+    // Underlines the session under the pointer, so it reads as a link; a schedule row also shows its icons
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let row = latestHits.firstIndex { $0.0.contains(point) }
-        if row != hovered {
+        let scheduled = scheduleItems.first { $0.0.contains(point) }?.1
+        if row != hovered || scheduled != scheduleHover {
             hovered = row
+            scheduleHover = scheduled
             needsDisplay = true
         }
     }
-
     override func mouseExited(with event: NSEvent) {
         hovered = nil
+        scheduleHover = nil
         needsDisplay = true
     }
 
@@ -2615,7 +2939,9 @@ final class BriefView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
         if pinRect.insetBy(dx: -6, dy: -6).contains(point) { onPin?(); return }
-        if let hit = latestHits.first(where: { $0.0.contains(point) }) { openChat(hit.1) }
+        if let hit = actionHits.first(where: { $0.0.contains(point) }) { onAction?(hit.1, hit.2); return }
+        if let hit = latestHits.first(where: { $0.0.contains(point) }) { openChat(hit.1); return }
+        if let hit = scheduleItems.first(where: { $0.0.contains(point) }), let link = hit.2 { openChat(link) }
     }
 }
 
@@ -3455,7 +3781,14 @@ func briefSlot(now: Date, lastShown: String?, calendar: Calendar = .current) -> 
 /// One big number in a tile: its value, label, and the two colours it is drawn in
 struct BriefStat { let value: String; let label: String; let ink: NSColor; let fill: NSColor }
 /// A row with a coloured dot: a chat on the left and what it needs on the right
-struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil; var kiro = false }
+struct BriefRow { let left: String; let right: String; let dot: NSColor; var link: String? = nil; var chatID: String? = nil; var kiro = false
+    /// A scheduled task's app, drawn as its mark, and the colour of its state on the right
+    var app: AutomationApp? = nil
+    var rightColor: NSColor? = nil
+    /// For a scheduled task: what Hide remembers, and the Kiro Crew job to pause, resume or delete
+    var key: String = ""
+    var kiroJob: String? = nil
+    var kiroPaused = false }
 /// The width of a waiting chat's reason chip: its text at 12 points, with 8 points of room each side
 func waitingChipWidth(_ reason: String) -> CGFloat {
     ceil((reason as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 16
@@ -3485,6 +3818,9 @@ struct BriefContent {
     var lines: [(String, NSColor)] = []
     var week: [BriefBar] = []
     var footer: String?
+    /// The morning brief's schedule for today, and the runs missed in the last day
+    var schedule: [BriefRow] = []
+    var missed: [BriefRow] = []
 }
 
 /// The most recently active sessions, newest first, up to the limit.
@@ -3515,7 +3851,8 @@ func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
 }
 
 /// The morning brief ("morning") or the 6 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
-func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil, kiro: KiroBrief? = nil) -> BriefContent {
+func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil, kiro: KiroBrief? = nil,
+                  automations: AutomationSnapshot? = nil) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
     // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
     let red = (ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)), fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)))
@@ -3566,6 +3903,16 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
             return BriefBar(label: names.string(from: date), seconds: claude + cursor + kiroTime,
                             claudeSeconds: claude, cursorSeconds: cursor, isToday: key == todayKey, kiroSeconds: kiroTime)
         }
+    }
+    if kind == "morning", let automations {
+        func briefRow(_ row: AutomationRow, detail: Bool) -> BriefRow {
+            let time = shortWhen(row.at, now: now)
+            return BriefRow(left: clip(row.title, 26), right: detail ? "\(time) · \(row.right)" : row.right, dot: .clear,
+                            link: row.link, app: row.app, rightColor: automationToneColor(row.tone),
+                            key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused)
+        }
+        content.schedule = automations.today.prefix(6).map { briefRow($0, detail: true) }
+        content.missed = automations.missed.prefix(3).map { briefRow($0, detail: true) }
     }
     content.latest = latestSessions(chats).map { chat in
         BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link, chatID: chat.id)
@@ -4317,6 +4664,60 @@ struct Usage {
 
 let kiroBundleID = "dev.kiro.desktop"
 
+/// Claude's spark: four rounded bars through the centre
+func drawClaudeSpark(in rect: NSRect) {
+    let path = NSBezierPath()
+    let bar = NSRect(x: rect.midX - rect.width * 0.053, y: rect.midY - rect.height * 0.425, width: rect.width * 0.106, height: rect.height * 0.85)
+    for degrees in [0, 45, 90, 135] as [CGFloat] {
+        let piece = NSBezierPath(roundedRect: bar, xRadius: bar.width / 2, yRadius: bar.width / 2)
+        let turn = NSAffineTransform()
+        turn.translateX(by: rect.midX, yBy: rect.midY)
+        turn.rotate(byDegrees: degrees)
+        turn.translateX(by: -rect.midX, yBy: -rect.midY)
+        path.append(turn.transform(piece))
+    }
+    path.fill()
+}
+
+/// Cursor's official 2D cube from cursor.com/brand. Even-odd cuts the arrow out of the hexagon
+func drawCursorCube(in rect: NSRect, crease _: NSColor) {
+    // viewBox 0 0 466.73 532.09 — General Logos/Cube/SVG/CUBE_2D
+    let p = NSBezierPath()
+    p.move(to: NSPoint(x: 457.43, y: 125.94))
+    p.line(to: NSPoint(x: 244.42, y: 2.96))
+    p.curve(to: NSPoint(x: 222.30, y: 2.96), controlPoint1: NSPoint(x: 237.58, y: -0.99), controlPoint2: NSPoint(x: 229.14, y: -0.99))
+    p.line(to: NSPoint(x: 9.30, y: 125.94))
+    p.curve(to: NSPoint(x: 0.00, y: 142.05), controlPoint1: NSPoint(x: 3.55, y: 129.26), controlPoint2: NSPoint(x: 0.00, y: 135.40))
+    p.line(to: NSPoint(x: 0.00, y: 390.04))
+    p.curve(to: NSPoint(x: 9.30, y: 406.15), controlPoint1: NSPoint(x: 0.00, y: 396.69), controlPoint2: NSPoint(x: 3.55, y: 402.83))
+    p.line(to: NSPoint(x: 222.31, y: 529.13))
+    p.curve(to: NSPoint(x: 244.43, y: 529.13), controlPoint1: NSPoint(x: 229.15, y: 533.08), controlPoint2: NSPoint(x: 237.59, y: 533.08))
+    p.line(to: NSPoint(x: 457.44, y: 406.15))
+    p.curve(to: NSPoint(x: 466.74, y: 390.04), controlPoint1: NSPoint(x: 463.19, y: 402.83), controlPoint2: NSPoint(x: 466.74, y: 396.69))
+    p.line(to: NSPoint(x: 466.74, y: 142.05))
+    p.curve(to: NSPoint(x: 457.44, y: 125.94), controlPoint1: NSPoint(x: 466.74, y: 135.40), controlPoint2: NSPoint(x: 463.19, y: 129.26))
+    p.close()
+    // The arrow cut
+    p.move(to: NSPoint(x: 444.05, y: 151.99))
+    p.line(to: NSPoint(x: 238.42, y: 508.15))
+    p.curve(to: NSPoint(x: 233.36, y: 506.79), controlPoint1: NSPoint(x: 237.03, y: 510.55), controlPoint2: NSPoint(x: 233.36, y: 509.57))
+    p.line(to: NSPoint(x: 233.36, y: 273.58))
+    p.curve(to: NSPoint(x: 226.83, y: 262.27), controlPoint1: NSPoint(x: 233.36, y: 268.92), controlPoint2: NSPoint(x: 230.87, y: 264.61))
+    p.line(to: NSPoint(x: 24.87, y: 145.67))
+    p.curve(to: NSPoint(x: 26.23, y: 140.61), controlPoint1: NSPoint(x: 22.47, y: 144.28), controlPoint2: NSPoint(x: 23.45, y: 140.61))
+    p.line(to: NSPoint(x: 437.49, y: 140.61))
+    p.curve(to: NSPoint(x: 444.06, y: 152.00), controlPoint1: NSPoint(x: 443.33, y: 140.61), controlPoint2: NSPoint(x: 446.98, y: 146.94))
+    p.close()
+    p.windingRule = .evenOdd
+    NSGraphicsContext.saveGraphicsState()
+    let fit = NSAffineTransform()
+    fit.translateX(by: rect.minX, yBy: rect.minY)
+    fit.scaleX(by: rect.width / 466.73, yBy: rect.height / 532.09)
+    fit.concat()
+    p.fill()
+    NSGraphicsContext.restoreGraphicsState()
+}
+
 /// Kiro's colour in the briefs
 let kiroTeal = NSColor(hex: 0x4FA3A5)
 
@@ -4526,6 +4927,546 @@ final class KiroLiveCredits {
             }
         }
         return KiroUsage(left: max(0, anchor.left - spent), limit: anchor.limit, expires: anchor.expires, at: latest)
+    }
+}
+
+// MARK: - Agents, schedules and automations from Claude, Cursor and Kiro
+
+enum AutomationApp: Equatable { case claude, cursor, kiro }
+
+/// A task an app runs on a schedule. Claude's come from the desktop app's `scheduled-tasks.json`, Kiro's from Kiro Crew's `crons.json`
+struct ScheduledTask {
+    let app: AutomationApp
+    let id: String
+    let name: String
+    var cron: String? = nil
+    var fireAt: Date? = nil
+    var every: TimeInterval? = nil
+    var enabled = true
+    var paused = false
+    var lastRun: Date? = nil
+    var created: Date? = nil
+    var failed = false
+    /// Where a click goes: the task's latest run in Claude, or the job in Kiro Crew
+    var link: String? = nil
+}
+
+/// A Cursor cloud agent: only its name and times are read
+struct CloudAgentRun { let name: String; let started: Date; let lastActivity: Date; var id = "" }
+
+/// A cron line: minute, hour, day of month, month, day of week. Numbers, `*`, ranges, lists and steps; no names
+struct CronSpec {
+    let minutes: Set<Int>, hours: Set<Int>, days: Set<Int>, months: Set<Int>, weekdays: Set<Int>
+    let anyDay: Bool, anyWeekday: Bool
+
+    init?(_ text: String) {
+        let parts = text.split(separator: " ").map(String.init)
+        guard parts.count == 5,
+              let m = CronSpec.field(parts[0], 0...59), let h = CronSpec.field(parts[1], 0...23),
+              let d = CronSpec.field(parts[2], 1...31), let mo = CronSpec.field(parts[3], 1...12),
+              let w = CronSpec.field(parts[4], 0...7) else { return nil }
+        minutes = m; hours = h; days = d; months = mo
+        weekdays = Set(w.map { $0 == 7 ? 0 : $0 })
+        anyDay = parts[2] == "*"; anyWeekday = parts[4] == "*"
+    }
+
+    static func field(_ text: String, _ range: ClosedRange<Int>) -> Set<Int>? {
+        var out = Set<Int>()
+        for piece in text.split(separator: ",") {
+            let stepParts = piece.split(separator: "/", maxSplits: 1).map(String.init)
+            let step = stepParts.count == 2 ? Int(stepParts[1]) : 1
+            guard let step, step > 0 else { return nil }
+            var low = range.lowerBound, high = range.upperBound
+            if stepParts[0] != "*" {
+                let bounds = stepParts[0].split(separator: "-", maxSplits: 1).compactMap { Int($0) }
+                guard !bounds.isEmpty, bounds.count == stepParts[0].split(separator: "-").count else { return nil }
+                low = bounds[0]; high = bounds.count == 2 ? bounds[1] : (stepParts.count == 2 ? range.upperBound : bounds[0])
+            }
+            guard range.contains(low), range.contains(high), low <= high else { return nil }
+            out.formUnion(stride(from: low, through: high, by: step))
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// Cron's day rule: when both day fields are set, either one matching is enough
+    func dayMatches(_ day: Int, weekday: Int) -> Bool {
+        if anyDay && anyWeekday { return true }
+        if anyDay { return weekdays.contains(weekday) }
+        if anyWeekday { return days.contains(day) }
+        return days.contains(day) || weekdays.contains(weekday)
+    }
+
+    /// Every time it fires from `start` up to `end`, in local time, at most `limit`
+    func fires(from start: Date, to end: Date, calendar: Calendar = .current, limit: Int = 200) -> [Date] {
+        var out: [Date] = []
+        var day = calendar.startOfDay(for: start)
+        while day < end && out.count < limit {
+            let parts = calendar.dateComponents([.year, .month, .day, .weekday], from: day)
+            if months.contains(parts.month!), dayMatches(parts.day!, weekday: parts.weekday! - 1) {
+                for hour in hours.sorted() {
+                    for minute in minutes.sorted() {
+                        guard let at = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day) else { continue }
+                        if at >= start && at < end { out.append(at) }
+                    }
+                }
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return Array(out.prefix(limit))
+    }
+
+    /// "Every day at 10:00", "Thu, Fri at 09:00, 17:00", or "Some days at 09:00"
+    func describe() -> String {
+        let times = hours.sorted().flatMap { h in minutes.sorted().map { String(format: "%02d:%02d", h, $0) } }
+        let at = times.count <= 3 ? " at " + times.joined(separator: ", ") : ", \(times.count) times a day"
+        if anyDay && anyWeekday && months.count == 12 { return "Every day" + at }
+        if anyDay && months.count == 12 {
+            let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            if weekdays == [1, 2, 3, 4, 5] { return "Weekdays" + at }
+            return weekdays.sorted().map { names[$0] }.joined(separator: ", ") + at
+        }
+        return "Some days" + at
+    }
+}
+
+/// When a task runs between two times: its cron, its one fire time, or its repeat interval
+func scheduledFires(_ task: ScheduledTask, from start: Date, to end: Date) -> [Date] {
+    if let cron = task.cron, let spec = CronSpec(cron) { return spec.fires(from: start, to: end) }
+    if let at = task.fireAt { return at >= start && at < end ? [at] : [] }
+    if let every = task.every, every >= 60 {
+        var next = (task.lastRun ?? task.created ?? start).addingTimeInterval(every)
+        var out: [Date] = []
+        while next < end && out.count < 200 {
+            if next >= start { out.append(next) }
+            next = next.addingTimeInterval(every)
+        }
+        return out
+    }
+    return []
+}
+
+/// How a task's schedule reads in a row
+func scheduleText(_ task: ScheduledTask) -> String {
+    if let cron = task.cron { return CronSpec(cron)?.describe() ?? "On a schedule" }
+    if let at = task.fireAt { return "Once, " + shortWhen(at) }
+    if let every = task.every { return every >= 3600 ? "Every \(Int(every / 3600)) h" : "Every \(Int(every / 60)) min" }
+    return "When you run it"
+}
+
+/// "10:00 AM", "Yesterday 10:00 AM" or "6 Nov 10:00 AM"
+func shortWhen(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+    let clock = DateFormatter()
+    clock.timeStyle = .short
+    clock.dateStyle = .none
+    if calendar.isDate(date, inSameDayAs: now) { return clock.string(from: date) }
+    if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+        return "Yesterday " + clock.string(from: date)
+    }
+    let day = DateFormatter()
+    day.dateFormat = "d MMM"
+    return day.string(from: date) + " " + clock.string(from: date)
+}
+
+/// "in 42m", "in 8h 42m"
+func untilText(_ seconds: TimeInterval) -> String {
+    let minutes = max(0, Int((seconds / 60).rounded(.up)))
+    return minutes < 60 ? "in \(minutes)m" : "in \(minutes / 60)h \(minutes % 60)m"
+}
+
+/// Links back to the app each row came from. Every app has its own scheme; an app with no link to the item is just opened.
+/// Computed, because the bundle IDs are set further down this file
+var claudeAppLink: String { "mochi-app://" + claudeBundleID }
+var cursorAppLink: String { "mochi-app://" + cursorBundleID }
+/// Letters, digits and "-_." pass through a link's query as they are; anything else is percent-encoded
+let linkSafe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+func claudeSessionLink(_ local: String) -> String { "claude://code/continue?session=\(local)&source=mochi" }
+func cursorCloudAgentLink(_ id: String) -> String {
+    "cursor://anysphere.cursor-deeplink/background-agent?bcId=" + (id.addingPercentEncoding(withAllowedCharacters: linkSafe) ?? id)
+}
+func kiroCrewLink(slot: String?) -> String {
+    guard let slot, !slot.isEmpty, let encoded = slot.addingPercentEncoding(withAllowedCharacters: linkSafe) else { return "kirocrew://" }
+    return "kirocrew://chat?sid=" + encoded
+}
+
+/// Claude's chats by their Claude Code session, and each scheduled task's newest run, from the app's own session files
+struct ClaudeRunIndex {
+    var localByCli: [String: String] = [:]
+    var latestRunByTask: [String: String] = [:]
+}
+
+func readClaudeRunIndex(root: URL = FileManager.default.homeDirectoryForCurrentUser
+                          .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions")) -> ClaudeRunIndex {
+    let fm = FileManager.default
+    var index = ClaudeRunIndex()
+    var newest: [String: Double] = [:]
+    for account in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+        for space in (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? [] {
+            for file in (try? fm.contentsOfDirectory(at: space, includingPropertiesForKeys: nil)) ?? []
+            where file.lastPathComponent.hasPrefix("local_") && file.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: file),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let local = json["sessionId"] as? String else { continue }
+                if let cli = json["cliSessionId"] as? String { index.localByCli[cli] = local }
+                if let task = json["scheduledTaskId"] as? String, !task.isEmpty, (json["isArchived"] as? Bool) != true {
+                    let at = jsonNumber(json["lastActivityAt"]) ?? jsonNumber(json["createdAt"]) ?? 0
+                    if at >= newest[task, default: -1] {
+                        newest[task] = at
+                        index.latestRunByTask[task] = local
+                    }
+                }
+            }
+        }
+    }
+    return index
+}
+
+/// A run counts as missed once it is this late and the task has not run since it was due
+let missedGrace: TimeInterval = 15 * 60
+
+func ranSince(_ task: ScheduledTask, _ due: Date) -> Bool { (task.lastRun ?? .distantPast) >= due }
+
+/// Claude's scheduled tasks. Only the name, schedule, on/off flag and run times are read, never the task's prompt
+func readClaudeScheduledTasks(root: URL = FileManager.default.homeDirectoryForCurrentUser
+                                .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions")) -> [ScheduledTask] {
+    let fm = FileManager.default
+    var found: [String: ScheduledTask] = [:]
+    for account in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+        for space in (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? [] {
+            let file = space.appendingPathComponent("scheduled-tasks.json")
+            guard let data = try? Data(contentsOf: file),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tasks = json["scheduledTasks"] as? [[String: Any]] else { continue }
+            for item in tasks {
+                guard let id = item["id"] as? String else { continue }
+                let name = (item["displayName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+                var task = ScheduledTask(app: .claude, id: id, name: name)
+                task.cron = item["cronExpression"] as? String
+                task.fireAt = jsonNumber(item["fireAt"]).map { Date(timeIntervalSince1970: $0 / 1000) }
+                task.enabled = item["enabled"] as? Bool ?? true
+                task.lastRun = (item["lastRunAt"] as? String).flatMap { kiroISO.date(from: $0) }
+                task.created = jsonNumber(item["createdAt"]).map { Date(timeIntervalSince1970: $0 / 1000) }
+                found[id] = task
+            }
+        }
+    }
+    return found.values.sorted { $0.name < $1.name }
+}
+
+/// A time Kiro wrote as seconds or milliseconds
+func kiroStamp(_ any: Any?) -> Date? {
+    guard let value = jsonNumber(any), value > 0 else { return nil }
+    return Date(timeIntervalSince1970: value > 100_000_000_000 ? value / 1000 : value)
+}
+
+/// Kiro Crew's scheduled jobs. Only the name, schedule, state and run times are read, never the job's message
+func readKiroCrons(file: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kiro/crew/crons.json")) -> [ScheduledTask] {
+    guard let data = try? Data(contentsOf: file),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let jobs = json["jobs"] as? [[String: Any]] else { return [] }
+    return jobs.compactMap { job in
+        guard let id = job["id"] as? String else { return nil }
+        var task = ScheduledTask(app: .kiro, id: id, name: (job["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Kiro job")
+        let schedule = job["schedule"] as? [String: Any] ?? [:]
+        switch schedule["kind"] as? String {
+        case "cron": task.cron = schedule["cron_expr"] as? String
+        case "every": task.every = jsonNumber(schedule["every_secs"])
+        case "at": task.fireAt = kiroStamp(schedule["at_ts"])
+        default: break
+        }
+        task.enabled = job["enabled"] as? Bool ?? true
+        task.paused = (job["user_paused"] as? Bool ?? false) || (job["auto_paused"] as? Bool ?? false)
+        task.lastRun = kiroStamp(job["last_run_ts"])
+        task.created = kiroStamp(job["created_ts"])
+        if let status = (job["last_status"] as? String)?.lowercased() { task.failed = status.contains("fail") || status.contains("error") }
+        task.link = kiroCrewLink(slot: job["session_key"] as? String)
+        return task
+    }
+}
+
+/// Cursor's cloud agents from its state database, read only. Only the agent list is asked for; the sign-in token stays in Cursor
+func readCursorCloudAgents(db: URL = FileManager.default.homeDirectoryForCurrentUser
+                            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")) -> [CloudAgentRun] {
+    guard FileManager.default.fileExists(atPath: db.path) else { return [] }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = ["-readonly", "-json", "-cmd", ".timeout 2000", db.path,
+                         "SELECT value FROM ItemTable WHERE key LIKE 'cloudAgentRepository.agents.%';"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    do { try process.run() } catch { return [] }
+    let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killer)
+    let output = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    killer.cancel()
+    return parseCursorCloudAgents(output)
+}
+
+/// sqlite3's `-json` rows, each holding one JSON list of agents
+func parseCursorCloudAgents(_ output: Data) -> [CloudAgentRun] {
+    guard let rows = try? JSONSerialization.jsonObject(with: output) as? [[String: Any]] else { return [] }
+    var runs: [CloudAgentRun] = []
+    for row in rows {
+        guard let text = row["value"] as? String,
+              let list = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [[String: Any]] else { continue }
+        for agent in list {
+            guard let created = jsonNumber(agent["createdAt"]) else { continue }
+            let active = jsonNumber(agent["lastMessageActivityAtMs"]) ?? jsonNumber(agent["updatedAt"]) ?? created
+            let name = (agent["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Cloud agent"
+            runs.append(CloudAgentRun(name: name, started: Date(timeIntervalSince1970: created / 1000),
+                                      lastActivity: Date(timeIntervalSince1970: active / 1000), id: agent["bcId"] as? String ?? ""))
+        }
+    }
+    return runs
+}
+
+/// Kiro Crew's own runs: sessions in Crew's workspaces that are in progress
+func readKiroCrewRuns(root: URL = kiroSessionsFolder) -> [KiroSession] {
+    let fm = FileManager.default
+    var found: [KiroSession] = []
+    for workspace in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where workspace.lastPathComponent != "cli" {
+        for folder in (try? fm.contentsOfDirectory(at: workspace, includingPropertiesForKeys: nil)) ?? [] where folder.lastPathComponent.hasPrefix("sess_") {
+            guard let data = try? Data(contentsOf: folder.appendingPathComponent("session.json")),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  json["status"] as? String == "in_progress",
+                  let path = (json["workspacePaths"] as? [String])?.first,
+                  path.contains("/.kiro/") || path.contains("kirocrew-workspace"),
+                  let updated = (json["lastModifiedAt"] as? String).flatMap({ kiroISO.date(from: $0) }) else { continue }
+            let title = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Kiro Crew run"
+            found.append(KiroSession(id: folder.lastPathComponent, title: title, status: .running, updatedAt: updated, folder: folder))
+        }
+    }
+    return found
+}
+
+/// Everything read from disk for the box, refreshed in the background
+struct AutomationSources {
+    var tasks: [ScheduledTask] = []
+    var cloud: [CloudAgentRun] = []
+    var crew: [KiroSession] = []
+    var claude = ClaudeRunIndex()
+}
+
+func readAutomationSources() -> AutomationSources {
+    let index = readClaudeRunIndex()
+    let claudeTasks = readClaudeScheduledTasks().map { task -> ScheduledTask in
+        var task = task
+        task.link = index.latestRunByTask[task.id].map(claudeSessionLink) ?? claudeAppLink
+        return task
+    }
+    return AutomationSources(tasks: claudeTasks + readKiroCrons(), cloud: readCursorCloudAgents(), crew: readKiroCrewRuns(), claude: index)
+}
+
+enum AutomationTone { case running, upcoming, ok, missed, muted }
+
+func appKey(_ app: AutomationApp) -> String { app == .claude ? "claude" : app == .cursor ? "cursor" : "kiro" }
+func automationApp(_ key: String) -> AutomationApp? { ["claude": .claude, "cursor": .cursor, "kiro": .kiro][key] }
+func taskKey(_ task: ScheduledTask) -> String { appKey(task.app) + ":task:" + task.id }
+
+/// Something hidden from Mochi. It still runs in its app; Mochi only stops showing it. Kept with its name, so the
+/// Hidden list can show it even when it has not come up lately
+struct HiddenAutomation: Codable, Equatable {
+    let key: String
+    let title: String
+    let app: String
+    let detail: String
+}
+
+var hiddenAutomationsFile: URL { mochiFolder.appendingPathComponent("hidden-automations.json") }
+
+func readHiddenAutomations(_ url: URL = hiddenAutomationsFile) -> [HiddenAutomation] {
+    guard let data = try? Data(contentsOf: url) else { return [] }
+    return (try? JSONDecoder().decode([HiddenAutomation].self, from: data)) ?? []
+}
+
+func writeHiddenAutomations(_ items: [HiddenAutomation], to url: URL = hiddenAutomationsFile) {
+    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let data = try? JSONEncoder().encode(items) { try? data.write(to: url, options: .atomic) }
+}
+
+/// The snapshot without what you hid
+func withoutHidden(_ snap: AutomationSnapshot, hidden: Set<String>) -> AutomationSnapshot {
+    guard !hidden.isEmpty else { return snap }
+    func keep(_ rows: [AutomationRow]) -> [AutomationRow] { rows.filter { !hidden.contains($0.key) } }
+    return AutomationSnapshot(running: keep(snap.running), upcoming: keep(snap.upcoming), recent: keep(snap.recent),
+                              today: keep(snap.today), missed: keep(snap.missed))
+}
+
+/// Kiro Crew's own command line. Mochi runs it to pause, resume or delete a job, never edits Kiro Crew's files
+var kirocrewBinary: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kiro/crew/kirocrew-bin/kirocrew") }
+enum KiroCronCommand: String { case pause, resume, remove }
+
+/// Job IDs are short letters and digits, such as "b09c4bcf"; anything else is not passed on. It may not start with "-",
+/// so kirocrew can never read it as an option
+func kiroJobIDValid(_ id: String) -> Bool {
+    guard let first = id.first, first.isASCII, first.isLetter || first.isNumber, id.count <= 64 else { return false }
+    return id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+}
+
+func kiroCronArguments(_ command: KiroCronCommand, job: String) -> [String]? {
+    kiroJobIDValid(job) ? ["cron", command.rawValue, job] : nil
+}
+
+/// Runs one `kirocrew cron` command off the main thread, as separate arguments with no shell, and reports back on the main thread
+func runKiroCron(_ command: KiroCronCommand, job: String, binary: URL = kirocrewBinary, done: @escaping (Bool) -> Void) {
+    guard let arguments = kiroCronArguments(command, job: job), FileManager.default.isExecutableFile(atPath: binary.path) else {
+        done(false)
+        return
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        var ok = false
+        do {
+            try process.run()
+            let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: killer)
+            process.waitUntilExit()
+            killer.cancel()
+            ok = process.terminationStatus == 0
+        } catch {
+            ok = false
+        }
+        DispatchQueue.main.async { done(ok) }
+    }
+}
+
+struct AutomationRow {
+    let app: AutomationApp
+    let title: String
+    let detail: String
+    let right: String
+    let tone: AutomationTone
+    let at: Date
+    var link: String? = nil
+    /// What Hide remembers: one key per task, agent or job, the same on every row it appears in
+    var key: String = ""
+    /// A Kiro Crew job's ID, so its row can pause, resume or delete it, and whether it is paused now
+    var kiroJob: String? = nil
+    var kiroPaused = false
+}
+
+/// What the box and the morning brief show: running now, coming up today, the last day, today's whole schedule, and what was missed
+struct AutomationSnapshot {
+    var running: [AutomationRow] = []
+    var upcoming: [AutomationRow] = []
+    var recent: [AutomationRow] = []
+    var today: [AutomationRow] = []
+    var missed: [AutomationRow] = []
+}
+
+func automationSnapshot(sources: AutomationSources, agents: [AgentRun], now: Date, calendar: Calendar = .current) -> AutomationSnapshot {
+    var snap = AutomationSnapshot()
+    // Running now: Claude's agents, Cursor's cloud agents and Kiro Crew's runs that did something lately
+    for run in agents where agentActive(lastActivity: run.lastActivity, now: now) {
+        snap.running.append(AutomationRow(app: .claude, title: run.task, detail: "Agent",
+                                          right: elapsedText(Int(now.timeIntervalSince(run.started))), tone: .running, at: run.started,
+                                          link: sources.claude.localByCli[run.session].map(claudeSessionLink) ?? claudeAppLink,
+                                          key: "claude:agent:" + run.id))
+    }
+    for agent in sources.cloud where now.timeIntervalSince(agent.lastActivity) < 180 {
+        snap.running.append(AutomationRow(app: .cursor, title: agent.name, detail: "Cloud agent",
+                                          right: elapsedText(Int(now.timeIntervalSince(agent.started))), tone: .running, at: agent.started,
+                                          link: agent.id.isEmpty ? cursorAppLink : cursorCloudAgentLink(agent.id),
+                                          key: "cursor:cloud:" + (agent.id.isEmpty ? agent.name : agent.id)))
+    }
+    for run in sources.crew where now.timeIntervalSince(run.updatedAt) < 600 {
+        snap.running.append(AutomationRow(app: .kiro, title: run.title, detail: "Kiro Crew", right: "running", tone: .running, at: run.updatedAt,
+                                          link: kiroCrewLink(slot: nil), key: "kiro:crew:" + run.id))
+    }
+    snap.running.sort { $0.at > $1.at }
+
+    let dayStart = calendar.startOfDay(for: now)
+    let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? now.addingTimeInterval(86_400)
+    let dayAgo = now.addingTimeInterval(-86_400)
+    for task in sources.tasks {
+        let off = !task.enabled || task.paused
+        // A one-off task that already ran, or a Claude task that was switched off, has nothing more to show
+        if !task.enabled && task.app == .claude { 
+            if let last = task.lastRun, last >= dayAgo {
+                snap.recent.append(AutomationRow(app: task.app, title: task.name, detail: shortWhen(last, now: now), right: "✓ Ran", tone: .ok, at: last, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+            }
+            continue
+        }
+        let schedule = scheduleText(task)
+        for fire in scheduledFires(task, from: dayStart, to: dayEnd) {
+            if off {
+                snap.today.append(AutomationRow(app: task.app, title: task.name, detail: schedule + " · paused", right: "Paused", tone: .muted, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+                if fire >= now {
+                    snap.upcoming.append(AutomationRow(app: task.app, title: task.name, detail: schedule + " · paused", right: "Paused", tone: .muted, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+                }
+            } else if fire >= now {
+                let row = AutomationRow(app: task.app, title: task.name, detail: schedule, right: untilText(fire.timeIntervalSince(now)), tone: .upcoming, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused)
+                snap.today.append(row)
+                snap.upcoming.append(row)
+            } else if ranSince(task, fire) {
+                snap.today.append(AutomationRow(app: task.app, title: task.name, detail: shortWhen(fire, now: now), right: "✓ Ran", tone: .ok, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+            } else if now.timeIntervalSince(fire) > missedGrace {
+                snap.today.append(AutomationRow(app: task.app, title: task.name, detail: shortWhen(fire, now: now), right: "Missed", tone: .missed, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+            } else {
+                snap.today.append(AutomationRow(app: task.app, title: task.name, detail: shortWhen(fire, now: now), right: "Due", tone: .upcoming, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+            }
+        }
+        // A paused Kiro Crew job stays in Coming up, even with no run left today, so it can be resumed or deleted
+        if off, !snap.upcoming.contains(where: { $0.key == taskKey(task) }) {
+            let next = scheduledFires(task, from: now, to: now.addingTimeInterval(8 * 86_400)).first ?? dayEnd
+            snap.upcoming.append(AutomationRow(app: task.app, title: task.name, detail: schedule + " · paused", right: "Paused", tone: .muted, at: next,
+                                               link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: true))
+        }
+        guard !off else { continue }
+        // The last day: each run, and each time it was due but did not run
+        if let last = task.lastRun, last >= dayAgo {
+            snap.recent.append(AutomationRow(app: task.app, title: task.name, detail: shortWhen(last, now: now),
+                                             right: task.failed ? "Failed" : "✓ Ran", tone: task.failed ? .missed : .ok, at: last, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused))
+        }
+        let created = task.created ?? .distantPast
+        for fire in scheduledFires(task, from: dayAgo, to: now.addingTimeInterval(-missedGrace)) where fire > created && !ranSince(task, fire) {
+            let row = AutomationRow(app: task.app, title: task.name, detail: "Due " + shortWhen(fire, now: now) + " · didn't run",
+                                    right: "Missed", tone: .missed, at: fire, link: task.link, key: taskKey(task), kiroJob: task.app == .kiro ? task.id : nil, kiroPaused: !task.enabled || task.paused)
+            snap.recent.append(row)
+            snap.missed.append(row)
+        }
+    }
+    for agent in sources.cloud where now.timeIntervalSince(agent.lastActivity) >= 180 && agent.lastActivity >= dayAgo {
+        let minutes = max(1, Int(agent.lastActivity.timeIntervalSince(agent.started) / 60))
+        snap.recent.append(AutomationRow(app: .cursor, title: agent.name, detail: "Cloud agent · \(minutes)m",
+                                         right: ago(agent.lastActivity.timeIntervalSince1970 * 1000), tone: .muted, at: agent.lastActivity,
+                                         link: agent.id.isEmpty ? cursorAppLink : cursorCloudAgentLink(agent.id),
+                                         key: "cursor:cloud:" + (agent.id.isEmpty ? agent.name : agent.id)))
+    }
+    snap.upcoming.sort { $0.at < $1.at }
+    snap.today.sort { $0.at < $1.at }
+    snap.recent.sort { $0.at > $1.at }
+    snap.missed.sort { $0.at > $1.at }
+    return snap
+}
+
+func automationToneColor(_ tone: AutomationTone) -> NSColor {
+    switch tone {
+    case .running: return NSColor(hex: 0x1C7ED6)
+    case .upcoming: return .labelColor
+    case .ok: return NSColor(hex: 0x2F9E44)
+    case .missed: return NSColor(hex: 0xE8590C)
+    case .muted: return .secondaryLabelColor
+    }
+}
+
+/// The app's mark on a small rounded square in its own colour
+func drawAppBadge(_ app: AutomationApp, in rect: NSRect) {
+    let fill: NSColor = app == .claude ? NSColor(hex: 0xD97757) : app == .cursor ? NSColor(hex: 0x1E1E1E) : NSColor(hex: 0x7C4DFF)
+    fill.setFill()
+    NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.28, yRadius: rect.width * 0.28).fill()
+    let icon = rect.insetBy(dx: rect.width * 0.2, dy: rect.height * 0.2)
+    NSColor.white.set()
+    switch app {
+    case .claude: drawClaudeSpark(in: icon)
+    case .cursor: drawCursorCube(in: NSRect(x: icon.minX + icon.width * 0.06, y: icon.minY, width: icon.width * 0.88, height: icon.height), crease: fill)
+    case .kiro: drawKiroGhostShape(in: icon, body: .white, eyes: fill)
     }
 }
 
@@ -5557,6 +6498,15 @@ final class Mochi: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var lastFinishedAt: Date?
     /// Every agent read recently, running or not
     var allAgents: [AgentRun] = []
+    /// Schedules, cloud agents and Kiro Crew runs, re-read in the background at most every 30 seconds
+    var automationSources = AutomationSources()
+    var automationsAt: Date?
+    var automationsBusy = false
+    /// What you hid from Mochi, kept in ~/.claude/mochi/hidden-automations.json
+    var hiddenAutomations: [HiddenAutomation] = readHiddenAutomations()
+    /// Rows just hidden that still offer Undo, and the row asking whether to delete: the same in the box and the brief
+    var automationUndoKeys: Set<String> = []
+    var automationConfirmKey: String?
     let agentsBox = AgentsBoxView()
     /// The morning brief and the 6 PM wrap-up, under her until you close them
     lazy var briefPanel = floatingPanel(size: NSSize(width: BriefView.width, height: 120))
@@ -7107,14 +8057,117 @@ final class NotePanel: NSPanel {
             mochiLog("brief: wrap-up held until 6:00 PM")
             return
         }
-        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, kiro: kiroBriefData(now: now)), live: kind)
+        refreshAutomationSources()
+        presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, kiro: kiroBriefData(now: now),
+                                     automations: visibleAutomations(now: now)), live: kind)
         mochiLog("brief: \(kind) shown")
     }
 
     /// The agents running now, each with its task, how long it has run and when it last did something
+    /// Re-reads schedules and cloud agents off the main thread; `force` skips the 30-second wait
+    func refreshAutomationSources(force: Bool = false, _ done: (() -> Void)? = nil) {
+        if automationsBusy { done?(); return }
+        if !force, let at = automationsAt, Date().timeIntervalSince(at) < 30 { done?(); return }
+        automationsBusy = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let fresh = readAutomationSources()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.automationSources = fresh
+                self.automationsAt = Date()
+                self.automationsBusy = false
+                done?()
+            }
+        }
+    }
+    func currentAutomations(now: Date = Date()) -> AutomationSnapshot {
+        automationSnapshot(sources: automationSources, agents: allAgents, now: now)
+    }
+    /// What the brief shows: everything except what you hid
+    func visibleAutomations(now: Date = Date()) -> AutomationSnapshot {
+        withoutHidden(currentAutomations(now: now), hidden: Set(hiddenAutomations.map(\.key)).subtracting(automationUndoKeys))
+    }
+    /// A row's icon, link or button in the Agents and schedules box
+    func handleAutomationAction(_ action: AutomationAction, key: String) {
+        let snap = currentAutomations()
+        let row = (snap.running + snap.upcoming + snap.recent + snap.today + snap.missed).first { $0.key == key }
+        switch action {
+        case .open:
+            openChat(row?.link)
+        case .hide:
+            guard let row, !hiddenAutomations.contains(where: { $0.key == key }) else { break }
+            hiddenAutomations.append(HiddenAutomation(key: key, title: row.title, app: appKey(row.app), detail: row.detail))
+            writeHiddenAutomations(hiddenAutomations)
+            automationUndoKeys.insert(key)
+            mochiLog("automations: hid \(key)")
+            Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+                guard let self else { return }
+                self.automationUndoKeys.remove(key)
+                self.syncAutomationActions()
+            }
+        case .undo, .unhide:
+            hiddenAutomations.removeAll { $0.key == key }
+            writeHiddenAutomations(hiddenAutomations)
+            automationUndoKeys.remove(key)
+            mochiLog("automations: showed \(key) again")
+        case .unhideAll:
+            hiddenAutomations = []
+            writeHiddenAutomations(hiddenAutomations)
+            agentsBox.showingHidden = false
+        case .showHidden:
+            agentsBox.showingHidden = true
+            automationConfirmKey = nil
+        case .closeHidden:
+            agentsBox.showingHidden = false
+        case .confirmDelete:
+            automationConfirmKey = key
+        case .cancelDelete:
+            automationConfirmKey = nil
+        case .pause, .resume, .delete:
+            guard let job = row?.kiroJob else { break }
+            let command: KiroCronCommand = action == .pause ? .pause : action == .resume ? .resume : .remove
+            let name = row?.title ?? "the job"
+            automationConfirmKey = nil
+            mochiLog("automations: kirocrew cron \(command.rawValue) \(job)")
+            runKiroCron(command, job: job) { [weak self] ok in
+                guard let self else { return }
+                if !ok {
+                    self.say("Kiro Crew couldn't \(command == .remove ? "delete" : command.rawValue) “\(name)”. Is Kiro Crew running?", color: Status.blocked.color)
+                }
+                self.refreshAutomationSources(force: true) { self.syncAutomationActions() }
+            }
+        }
+        syncAutomationActions()
+    }
+    /// Pushes Undo, the delete question and the hidden list to the box and the brief, and redraws both
+    func syncAutomationActions() {
+        agentsBox.undoKeys = automationUndoKeys
+        agentsBox.confirmKey = automationConfirmKey
+        agentsBox.hiddenItems = hiddenAutomations
+        currentBrief?.undoKeys = automationUndoKeys
+        currentBrief?.confirmKey = automationConfirmKey
+        refreshAgentsBox()
+        refreshBrief()
+    }
+    @objc func menuAgents() { showAgents() }
     func showAgents() {
+        if agentsBox.onRefresh == nil {
+            agentsBox.onRefresh = { [weak self] in self?.refreshAutomationSources(force: true) { self?.refreshAgentsBox() } }
+            agentsBox.onFilter = { [weak self] in self?.refreshAgentsBox() }
+            agentsBox.onAction = { [weak self] action, key in self?.handleAutomationAction(action, key: key) }
+        }
+        agentsBox.showingHidden = false
+        automationConfirmKey = nil
+        agentsBox.confirmKey = nil
+        agentsBox.undoKeys = automationUndoKeys
+        agentsBox.hiddenItems = hiddenAutomations
+        agentsBox.canRunKiroCrew = FileManager.default.isExecutableFile(atPath: kirocrewBinary.path)
+        refreshAutomationSources { [weak self] in self?.refreshAgentsBox() }
+        agentsBox.snapshot = currentAutomations()
+        agentsBox.checkedAt = automationsAt
         agentsBox.runs = view.activeAgents
         agentsBox.now = Date()
+        bubble.acceptsMouseMovedEvents = true // so a row underlines under the pointer
         presentInBubble(agentsBox, height: agentsBox.fittingHeight(), width: AgentsBoxView.width, accent: Status.running.color)
         mochiLog("agents: \(view.activeAgents.count) shown")
     }
@@ -7122,6 +8175,10 @@ final class NotePanel: NSPanel {
     /// Keeps the Agents box in step with the runs while it is open
     func refreshAgentsBox() {
         guard bubble.isVisible, bubbleFrame.scroll.documentView === agentsBox else { return }
+        refreshAutomationSources()
+        agentsBox.snapshot = currentAutomations()
+        agentsBox.hiddenItems = hiddenAutomations
+        agentsBox.checkedAt = automationsAt
         agentsBox.runs = view.activeAgents
         agentsBox.now = Date()
         let height = agentsBox.fittingHeight()
@@ -7141,6 +8198,10 @@ final class NotePanel: NSPanel {
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.briefSuppressed = true; self?.placeCards() }
         brief.pinned = briefOnTop
         brief.onPin = { [weak self] in self?.toggleBriefOnTop() }
+        brief.onAction = { [weak self] action, key in self?.handleAutomationAction(action, key: key) }
+        brief.canRunKiroCrew = FileManager.default.isExecutableFile(atPath: kirocrewBinary.path)
+        brief.undoKeys = automationUndoKeys
+        brief.confirmKey = automationConfirmKey
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
         briefPanel.setContentSize(NSSize(width: BriefView.width, height: height))
         briefPanel.acceptsMouseMovedEvents = true
@@ -7175,7 +8236,9 @@ final class NotePanel: NSPanel {
     }
     func refreshBrief() {
         guard let kind = briefLiveKind, briefPanel.isVisible, let brief = currentBrief else { return }
-        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, kiro: kiroBriefData())
+        refreshAutomationSources()
+        brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, kiro: kiroBriefData(),
+                                     automations: visibleAutomations())
         let height = brief.fittingHeight()
         if height != briefPanel.frame.height {
             brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)
@@ -7292,6 +8355,7 @@ final class NotePanel: NSPanel {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "Morning brief", action: #selector(menuMorningBrief), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Agents and schedules", action: #selector(menuAgents), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close all boxes", action: #selector(menuCloseAllBoxes), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show notifications", action: #selector(menuNotifications), keyEquivalent: "").target = self
