@@ -204,6 +204,20 @@ func openChat(_ link: String?) {
         NSWorkspace.shared.open(url)
         return
     }
+    // "mochi-kiro://open?folder=<path>": the chat's project, opened in Kiro, which brings its window forward
+    if url.scheme == "mochi-kiro" {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: kiroBundleID) else { return }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        let folder = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "folder" }?.value
+        var isDir: ObjCBool = false
+        if let folder, FileManager.default.fileExists(atPath: folder, isDirectory: &isDir), isDir.boolValue {
+            NSWorkspace.shared.open([URL(fileURLWithPath: folder)], withApplicationAt: app, configuration: cfg)
+        } else {
+            NSWorkspace.shared.openApplication(at: app, configuration: cfg)
+        }
+        return
+    }
     // "mochi-app://<bundle id>": an app that has no link to the one item, so it is brought to the front
     if url.scheme == "mochi-app", let bundle = url.host {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return }
@@ -926,65 +940,66 @@ final class AgentsBoxView: NSView {
         return Array(rows.filter { (filter == nil || $0.app == filter) && (!hide.contains($0.key) || undoKeys.contains($0.key)) }.prefix(limit))
     }
 
+    /// One header line (title, filters, hidden count, Refresh), then one list: running first in blue, a thin line,
+    /// what is still to come today, then the last 24 hours. Empty parts never show
     @discardableResult
     private func render(draw: Bool) -> CGFloat {
         rowItems = []
         actionHits = []
-        var y: CGFloat = 14
-        drawLine("Agents and schedules", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.7, draw: draw)
+        var y: CGFloat = 12
+        let titleW = drawLine("Agents", .systemFont(ofSize: 13.5, weight: .semibold), .labelColor, x: pad, y: y + 2, width: 80, draw: draw)
         if showingHidden { return renderHidden(from: y + 28, draw: draw) }
-        let running = shown(snapshot.running, limit: 99).count
-        if running > 0 {
-            let chipFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            let text = "\(running) running"
-            let w = drawLine(text, chipFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 14
-            let chip = NSRect(x: pad + inner - w, y: y, width: w, height: 18)
-            if draw {
-                NSColor(hex: 0x1C7ED6).withAlphaComponent(0.15).setFill()
-                NSBezierPath(roundedRect: chip, xRadius: 9, yRadius: 9).fill()
-            }
-            drawLine(text, chipFont, NSColor(hex: 0x1C7ED6), x: chip.minX, y: y + 1, width: w, align: .center, draw: draw)
-        }
-        y += 26
-        // The filters: All, Claude, Cursor, Kiro
+        // The filters: All, then each app's badge
         filterRects = []
-        var x = pad
+        var x = pad + titleW + 8
         let chipFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        for (name, app) in [("All", nil), ("Claude", AutomationApp.claude), ("Cursor", .cursor), ("Kiro", .kiro)] as [(String, AutomationApp?)] {
-            let textW = drawLine(name, chipFont, .labelColor, x: 0, y: 0, width: 0, draw: false)
-            let w = textW + (app == nil ? 16 : 32)
-            let rect = NSRect(x: x, y: y, width: w, height: 20)
+        for app in [nil, AutomationApp.claude, .cursor, .kiro] as [AutomationApp?] {
+            let w: CGFloat = app == nil ? drawLine("All", chipFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 14 : 24
+            let rect = NSRect(x: x, y: y + 1, width: w, height: 20)
             let on = filter == app
             if draw {
                 (on ? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.07)).setFill()
-                NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
-                if let app { drawAppBadge(app, in: NSRect(x: x + 7, y: y + 4, width: 12, height: 12)) }
+                NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+                if let app { drawAppBadge(app, in: NSRect(x: rect.midX - 6, y: rect.midY - 6, width: 12, height: 12)) }
             }
-            drawLine(name, chipFont, on ? .windowBackgroundColor : .labelColor, x: x + (app == nil ? 8 : 24), y: y + 2, width: textW + 2, draw: draw)
+            if app == nil { drawLine("All", chipFont, on ? .windowBackgroundColor : .labelColor, x: rect.minX, y: y + 3, width: w, align: .center, draw: draw) }
             filterRects.append((rect, app))
-            x += w + 6
+            x += w + 4
         }
-        y += 30
-        y = section("Running now", nil, shown(snapshot.running, limit: 6), empty: "Nothing is running", y: y, draw: draw)
-        y = section("Coming up", "today", shown(snapshot.upcoming, limit: 6), empty: "Nothing else today", y: y, draw: draw)
-        y = section("Recent", "last 24 h", shown(snapshot.recent, limit: 6), empty: "Nothing in the last day", y: y, draw: draw)
-        // One line for what you hid
+        // Refresh as an icon on the right, the hidden count just before it
+        refreshRect = NSRect(x: pad + inner - 22, y: y, width: 22, height: 22)
+        if draw {
+            NSColor.labelColor.withAlphaComponent(0.06).setFill()
+            NSBezierPath(roundedRect: refreshRect, xRadius: 6, yRadius: 6).fill()
+            drawSymbol("arrow.clockwise", in: refreshRect, color: .secondaryLabelColor, size: 11)
+        }
         let hiddenCount = hiddenItems.filter { filter == nil || automationApp($0.app) == filter }.count
         if hiddenCount > 0 {
-            if draw {
-                NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+            linkText("\(hiddenCount) hidden", action: .showHidden, key: "", rightEdge: refreshRect.minX - 8, y: y + 4, draw: draw, size: 11)
+        }
+        y += 30
+        // The last 24 hours: scheduled runs and agents that finished, newest first, each once
+        var seen = Set<String>()
+        let past = (snapshot.recent + snapshot.agentRuns.filter { $0.tone != .running }).sorted { $0.at > $1.at }.filter { seen.insert($0.key + "|\($0.at.timeIntervalSince1970)").inserted }
+        let groups = [shown(snapshot.running, limit: 6), shown(snapshot.upcoming, limit: 6), shown(past, limit: 8)].filter { !$0.isEmpty }
+        if groups.isEmpty {
+            drawLine("Nothing in the last 24 hours", .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+            y += 22
+        }
+        for (index, rows) in groups.enumerated() {
+            if index > 0 {
+                if draw {
+                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                    NSRect(x: pad, y: y + 2, width: inner, height: 0.5).fill()
+                }
+                y += 6
             }
-            drawLine("\(hiddenCount) hidden", .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad, y: y + 7, width: inner * 0.6, draw: draw)
-            linkText("Show", action: .showHidden, key: "", rightEdge: pad + inner, y: y + 7, draw: draw)
-            y += 28
+            for row in rows { y = drawRow(row, y: y, draw: draw) }
         }
         y += 4
-        let foot = checkedAt.map { "Checked " + shortWhen($0, now: now) } ?? "Checking…"
-        drawLine(foot, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
-        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
-        drawButton(refreshRect, "Refresh", filled: false, draw: draw)
-        return y + 30
+        let checked = checkedAt.map { "checked " + shortWhen($0, now: now) } ?? "checking…"
+        drawLine("Last 24 h · " + checked, .systemFont(ofSize: 10.5), .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
+        return y + 24
     }
 
     /// The Hidden list: everything you hid, each with Show, then Show all
@@ -1051,90 +1066,81 @@ final class AgentsBoxView: NSView {
         automationIcons(link: row.link, key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused, canRunKiroCrew: canRunKiroCrew)
     }
 
-    private func section(_ title: String, _ note: String?, _ rows: [AutomationRow], empty: String, y start: CGFloat, draw: Bool) -> CGFloat {
-        var y = start
-        drawLine(title, .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner * 0.6, draw: draw)
-        if let note { drawLine(note, .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw) }
-        y += 18
-        if rows.isEmpty {
-            drawLine(empty, .systemFont(ofSize: 12), .tertiaryLabelColor, x: pad, y: y + 4, width: inner, draw: draw)
-            return y + 28
-        }
-        for row in rows {
-            let rect = NSRect(x: pad, y: y, width: inner, height: 40)
+    /// What kind of run a row is, in a word or two; scheduled tasks show none
+    private func kind(of row: AutomationRow) -> String? {
+        ["Agent": "agent", "Subagent": "subagent", "Cloud agent": "cloud agent", "Kiro Crew": "kiro crew"][row.detail]
+    }
+
+    /// One row on one line: badge, title, kind, and the time or state on the right. Pointing at it swaps the right side
+    /// for its actions; a hidden row offers Undo; Delete asks in the row
+    private func drawRow(_ row: AutomationRow, y start: CGFloat, draw: Bool) -> CGFloat {
+        let y = start
+        let rect = NSRect(x: pad, y: y, width: inner, height: 24)
+        if undoKeys.contains(row.key) {
             if draw {
-                NSColor.labelColor.withAlphaComponent(0.06).setFill()
-                NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+                NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
             }
-            // Just hiddenItems: the row becomes its own Undo for a few seconds
-            if undoKeys.contains(row.key) {
-                if draw {
-                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
-                    NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 3), xRadius: 8, yRadius: 8).fill()
-                }
-                drawLine("Hidden from Mochi", .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 4, y: y + 12, width: inner * 0.7, draw: draw)
-                linkText("Undo", action: .undo, key: row.key, rightEdge: pad + inner - 4, y: y + 12, draw: draw, size: 12)
-                y += 40
-                continue
-            }
-            // Delete asks in the row
-            if confirmKey == row.key {
-                let box = rect.insetBy(dx: -6, dy: 3)
-                if draw {
-                    NSColor(hex: 0xE03131).withAlphaComponent(0.07).setFill()
-                    NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
-                    NSColor(hex: 0xE03131).withAlphaComponent(0.25).setStroke()
-                    let edge = NSBezierPath(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
-                    edge.lineWidth = 1
-                    edge.stroke()
-                    drawAppBadge(row.app, in: NSRect(x: pad, y: y + 11, width: 18, height: 18))
-                }
-                drawLine("Delete in Kiro Crew?", .systemFont(ofSize: 12), .labelColor, x: pad + 28, y: y + 12, width: inner - 160, draw: draw)
-                let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-                let deleteRect = NSRect(x: pad + inner - 58, y: y + 9, width: 56, height: 22)
-                let cancelRect = NSRect(x: deleteRect.minX - 64, y: y + 9, width: 58, height: 22)
-                if draw {
-                    NSColor(hex: 0xE03131).setFill()
-                    NSBezierPath(roundedRect: deleteRect, xRadius: 6, yRadius: 6).fill()
-                    NSColor.labelColor.withAlphaComponent(0.08).setFill()
-                    NSBezierPath(roundedRect: cancelRect, xRadius: 6, yRadius: 6).fill()
-                }
-                drawLine("Delete", font, .white, x: deleteRect.minX, y: deleteRect.minY + 3, width: deleteRect.width, align: .center, draw: draw)
-                drawLine("Cancel", font, .labelColor, x: cancelRect.minX, y: cancelRect.minY + 3, width: cancelRect.width, align: .center, draw: draw)
-                actionHits.append((deleteRect, .delete, row.key))
-                actionHits.append((cancelRect, .cancelDelete, row.key))
-                y += 40
-                continue
-            }
-            let hovered = hoveredKey == row.key
-            let icons = hovered ? actions(for: row) : []
-            if draw {
-                if hovered {
-                    NSColor.labelColor.withAlphaComponent(0.05).setFill()
-                    NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 2), xRadius: 8, yRadius: 8).fill()
-                }
-                drawAppBadge(row.app, in: NSRect(x: pad, y: y + 11, width: 18, height: 18))
-            }
-            let rightFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-            let rightW = icons.isEmpty ? drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2 : CGFloat(icons.count) * 26
-            let titleWidth = drawLine(clip(row.title, 40), .systemFont(ofSize: 12.5, weight: .semibold), .labelColor, x: pad + 28, y: y + 5, width: inner - 36 - rightW, draw: draw)
-            if draw, hovered, row.link != nil {
-                underline(from: pad + 28, width: min(titleWidth, inner - 36 - rightW), y: y + 20, color: .labelColor)
-            }
-            drawLine(row.detail, .systemFont(ofSize: 11), .secondaryLabelColor, x: pad + 28, y: y + 21, width: inner - 36 - rightW, draw: draw)
-            if icons.isEmpty {
-                drawLine(row.right, rightFont, automationToneColor(row.tone), x: pad + inner - rightW, y: y + 12, width: rightW, align: .right, draw: draw)
-            } else {
-                var ix = pad + inner - CGFloat(icons.count) * 26 + 2
-                for (symbol, action, red) in icons {
-                    icon(symbol, action: action, key: row.key, x: ix, y: y + 8, draw: draw, red: red)
-                    ix += 26
-                }
-            }
-            rowItems.append((rect, row.key, row.link))
-            y += 40
+            drawLine("Hidden from Mochi", .systemFont(ofSize: 12), .secondaryLabelColor, x: pad + 4, y: y + 5, width: inner * 0.7, draw: draw)
+            linkText("Undo", action: .undo, key: row.key, rightEdge: pad + inner - 4, y: y + 5, draw: draw, size: 12)
+            return y + 24
         }
-        return y + 4
+        if confirmKey == row.key {
+            let box = rect.insetBy(dx: -6, dy: 0)
+            if draw {
+                NSColor(hex: 0xE03131).withAlphaComponent(0.07).setFill()
+                NSBezierPath(roundedRect: box, xRadius: 7, yRadius: 7).fill()
+                drawAppBadge(row.app, in: NSRect(x: pad, y: y + 4.5, width: 15, height: 15))
+            }
+            drawLine("Delete in Kiro Crew?", .systemFont(ofSize: 12), .labelColor, x: pad + 23, y: y + 5, width: inner - 150, draw: draw)
+            let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+            let deleteRect = NSRect(x: pad + inner - 52, y: y + 2, width: 50, height: 20)
+            let cancelRect = NSRect(x: deleteRect.minX - 58, y: y + 2, width: 52, height: 20)
+            if draw {
+                NSColor(hex: 0xE03131).setFill()
+                NSBezierPath(roundedRect: deleteRect, xRadius: 6, yRadius: 6).fill()
+                NSColor.labelColor.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: cancelRect, xRadius: 6, yRadius: 6).fill()
+            }
+            drawLine("Delete", font, .white, x: deleteRect.minX, y: deleteRect.minY + 3, width: deleteRect.width, align: .center, draw: draw)
+            drawLine("Cancel", font, .labelColor, x: cancelRect.minX, y: cancelRect.minY + 3, width: cancelRect.width, align: .center, draw: draw)
+            actionHits.append((deleteRect, .delete, row.key))
+            actionHits.append((cancelRect, .cancelDelete, row.key))
+            return y + 24
+        }
+        let hovered = hoveredKey == row.key
+        let icons = hovered ? actions(for: row) : []
+        if draw {
+            if hovered {
+                NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
+            }
+            drawAppBadge(row.app, in: NSRect(x: pad, y: y + 4.5, width: 15, height: 15))
+        }
+        let rightFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let rightW = icons.isEmpty ? drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2 : CGFloat(icons.count) * 24
+        let kindText = kind(of: row)
+        let kindFont = NSFont.systemFont(ofSize: 10.5)
+        let kindW = kindText.map { drawLine($0, kindFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 10 } ?? 0
+        let titleRoom = inner - 23 - rightW - kindW - 6
+        let titleW = drawLine(row.title, .systemFont(ofSize: 12, weight: .semibold), .labelColor, x: pad + 23, y: y + 4, width: titleRoom, draw: draw)
+        if draw, hovered, row.link != nil {
+            underline(from: pad + 23, width: min(titleW, titleRoom), y: y + 19, color: .labelColor)
+        }
+        if let kindText {
+            drawLine(kindText, kindFont, .tertiaryLabelColor, x: pad + inner - rightW - kindW, y: y + 5.5, width: kindW - 6, align: .right, draw: draw)
+        }
+        if icons.isEmpty {
+            drawLine(row.right, rightFont, automationToneColor(row.tone), x: pad + inner - rightW, y: y + 5, width: rightW, align: .right, draw: draw)
+        } else {
+            var ix = pad + inner - CGFloat(icons.count) * 24 + 2
+            for (symbol, action, red) in icons {
+                icon(symbol, action: action, key: row.key, x: ix, y: y, draw: draw, red: red)
+                ix += 24
+            }
+        }
+        rowItems.append((rect, row.key, row.link))
+        return y + 24
     }
 
     override func updateTrackingAreas() {
@@ -1715,7 +1721,8 @@ final class MochiView: NSView {
         guard !rows.isEmpty else { return }
 
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        let gap: CGFloat = 4
+        var gap: CGFloat = 4
+        var pillPad: CGFloat = 16
         func bitWidth(_ bit: Bit) -> CGFloat {
             switch bit {
             case .spark, .battery: return 16
@@ -1727,8 +1734,21 @@ final class MochiView: NSView {
         func rowWidth(_ row: [Bit]) -> CGFloat {
             row.reduce(0) { $0 + bitWidth($1) } + gap * CGFloat(max(0, row.count - 1))
         }
+        // Kiro and Cursor together: one row with the battery, the % signs left out and the spacing tighter, as long as it
+        // fits her width. Each number sits after its app's mark, so no dot is needed between them
+        if showsBoth, let kiroUsage, let cursorUsage, let power {
+            let one: [Bit] = [.ghost, .text("\(kiroUsage.usedPercent)"), .cube, .text("\(cursorUsage.percent)"),
+                              .battery(power.percent), .text("\(power.percent)")]
+            gap = 3
+            if rowWidth(one) + 12 <= bounds.width - 6 {
+                rows = [one]
+                pillPad = 12
+            } else {
+                gap = 4
+            }
+        }
         let lineHeight: CGFloat = 16
-        let width = min(bounds.width - 6, (rows.map(rowWidth).max() ?? 0) + 16)
+        let width = min(bounds.width - 6, (rows.map(rowWidth).max() ?? 0) + pillPad)
         let height = lineHeight * CGFloat(rows.count) + 8
         let pill = NSRect(x: (bounds.width - width) / 2, y: 8, width: width, height: height)
         usagePill = pill
@@ -2525,22 +2545,14 @@ final class UsagePanelView: NSView {
         }
 
         let worst = shownUsage.map { max($0.fiveHour, $0.week) } ?? shownCursor?.percent ?? power.map { 100 - $0.percent } ?? 0
-        let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
         let title = host == .cursor ? "Cursor" : "Claude"
-        let titleW = drawLine(title, titleFont, .labelColor, x: pad, y: y, width: inner * 0.4, draw: draw)
+        if draw { drawAppBadge(host == .cursor ? .cursor : .claude, in: NSRect(x: pad, y: y + 1, width: 15, height: 15)) }
+        let titleW = drawLine(title, .systemFont(ofSize: 13, weight: .semibold), .labelColor, x: pad + 21, y: y, width: inner * 0.4, draw: draw)
         if host == .cursor, let plan = shownCursor?.plan, plan != "Cursor" {
-            drawLine(plan, .systemFont(ofSize: 12, weight: .medium), .secondaryLabelColor, x: pad + titleW + 6, y: y + 1, width: 100, draw: draw)
+            drawLine(plan, .systemFont(ofSize: 12, weight: .medium), .secondaryLabelColor, x: pad + 21 + titleW + 6, y: y + 1, width: 100, draw: draw)
         }
         let state = usageState(worst: worst)
-        let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
-        let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
-        if draw {
-            Usage.color(worst).withAlphaComponent(0.15).setFill()
-            NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
-        }
-        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
-        y += 26
+        y += 24
 
         if let usage = shownUsage {
             y = drawUsageMeterRow(name: "5-hour", percent: usage.fiveHour, time: Usage.until(usage.fiveHourResets) ?? "",
@@ -2556,7 +2568,7 @@ final class UsagePanelView: NSView {
             y += 22
         }
         if let power {
-            y = drawUsageMeterRow(name: "Power", percent: power.percent, time: power.minutes.map(powerClock) ?? "",
+            y = drawUsageMeterRow(name: "Power", percent: power.percent, time: power.minutes.map(shortPowerClock) ?? "",
                                   color: Usage.color(100 - power.percent), x: pad, y: y, width: inner, draw: draw) + 6
         }
         if progress.count >= 2 {
@@ -2566,30 +2578,35 @@ final class UsagePanelView: NSView {
             y = drawUsageGraphBlock(points: progress, host: host, x: pad, y: y, width: inner, draw: draw, title: title) + 8
         }
 
-        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
-        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
-        drawButton(refreshRect, checking ? "Checking…" : "Refresh", filled: false, draw: draw)
-        return y + 26
+        return drawStateLine(state: state, worst: worst, y: y, pad: pad, inner: inner, draw: draw)
+    }
+    /// The box's last line: the state in its colour, when it was read, and Refresh as an icon
+    private func drawStateLine(state: String, worst: Int, y: CGFloat, pad: CGFloat, inner: CGFloat, draw: Bool) -> CGFloat {
+        let prefixes = ["Checked ", "Last read ", "Updated "]
+        let known = prefixes.contains { footnote.hasPrefix($0) }
+        let when = prefixes.reduce(footnote) { text, prefix in text.hasPrefix(prefix) ? String(text.dropFirst(prefix.count)) : text }
+        let stateW = drawLine(checking ? "Checking…" : state, .systemFont(ofSize: 11.5, weight: .semibold),
+                              checking ? .secondaryLabelColor : Usage.color(worst), x: pad, y: y + 3, width: inner - 40, draw: draw)
+        if !checking, !when.isEmpty {
+            drawLine("· " + (known ? when : footnote), .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad + stateW + 4, y: y + 3,
+                     width: inner - stateW - 44, draw: draw)
+        }
+        refreshRect = NSRect(x: pad + inner - 22, y: y, width: 22, height: 22)
+        if draw {
+            NSColor.labelColor.withAlphaComponent(0.06).setFill()
+            NSBezierPath(roundedRect: refreshRect, xRadius: 6, yRadius: 6).fill()
+            drawSymbol("arrow.clockwise", in: refreshRect, color: .secondaryLabelColor, size: 11)
+        }
+        return y + 30
     }
 
-    /// Kiro's box: one "Usage" header, then a row each for Kiro, Cursor (when open too) and the battery, all on the same columns
+    /// Kiro's box: a row each for Kiro, Cursor (when open too) and the battery, all on the same columns, then the state line
     private func renderKiro(_ kiro: KiroUsage, draw: Bool) -> CGFloat {
         let pad: CGFloat = 12
         let inner = Self.width - pad * 2
-        var y: CGFloat = 8
+        var y: CGFloat = 10
         let used = kiro.usedPercent
         let worst = max(used, kiroCursor?.percent ?? 0)
-        drawLine("Usage", .systemFont(ofSize: 14, weight: .semibold), .labelColor, x: pad, y: y, width: inner * 0.5, draw: draw)
-        let pillFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        let state = usageState(worst: worst)
-        let textWidth = drawLine(state, pillFont, Usage.color(worst), x: 0, y: 0, width: 0, draw: false)
-        let pill = NSRect(x: pad + inner - textWidth - 14, y: y, width: textWidth + 14, height: 18)
-        if draw {
-            Usage.color(worst).withAlphaComponent(0.15).setFill()
-            NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
-        }
-        drawLine(state, pillFont, Usage.color(worst), x: pill.minX, y: y + 1, width: pill.width, align: .center, draw: draw)
-        y += 24
         let days = kiro.daysLeft().map { "\($0) d" } ?? ""
         y = drawKiroMeterRow(name: "Kiro", value: kiro.leftText, fraction: kiro.limit > 0 ? kiro.left / kiro.limit : 0, time: days,
                              color: Usage.color(used), x: pad, y: y, width: inner, draw: draw)
@@ -2600,14 +2617,10 @@ final class UsagePanelView: NSView {
         }
         if let power {
             y = drawKiroMeterRow(name: "Power", value: "\(power.percent)%", fraction: Double(power.percent) / 100,
-                                 time: power.minutes.map(powerClock) ?? "", color: Usage.color(100 - power.percent),
+                                 time: power.minutes.map(shortPowerClock) ?? "", color: Usage.color(100 - power.percent),
                                  x: pad, y: y, width: inner, draw: draw)
         }
-        y += 4
-        drawLine(footnote, .systemFont(ofSize: 12), .secondaryLabelColor, x: pad, y: y + 2, width: inner - 80, draw: draw)
-        refreshRect = NSRect(x: pad + inner - 72, y: y, width: 72, height: 20)
-        drawButton(refreshRect, checking ? "Checking…" : "Refresh", filled: false, draw: draw)
-        return y + 26
+        return drawStateLine(state: usageState(worst: worst), worst: worst, y: y, pad: pad, inner: inner, draw: draw)
     }
     // A click on Refresh asks for a fresh reading; anywhere else closes the box.
     // The click that opened the box is ignored, so it can stay up long enough to read.
@@ -2651,13 +2664,210 @@ final class BriefView: NSView {
     var confirmKey: String?
     var canRunKiroCrew = false
     var onAction: ((AutomationAction, String) -> Void)?
+    /// "All chats" in the compact brief's Latest heading
+    var onAllChats: (() -> Void)?
+    private var allChatsRect = NSRect.zero
     /// The top-chat rows that open a chat, and the one under the pointer
 
     /// Duet's plum for small labels, lighter in Dark mode so it still reads on the glass
     private var duetPlum: NSColor { adaptiveColor(NSColor(hex: 0x9C6B84), NSColor(hex: 0xD9A9BE)) }
 
     @discardableResult
+    /// The compact morning brief: greeting and date on one line, the day's numbers on the next, then Today and Latest
+    private func renderCompact(draw: Bool) -> CGFloat {
+        let pad: CGFloat = 18
+        let inner = Self.width - pad * 2
+        var y: CGFloat = 14
+        scheduleItems = []
+        actionHits = []
+        latestHits = []
+        allChatsRect = .zero
+        let title = content.title.hasSuffix(".") ? String(content.title.dropLast()) : content.title
+        drawLine(title, .systemFont(ofSize: 18, weight: .semibold), .labelColor, x: pad, y: y, width: inner - 150, draw: draw)
+        drawLine(content.date, .systemFont(ofSize: 11, weight: .semibold), duetPlum, x: pad, y: y + 6, width: inner - 58, align: .right, draw: draw)
+        drawPinAndCross(draw: draw)
+        y += 30
+        var x = pad
+        var numbers: [(String, String)] = []
+        if let working = content.workingToday {
+            numbers.append((clockText(working), "working"))
+            if content.waitingToday > 0 { numbers.append((clockText(content.waitingToday), "waiting")) }
+        }
+        numbers += content.stats.map { ($0.value, $0.label.lowercased()) }
+        let valueFont = NSFont.systemFont(ofSize: 13, weight: .semibold), labelFont = NSFont.systemFont(ofSize: 12)
+        for (value, label) in numbers {
+            let vw = drawLine(value, valueFont, .labelColor, x: 0, y: 0, width: 0, draw: false)
+            let lw = drawLine(label, labelFont, .labelColor, x: 0, y: 0, width: 0, draw: false)
+            if x > pad, x + vw + 4 + lw > pad + inner { x = pad; y += 20 }
+            drawLine(value, valueFont, .labelColor, x: x, y: y, width: vw + 2, draw: draw)
+            drawLine(label, labelFont, .secondaryLabelColor, x: x + vw + 4, y: y + 1, width: lw + 2, draw: draw)
+            x += vw + 4 + lw + 14
+        }
+        y += 24
+        if draw {
+            NSColor.labelColor.withAlphaComponent(0.1).setFill()
+            NSRect(x: pad, y: y, width: inner, height: 0.5).fill()
+        }
+        y += 8
+        if !content.today.isEmpty || content.hiddenCount > 0 {
+            drawLine("Today", .systemFont(ofSize: 11, weight: .semibold), duetPlum, x: pad, y: y, width: inner / 2, draw: draw)
+            if content.hiddenCount > 0 {
+                briefLink("\(content.hiddenCount) hidden", action: .showHidden, key: "", rightEdge: pad + inner, y: y - 1, draw: draw)
+            }
+            y += 18
+            for (i, row) in content.today.enumerated() {
+                y = drawCompactRow(row, id: "t\(i)|\(row.key)|\(row.left)", y: y, draw: draw)
+            }
+            y += 6
+        }
+        if !content.week.isEmpty, content.week.contains(where: { $0.seconds > 0 }) {
+            y = drawCompactWeek(y: y, draw: draw) + 6
+        }
+        if !content.latest.isEmpty {
+            drawLine("Latest", .systemFont(ofSize: 11, weight: .semibold), duetPlum, x: pad, y: y, width: inner / 2, draw: draw)
+            let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            let w = drawLine("All chats", font, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2
+            drawLine("All chats", font, .linkColor, x: pad + inner - w, y: y, width: w, align: .right, draw: draw)
+            allChatsRect = NSRect(x: pad + inner - w - 6, y: y - 3, width: w + 12, height: 20)
+            y += 18
+            for row in content.latest {
+                let rect = NSRect(x: pad, y: y - 2, width: inner, height: 21)
+                let isHovered = row.link != nil && hovered == latestHits.count
+                if draw, let app = row.app { drawAppBadge(app, in: NSRect(x: pad + 1, y: y + 1, width: 15, height: 15)) }
+                let rightFont = NSFont.systemFont(ofSize: 11)
+                let rightW = drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2
+                let nameW = drawLine(row.left, .systemFont(ofSize: 12), .labelColor, x: pad + 24, y: y, width: inner - 28 - rightW, draw: draw)
+                if draw, isHovered { underline(from: pad + 24, width: min(nameW, inner - 28 - rightW), y: y + 16, color: .labelColor) }
+                drawLine(row.right, rightFont, .secondaryLabelColor, x: pad + inner - rightW, y: y + 1, width: rightW, align: .right, draw: draw)
+                if let link = row.link { latestHits.append((rect, link)) }
+                y += 21
+            }
+        }
+        if let footer = content.footer {
+            drawLine(footer, .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad, y: y + 4, width: inner, draw: draw)
+            y += 22
+        }
+        return y + 10
+    }
+
+    /// The wrap-up's week in a short chart: each day's working time, Claude, Cursor and Kiro stacked, today darker
+    private func drawCompactWeek(y start: CGFloat, draw: Bool) -> CGFloat {
+        let pad: CGFloat = 18
+        let inner = Self.width - pad * 2
+        var y = start
+        drawLine("This week", .systemFont(ofSize: 11, weight: .semibold), duetPlum, x: pad, y: y, width: inner / 2, draw: draw)
+        let total = content.week.reduce(0) { $0 + $1.seconds }
+        drawLine(clockText(total), .systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor, x: pad, y: y, width: inner, align: .right, draw: draw)
+        y += 18
+        let barArea: CGFloat = 34
+        let slot = inner / CGFloat(content.week.count)
+        let peak = max(1, content.week.map(\.seconds).max() ?? 1)
+        let baseY = y + barArea
+        for (i, bar) in content.week.enumerated() {
+            let x = pad + CGFloat(i) * slot
+            let height = bar.seconds > 0 ? max(3, CGFloat(bar.seconds) / CGFloat(peak) * barArea) : 0
+            if draw, height > 0 {
+                let barX = x + slot * 0.25, barW = slot * 0.5
+                var top = baseY
+                for (seconds, color) in [(bar.claudeSeconds, NSColor(hex: 0xD97757)), (bar.cursorSeconds, NSColor(hex: 0x1E1E1E)), (bar.kiroSeconds, NSColor(hex: 0x7C4DFF))] where seconds > 0 {
+                    let h = height * CGFloat(seconds) / CGFloat(max(1, bar.seconds))
+                    top -= h
+                    color.withAlphaComponent(bar.isToday ? 1 : 0.55).setFill()
+                    NSRect(x: barX, y: top, width: barW, height: h).fill()
+                }
+            }
+            drawLine(String(bar.label.prefix(1)), .systemFont(ofSize: 10, weight: bar.isToday ? .semibold : .regular),
+                     bar.isToday ? .labelColor : .tertiaryLabelColor, x: x, y: baseY + 2, width: slot, align: .center, draw: draw)
+        }
+        return baseY + 16
+    }
+
+    /// One row of the compact Today list: hover shows its actions, a hidden row offers Undo, and Delete asks in the row
+    private func drawCompactRow(_ row: BriefRow, id: String, y start: CGFloat, draw: Bool) -> CGFloat {
+        let pad: CGFloat = 18
+        let inner = Self.width - pad * 2
+        let y = start
+        let rowRect = NSRect(x: pad, y: y - 2, width: inner, height: 21)
+        if !row.key.isEmpty, undoKeys.contains(row.key) {
+            if draw {
+                NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                NSBezierPath(roundedRect: rowRect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
+            }
+            drawLine("Hidden from Mochi", .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad + 2, y: y, width: inner * 0.7, draw: draw)
+            briefLink("Undo", action: .undo, key: row.key, rightEdge: pad + inner - 2, y: y, draw: draw)
+            return y + 21
+        }
+        if !row.key.isEmpty, confirmKey == row.key {
+            if draw {
+                NSColor(hex: 0xE03131).withAlphaComponent(0.07).setFill()
+                NSBezierPath(roundedRect: rowRect.insetBy(dx: -6, dy: -1), xRadius: 7, yRadius: 7).fill()
+                if let app = row.app { drawAppBadge(app, in: NSRect(x: pad + 1, y: y + 1, width: 15, height: 15)) }
+            }
+            drawLine("Delete in Kiro Crew?", .systemFont(ofSize: 12), .labelColor, x: pad + 24, y: y, width: inner - 150, draw: draw)
+            let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+            let deleteRect = NSRect(x: pad + inner - 52, y: y - 2, width: 50, height: 19)
+            let cancelRect = NSRect(x: deleteRect.minX - 58, y: y - 2, width: 52, height: 19)
+            if draw {
+                NSColor(hex: 0xE03131).setFill()
+                NSBezierPath(roundedRect: deleteRect, xRadius: 6, yRadius: 6).fill()
+                NSColor.labelColor.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: cancelRect, xRadius: 6, yRadius: 6).fill()
+            }
+            drawLine("Delete", font, .white, x: deleteRect.minX, y: deleteRect.minY + 2, width: deleteRect.width, align: .center, draw: draw)
+            drawLine("Cancel", font, .labelColor, x: cancelRect.minX, y: cancelRect.minY + 2, width: cancelRect.width, align: .center, draw: draw)
+            actionHits.append((deleteRect, .delete, row.key))
+            actionHits.append((cancelRect, .cancelDelete, row.key))
+            return y + 21
+        }
+        let hovered = scheduleHover == id
+        let icons = hovered ? automationIcons(link: row.link, key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused,
+                                              canRunKiroCrew: canRunKiroCrew) : []
+        if draw {
+            if hovered {
+                NSColor.labelColor.withAlphaComponent(0.05).setFill()
+                NSBezierPath(roundedRect: rowRect.insetBy(dx: -6, dy: 0), xRadius: 7, yRadius: 7).fill()
+            }
+            if let app = row.app { drawAppBadge(app, in: NSRect(x: pad + 1, y: y + 1, width: 15, height: 15)) }
+        }
+        let rightFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let rightW = icons.isEmpty ? drawLine(row.right, rightFont, .labelColor, x: 0, y: 0, width: 0, draw: false) + 2 : CGFloat(icons.count) * 22
+        let nameW = drawLine(row.left, .systemFont(ofSize: 12), .labelColor, x: pad + 24, y: y, width: inner - 28 - rightW, draw: draw)
+        if draw, hovered, row.link != nil {
+            underline(from: pad + 24, width: min(nameW, inner - 28 - rightW), y: y + 16, color: .labelColor)
+        }
+        if icons.isEmpty {
+            drawLine(row.right, rightFont, row.rightColor ?? .secondaryLabelColor, x: pad + inner - rightW, y: y + 1, width: rightW, align: .right, draw: draw)
+        } else {
+            var ix = pad + inner - CGFloat(icons.count) * 22 + 2
+            for (symbol, action, red) in icons {
+                let rect = NSRect(x: ix, y: y - 2, width: 20, height: 20)
+                if draw { drawSymbol(symbol, in: rect, color: red ? NSColor(hex: 0xE03131) : .secondaryLabelColor, size: 11) }
+                actionHits.append((rect, action, row.key))
+                ix += 22
+            }
+        }
+        scheduleItems.append((rowRect, id, row.link))
+        return y + 21
+    }
+
+    private func drawPinAndCross(draw: Bool) {
+        guard draw else { return }
+        let pinColour = pinned ? (content.duet ? duetPlum : NSColor.labelColor) : NSColor.tertiaryLabelColor
+        let pinSymbol = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin", accessibilityDescription: "Keep on top")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [pinColour])))
+        pinSymbol?.draw(in: pinRect.insetBy(dx: 1, dy: 1))
+        let cross = closeRect.insetBy(dx: 3, dy: 3)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: cross.minX, y: cross.minY)); path.line(to: NSPoint(x: cross.maxX, y: cross.maxY))
+        path.move(to: NSPoint(x: cross.maxX, y: cross.minY)); path.line(to: NSPoint(x: cross.minX, y: cross.maxY))
+        path.lineWidth = 1.6
+        (content.duet ? duetPlum : NSColor.secondaryLabelColor).setStroke()
+        path.stroke()
+    }
+
     private func render(draw: Bool) -> CGFloat {
+        if content.compact { return renderCompact(draw: draw) }
         let pad: CGFloat = 18
         let inner = Self.width - pad * 2
         var y: CGFloat = 16
@@ -2718,7 +2928,20 @@ final class BriefView: NSView {
         // The morning's schedule from Claude and Kiro, then what was missed
         scheduleItems = []
         actionHits = []
-        for (index, (title, rows)) in [("Today's schedule", content.schedule), ("Missed in the last day", content.missed)].enumerated() where !rows.isEmpty {
+        let scheduleSections = [("Today's schedule", content.schedule), ("Agent runs · last 24 h", content.agentRuns), ("Missed in the last day", content.missed)]
+        for (index, (title, rows)) in scheduleSections.enumerated() {
+            // Under the schedule: how many you hid, so they never just vanish
+            if index == 1, content.hiddenCount > 0 {
+                if draw {
+                    NSColor.labelColor.withAlphaComponent(0.1).setFill()
+                    NSRect(x: pad, y: y - 4, width: inner, height: 0.5).fill()
+                }
+                drawLine("\(content.hiddenCount) hidden", .systemFont(ofSize: 11.5), .secondaryLabelColor, x: pad, y: y + 2, width: inner * 0.6, draw: draw)
+                briefLink("Show", action: .showHidden, key: "", rightEdge: pad + inner, y: y + 2, draw: draw)
+                y += 26
+            }
+            // A section with nothing in it is left out
+            if rows.isEmpty { continue }
             let heading = title == "Today's schedule" ? "\(title) · \(rows.count)" : title
             drawLine(heading, .systemFont(ofSize: 12, weight: .semibold), content.duet ? duetPlum : .secondaryLabelColor, x: pad, y: y, width: inner, draw: draw)
             y += 22
@@ -2940,6 +3163,7 @@ final class BriefView: NSView {
         if closeRect.insetBy(dx: -6, dy: -6).contains(point) { onClose?(); return }
         if pinRect.insetBy(dx: -6, dy: -6).contains(point) { onPin?(); return }
         if let hit = actionHits.first(where: { $0.0.contains(point) }) { onAction?(hit.1, hit.2); return }
+        if allChatsRect.contains(point) { onAllChats?(); return }
         if let hit = latestHits.first(where: { $0.0.contains(point) }) { openChat(hit.1); return }
         if let hit = scheduleItems.first(where: { $0.0.contains(point) }), let link = hit.2 { openChat(link) }
     }
@@ -3740,7 +3964,7 @@ func agentActive(lastActivity: Date, now: Date) -> Bool {
 }
 
 /// Finds the agents Claude has run in the last six hours, newest first, from their own transcripts
-func readAgents(now: Date) -> [AgentRun] {
+func readAgents(now: Date, within: TimeInterval = 6 * 3600, limit: Int = 8) -> [AgentRun] {
     let fm = FileManager.default
     let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
     var runs: [AgentRun] = []
@@ -3750,7 +3974,7 @@ func readAgents(now: Date) -> [AgentRun] {
             let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
             for file in files where file.pathExtension == "jsonl" {
                 let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                guard now.timeIntervalSince(modified) < 6 * 3600,
+                guard now.timeIntervalSince(modified) < within,
                       let handle = FileHandle(forReadingAtPath: file.path) else { continue }
                 let head = String(data: handle.readData(ofLength: 8192), encoding: .utf8) ?? ""
                 handle.closeFile()
@@ -3761,7 +3985,7 @@ func readAgents(now: Date) -> [AgentRun] {
             }
         }
     }
-    return Array(runs.sorted { $0.lastActivity > $1.lastActivity }.prefix(8))
+    return Array(runs.sorted { $0.lastActivity > $1.lastActivity }.prefix(limit))
 }
 
 /// Whether the wrap-up may show: from 6:00 PM on
@@ -3821,6 +4045,24 @@ struct BriefContent {
     /// The morning brief's schedule for today, and the runs missed in the last day
     var schedule: [BriefRow] = []
     var missed: [BriefRow] = []
+    /// The morning brief's agent runs from the last day, and how many agents and tasks you hid from Mochi
+    var agentRuns: [BriefRow] = []
+    var hiddenCount = 0
+    /// The compact morning brief: what is running, what ran and what is to come today, in one list
+    var compact = false
+    var today: [BriefRow] = []
+    /// The wrap-up's working and waiting time today, shown on the compact numbers line
+    var workingToday: Int?
+    var waitingToday = 0
+}
+
+/// A title for a compact row: no "Cursor ·" in front, since the badge says the app, and no stray "\\n"
+func briefTitle(_ title: String) -> String {
+    var text = title.hasPrefix("Cursor · ") ? String(title.dropFirst("Cursor · ".count)) : title
+    text = text.replacingOccurrences(of: "\\n", with: " ").replacingOccurrences(of: "\n", with: " ")
+    while text.contains("  ") { text = text.replacingOccurrences(of: "  ", with: " ") }
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    return trimmed.isEmpty ? "Untitled" : trimmed
 }
 
 /// The most recently active sessions, newest first, up to the limit.
@@ -3852,7 +4094,7 @@ func latestSessions(_ chats: [Chat], limit: Int = 7) -> [Chat] {
 
 /// The morning brief ("morning") or the 6 PM wrap-up ("evening"): big numbers first, then what needs you, the week and the top chats
 func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: ResetOffer?, cursorByDay: [String: Int]? = nil, kiro: KiroBrief? = nil,
-                  automations: AutomationSnapshot? = nil) -> BriefContent {
+                  automations: AutomationSnapshot? = nil, hiddenCount: Int = 0) -> BriefContent {
     // Duet's soft pastels: rose for what needs you, blue for what runs, sage for what is done
     // Light tints in Light mode, deep tints in Dark mode, so they follow the Mac's appearance
     let red = (ink: adaptiveColor(NSColor(hex: 0x7A4658), NSColor(hex: 0xF3C9D6)), fill: adaptiveColor(NSColor(hex: 0xF6D9D5), NSColor(hex: 0x4A2E36)))
@@ -3888,6 +4130,8 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         let today = log[todayKey] ?? DayRecord()
         let todayWorking = dayWorkingTotal(on: todayKey, log: log, cursorTranscripts: transcripts, kiroByDay: kiro?.secondsByDay)
         content.headline = (clockText(todayWorking), "working today · \(clockText(waited(today))) waiting for you")
+        content.workingToday = todayWorking
+        content.waitingToday = waited(today)
         content.stats = [
             BriefStat(value: "\(today.turns)", label: "Finished", ink: plain.ink, fill: plain.fill),
             BriefStat(value: "\(today.allowed)", label: "Approvals", ink: plain.ink, fill: plain.fill),
@@ -3913,6 +4157,15 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         }
         content.schedule = automations.today.prefix(6).map { briefRow($0, detail: true) }
         content.missed = automations.missed.prefix(3).map { briefRow($0, detail: true) }
+        content.agentRuns = automations.agentRuns.prefix(5).map { row in
+            var out = briefRow(row, detail: false)
+            if row.tone == .running {
+                out = BriefRow(left: out.left, right: (row.detail == "Cloud agent" ? "Cloud · running " : "Running · ") + row.right, dot: .clear,
+                               link: row.link, app: row.app, rightColor: automationToneColor(.running), key: row.key)
+            }
+            return out
+        }
+        content.hiddenCount = hiddenCount
     }
     content.latest = latestSessions(chats).map { chat in
         BriefRow(left: clip(chat.title, 26), right: "\(listStateLabel(chat.status)) · \(ago(chat.updatedAt))", dot: chat.status.color, link: chat.link, chatID: chat.id)
@@ -3925,10 +4178,84 @@ func briefContent(kind: String, chats: [Chat], log: DayLog, now: Date, offer: Re
         }
         content.latest = mergeLatestWithKiro(others, kiro: kiro.sessions)
     }
+    if kind == "morning" || kind == "evening" {
+        content.compact = true
+        content.hiddenCount = hiddenCount
+        content.today = compactToday(chats: chats, kiro: kiro, automations: automations, now: now)
+        content.latest = compactLatest(chats: chats, kiro: kiro)
+    }
     if let offer, let days = resetOfferDaysLeft(useBy: offer.useBy, now: now) {
         content.footer = "Reset offer: \(offer.count) left, \(days) day\(days == 1 ? "" : "s")"
     }
     return content
+}
+
+/// The compact brief's Today: what is running now (agents and chats, each once), then today's schedule in time order,
+/// then runs missed yesterday and agents that finished in the last day
+func compactToday(chats: [Chat], kiro: KiroBrief?, automations: AutomationSnapshot?, now: Date, limit: Int = 6) -> [BriefRow] {
+    var rows: [BriefRow] = []
+    var runningChats = chats.filter { $0.status == .running }
+    for run in automations?.agentRuns ?? [] where run.tone == .running {
+        rows.append(BriefRow(left: clip(briefTitle(run.title), 34), right: run.right, dot: .clear, link: run.link, app: run.app,
+                             rightColor: automationToneColor(.running), key: run.key))
+        // A Cursor agent working now is also a chat; it shows once, as the run
+        if run.key.hasPrefix("cursor:agent:") {
+            let id = "cursor-" + run.key.dropFirst("cursor:agent:".count)
+            runningChats.removeAll { $0.id == id }
+        }
+    }
+    for chat in runningChats {
+        rows.append(BriefRow(left: clip(briefTitle(chat.title), 34), right: "now", dot: .clear, link: chat.link,
+                             app: chat.host == .cursor ? .cursor : .claude, rightColor: automationToneColor(.running)))
+    }
+    for session in kiro?.sessions ?? [] where session.status == .running {
+        rows.append(BriefRow(left: clip(session.title, 34), right: "now", dot: .clear, link: kiroSessionLink(session), app: .kiro,
+                             rightColor: automationToneColor(.running)))
+    }
+    guard let automations else { return Array(rows.prefix(limit)) }
+    let clock = DateFormatter()
+    clock.timeStyle = .short
+    clock.dateStyle = .none
+    func scheduled(_ row: AutomationRow) -> BriefRow {
+        let time = clock.string(from: row.at)
+        let right: String
+        switch row.tone {
+        case .ok: right = time + " ✓"
+        case .missed: right = time + " Missed"
+        case .muted: right = "Paused"
+        default: right = time
+        }
+        return BriefRow(left: clip(briefTitle(row.title), 34), right: right, dot: .clear, link: row.link, app: row.app,
+                        rightColor: automationToneColor(row.tone), key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused)
+    }
+    rows += automations.today.map(scheduled)
+    let dayStart = Calendar.current.startOfDay(for: now)
+    rows += automations.missed.filter { $0.at < dayStart }.prefix(2).map { row in
+        BriefRow(left: clip(briefTitle(row.title), 34), right: shortWhen(row.at, now: now) + " Missed", dot: .clear, link: row.link,
+                 app: row.app, rightColor: automationToneColor(.missed), key: row.key, kiroJob: row.kiroJob, kiroPaused: row.kiroPaused)
+    }
+    rows += automations.agentRuns.filter { $0.tone != .running }.map { row in
+        BriefRow(left: clip(briefTitle(row.title), 34), right: shortWhen(row.at, now: now) + " ✓", dot: .clear, link: row.link,
+                 app: row.app, rightColor: automationToneColor(.ok), key: row.key)
+    }
+    return Array(rows.prefix(limit))
+}
+
+/// The compact brief's Latest: the three chats you touched last that are not running, from Claude, Cursor and Kiro
+func compactLatest(chats: [Chat], kiro: KiroBrief?, limit: Int = 3) -> [BriefRow] {
+    let idle = chats.filter { $0.status != .running }
+    let others = latestSessions(idle).map { chat in
+        (at: chat.updatedAt,
+         row: BriefRow(left: clip(briefTitle(chat.title), 34), right: ago(chat.updatedAt), dot: chat.status.color, link: chat.link,
+                       chatID: chat.id, app: chat.host == .cursor ? .cursor : .claude),
+         app: chat.host == .cursor ? 1 : 0)
+    }
+    let kiroIdle = (kiro?.sessions ?? []).filter { $0.status != .running }
+    return mergeLatestWithKiro(others, kiro: kiroIdle, limit: limit).map { row in
+        guard row.kiro else { return row }
+        let when = row.right.split(separator: "·").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? row.right
+        return BriefRow(left: clip(briefTitle(row.left), 34), right: when, dot: .clear, link: row.link, app: .kiro)
+    }
 }
 
 /// A time as words: "3h 40m", "22m", or "under a minute"
@@ -5241,12 +5568,87 @@ func readKiroCrewRuns(root: URL = kiroSessionsFolder) -> [KiroSession] {
     return found
 }
 
+/// A Cursor agent run on this Mac, from its transcript in ~/.cursor/projects: only its task line and times are read
+struct CursorAgentRun {
+    let id: String
+    let title: String
+    let started: Date
+    let lastActivity: Date
+    let isSubagent: Bool
+    let link: String
+}
+
+/// The text of a Cursor transcript's first message
+func cursorFirstMessageText(head: String) -> String {
+    guard let line = head.split(separator: "\n", maxSplits: 1).first,
+          let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+          let message = json["message"] as? [String: Any] else { return "" }
+    if let text = message["content"] as? String { return text }
+    return (message["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.first ?? ""
+}
+
+/// A run's title from its task: the task's bold heading if it has one, otherwise its first line that is not a header such as
+/// "Full Repository Path: /Users/…" or a timestamp. Markdown marks are taken out
+func cursorRunTitle(head: String, isSubagent: Bool) -> String {
+    var text = cursorFirstMessageText(head: head)
+    if let open = text.range(of: "<user_query>") {
+        let rest = text[open.upperBound...]
+        text = String(rest.range(of: "</user_query>").map { rest[..<$0.lowerBound] } ?? rest)
+    }
+    let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { line in
+        guard !line.isEmpty, !line.hasPrefix("<timestamp>") else { return false }
+        // "Key: /a/path" or "Key:" alone is a header, not the task
+        if let colon = line.firstIndex(of: ":"), line.distance(from: line.startIndex, to: colon) <= 32 {
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if value.isEmpty || value.hasPrefix("/") || value.hasPrefix("~") || value.hasPrefix("`") { return false }
+        }
+        return true
+    }
+    let pick = lines.first { $0.hasPrefix("**") && $0.hasSuffix("**") && $0.count > 4 } ?? lines.first ?? ""
+    let clean = pick.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+    return cursorQueryText(Substring(clean)) ?? (isSubagent ? "Cursor subagent" : "Cursor agent")
+}
+
+/// Cursor's agents from the last day: each agent writing now, and every subagent. Finished main agents are chats, in the chat list
+func readCursorAgentRuns(now: Date = Date(), within: TimeInterval = 86_400, root: URL = cursorProjectsFolder) -> [CursorAgentRun] {
+    let fm = FileManager.default
+    var runs: [CursorAgentRun] = []
+    for project in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+        let transcripts = project.appendingPathComponent("agent-transcripts")
+        guard let sessions = try? fm.contentsOfDirectory(at: transcripts, includingPropertiesForKeys: [.isDirectoryKey]) else { continue }
+        var workspace: String?? = nil
+        for session in sessions where (try? session.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            let id = session.lastPathComponent
+            var files: [(URL, Bool)] = [(session.appendingPathComponent("\(id).jsonl"), false)]
+            for file in (try? fm.contentsOfDirectory(at: session.appendingPathComponent("subagents"), includingPropertiesForKeys: nil)) ?? []
+            where file.pathExtension == "jsonl" { files.append((file, true)) }
+            for (file, isSubagent) in files {
+                guard let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey]),
+                      let modified = values.contentModificationDate else { continue }
+                // A main agent counts only while it is working; a subagent counts for the whole day
+                let age = now.timeIntervalSince(modified)
+                guard isSubagent ? age < within : agentActive(lastActivity: modified, now: now) else { continue }
+                if workspace == nil { workspace = .some(cursorWorkspacePath(fromProject: project.lastPathComponent)) }
+                let head = cursorTranscriptEnds(url: file, headBytes: 8192, tailBytes: 1).head
+                runs.append(CursorAgentRun(id: file.deletingPathExtension().lastPathComponent, title: cursorRunTitle(head: head, isSubagent: isSubagent),
+                                           started: values.creationDate ?? modified, lastActivity: modified, isSubagent: isSubagent,
+                                           link: cursorAgentLink(id: id, workspace: workspace ?? nil)))
+            }
+        }
+    }
+    return runs.sorted { $0.lastActivity > $1.lastActivity }
+}
+
 /// Everything read from disk for the box, refreshed in the background
 struct AutomationSources {
     var tasks: [ScheduledTask] = []
     var cloud: [CloudAgentRun] = []
     var crew: [KiroSession] = []
     var claude = ClaudeRunIndex()
+    /// Claude's agents from the last day, finished ones included, for the morning brief's Agent runs
+    var claudeAgents: [AgentRun] = []
+    /// Cursor's agents and subagents on this Mac from the last day
+    var cursorAgents: [CursorAgentRun] = []
 }
 
 func readAutomationSources() -> AutomationSources {
@@ -5256,7 +5658,8 @@ func readAutomationSources() -> AutomationSources {
         task.link = index.latestRunByTask[task.id].map(claudeSessionLink) ?? claudeAppLink
         return task
     }
-    return AutomationSources(tasks: claudeTasks + readKiroCrons(), cloud: readCursorCloudAgents(), crew: readKiroCrewRuns(), claude: index)
+    return AutomationSources(tasks: claudeTasks + readKiroCrons(), cloud: readCursorCloudAgents(), crew: readKiroCrewRuns(), claude: index,
+                             claudeAgents: readAgents(now: Date(), within: 86_400, limit: 20), cursorAgents: readCursorAgentRuns())
 }
 
 enum AutomationTone { case running, upcoming, ok, missed, muted }
@@ -5291,7 +5694,7 @@ func withoutHidden(_ snap: AutomationSnapshot, hidden: Set<String>) -> Automatio
     guard !hidden.isEmpty else { return snap }
     func keep(_ rows: [AutomationRow]) -> [AutomationRow] { rows.filter { !hidden.contains($0.key) } }
     return AutomationSnapshot(running: keep(snap.running), upcoming: keep(snap.upcoming), recent: keep(snap.recent),
-                              today: keep(snap.today), missed: keep(snap.missed))
+                              today: keep(snap.today), missed: keep(snap.missed), agentRuns: keep(snap.agentRuns))
 }
 
 /// Kiro Crew's own command line. Mochi runs it to pause, resume or delete a job, never edits Kiro Crew's files
@@ -5358,6 +5761,8 @@ struct AutomationSnapshot {
     var recent: [AutomationRow] = []
     var today: [AutomationRow] = []
     var missed: [AutomationRow] = []
+    /// Agent runs in the last day: running ones first, then finished ones, newest first
+    var agentRuns: [AutomationRow] = []
 }
 
 func automationSnapshot(sources: AutomationSources, agents: [AgentRun], now: Date, calendar: Calendar = .current) -> AutomationSnapshot {
@@ -5368,6 +5773,11 @@ func automationSnapshot(sources: AutomationSources, agents: [AgentRun], now: Dat
                                           right: elapsedText(Int(now.timeIntervalSince(run.started))), tone: .running, at: run.started,
                                           link: sources.claude.localByCli[run.session].map(claudeSessionLink) ?? claudeAppLink,
                                           key: "claude:agent:" + run.id))
+    }
+    for run in sources.cursorAgents where agentActive(lastActivity: run.lastActivity, now: now) {
+        snap.running.append(AutomationRow(app: .cursor, title: run.title, detail: run.isSubagent ? "Subagent" : "Agent",
+                                          right: elapsedText(Int(now.timeIntervalSince(run.started))), tone: .running, at: run.started,
+                                          link: run.link, key: "cursor:agent:" + run.id))
     }
     for agent in sources.cloud where now.timeIntervalSince(agent.lastActivity) < 180 {
         snap.running.append(AutomationRow(app: .cursor, title: agent.name, detail: "Cloud agent",
@@ -5443,6 +5853,25 @@ func automationSnapshot(sources: AutomationSources, agents: [AgentRun], now: Dat
     snap.today.sort { $0.at < $1.at }
     snap.recent.sort { $0.at > $1.at }
     snap.missed.sort { $0.at > $1.at }
+    // Agent runs: what is running now, then each agent that finished in the last day
+    var finished: [AutomationRow] = []
+    let runningKeys = Set(snap.running.map(\.key))
+    for run in sources.claudeAgents where !agentActive(lastActivity: run.lastActivity, now: now) && run.lastActivity >= dayAgo {
+        let key = "claude:agent:" + run.id
+        guard !runningKeys.contains(key) else { continue }
+        finished.append(AutomationRow(app: .claude, title: run.task, detail: "Agent", right: shortWhen(run.lastActivity, now: now), tone: .muted,
+                                      at: run.lastActivity, link: sources.claude.localByCli[run.session].map(claudeSessionLink) ?? claudeAppLink, key: key))
+    }
+    for run in sources.cursorAgents where run.isSubagent && !agentActive(lastActivity: run.lastActivity, now: now) && run.lastActivity >= dayAgo {
+        finished.append(AutomationRow(app: .cursor, title: run.title, detail: "Subagent", right: shortWhen(run.lastActivity, now: now), tone: .muted,
+                                      at: run.lastActivity, link: run.link, key: "cursor:agent:" + run.id))
+    }
+    for agent in sources.cloud where now.timeIntervalSince(agent.lastActivity) >= 180 && agent.lastActivity >= dayAgo {
+        finished.append(AutomationRow(app: .cursor, title: agent.name, detail: "Cloud agent", right: shortWhen(agent.lastActivity, now: now), tone: .muted,
+                                      at: agent.lastActivity, link: agent.id.isEmpty ? cursorAppLink : cursorCloudAgentLink(agent.id),
+                                      key: "cursor:cloud:" + (agent.id.isEmpty ? agent.name : agent.id)))
+    }
+    snap.agentRuns = snap.running + finished.sorted { $0.at > $1.at }
     return snap
 }
 
@@ -5481,6 +5910,18 @@ struct KiroSession {
     let status: Status
     let updatedAt: Date
     let folder: URL
+    /// The project the chat ran in, so a click can open it in Kiro
+    var workspace: String? = nil
+}
+
+/// Kiro has no link to one chat, so a click opens the chat's project in Kiro; with no project, it brings Kiro forward
+func kiroSessionLink(_ session: KiroSession) -> String {
+    guard let workspace = session.workspace, !workspace.isEmpty else { return "mochi-app://" + kiroBundleID }
+    var parts = URLComponents()
+    parts.scheme = "mochi-kiro"
+    parts.host = "open"
+    parts.queryItems = [URLQueryItem(name: "folder", value: workspace)]
+    return parts.url?.absoluteString ?? "mochi-app://" + kiroBundleID
 }
 
 /// Kiro's states, in Mochi's words. Nil for a session that was never used
@@ -5518,7 +5959,8 @@ func readKiroSessions(root: URL = kiroSessionsFolder) -> [KiroSession] {
                   let status = kiroStatus(raw),
                   let updated = (json["lastModifiedAt"] as? String).flatMap({ kiroISO.date(from: $0) }) else { continue }
             let title = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Kiro chat"
-            found.append(KiroSession(id: folder.lastPathComponent, title: title, status: status, updatedAt: updated, folder: folder))
+            found.append(KiroSession(id: folder.lastPathComponent, title: title, status: status, updatedAt: updated, folder: folder,
+                                     workspace: (json["workspacePaths"] as? [String])?.first))
         }
     }
     return found.sorted { $0.updatedAt > $1.updatedAt }
@@ -5586,7 +6028,7 @@ func mergeLatestWithKiro(_ others: [(at: Double, row: BriefRow, app: Int)], kiro
     let kiroRows = kiro.prefix(limit).map { session in
         (at: session.updatedAt.timeIntervalSince1970 * 1000,
          row: BriefRow(left: clip(session.title, 26), right: "\(listStateLabel(session.status)) · \(ago(session.updatedAt.timeIntervalSince1970 * 1000))",
-                       dot: session.status.color, kiro: true),
+                       dot: session.status.color, link: kiroSessionLink(session), kiro: true),
          app: 2)
     }
     let all = (others + kiroRows).sorted { $0.at > $1.at }
@@ -6095,6 +6537,10 @@ func powerHoursText(_ wattHours: Double) -> String {
 }
 
 /// "5h 11m", or "40m"
+/// "3 h" or "40m", for a short row
+func shortPowerClock(_ minutes: Int) -> String {
+    minutes >= 60 ? "\(minutes / 60) h" : "\(minutes)m"
+}
 func powerClock(_ minutes: Int) -> String {
     minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
 }
@@ -8059,7 +8505,7 @@ final class NotePanel: NSPanel {
         }
         refreshAutomationSources()
         presentUnderHer(briefContent(kind: kind, chats: chats, log: dayLog, now: now, offer: resetOffer, kiro: kiroBriefData(now: now),
-                                     automations: visibleAutomations(now: now)), live: kind)
+                                     automations: visibleAutomations(now: now), hiddenCount: hiddenAutomations.count), live: kind)
         mochiLog("brief: \(kind) shown")
     }
 
@@ -8090,7 +8536,7 @@ final class NotePanel: NSPanel {
     /// A row's icon, link or button in the Agents and schedules box
     func handleAutomationAction(_ action: AutomationAction, key: String) {
         let snap = currentAutomations()
-        let row = (snap.running + snap.upcoming + snap.recent + snap.today + snap.missed).first { $0.key == key }
+        let row = (snap.running + snap.upcoming + snap.recent + snap.today + snap.missed + snap.agentRuns).first { $0.key == key }
         switch action {
         case .open:
             openChat(row?.link)
@@ -8198,8 +8644,24 @@ final class NotePanel: NSPanel {
         brief.onClose = { [weak self] in self?.briefPanel.orderOut(nil); self?.briefLiveKind = nil; self?.briefSuppressed = true; self?.placeCards() }
         brief.pinned = briefOnTop
         brief.onPin = { [weak self] in self?.toggleBriefOnTop() }
-        brief.onAction = { [weak self] action, key in self?.handleAutomationAction(action, key: key) }
+        brief.onAction = { [weak self] action, key in
+            guard let self else { return }
+            if action == .showHidden {
+                // Show from the brief opens Agents and schedules on the hidden list
+                self.showAgents()
+                self.agentsBox.showingHidden = true
+                self.refreshAgentsBox()
+                return
+            }
+            self.handleAutomationAction(action, key: key)
+        }
         brief.canRunKiroCrew = FileManager.default.isExecutableFile(atPath: kirocrewBinary.path)
+        brief.onAllChats = { [weak self] in
+            guard let self else { return }
+            self.view.unread = 0
+            self.fillChatList()
+            self.showList()
+        }
         brief.undoKeys = automationUndoKeys
         brief.confirmKey = automationConfirmKey
         briefPanel.contentView = makeGlass(size: NSSize(width: BriefView.width, height: height), content: brief, radius: 20)
@@ -8238,7 +8700,7 @@ final class NotePanel: NSPanel {
         guard let kind = briefLiveKind, briefPanel.isVisible, let brief = currentBrief else { return }
         refreshAutomationSources()
         brief.content = briefContent(kind: kind, chats: chats, log: dayLog, now: Date(), offer: resetOffer, kiro: kiroBriefData(),
-                                     automations: visibleAutomations())
+                                     automations: visibleAutomations(), hiddenCount: hiddenAutomations.count)
         let height = brief.fittingHeight()
         if height != briefPanel.frame.height {
             brief.frame = NSRect(x: 0, y: 0, width: BriefView.width, height: height)

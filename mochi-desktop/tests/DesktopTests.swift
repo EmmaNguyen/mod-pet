@@ -130,7 +130,7 @@ check("the listed Cursor chat carries that jump",
 check("an old cursor://chat link still names the agent",
       cursorAgentID(from: URL(string: "cursor://chat/abc")!) == "abc")
 let cursorBrief = briefContent(kind: "morning", chats: [cursorDone!], log: [:], now: cursorNow, offer: nil)
-check("the morning brief lists a Cursor chat", cursorBrief.latest.first?.left.hasPrefix("Cursor ·") == true)
+check("the morning brief lists a Cursor chat, with its badge and no \"Cursor ·\" in front", cursorBrief.latest.first?.app == .cursor && cursorBrief.latest.first?.left.hasPrefix("Cursor ·") == false)
 check("the morning brief counts a finished Cursor chat as not waiting", cursorBrief.stats.map(\.value).prefix(2) == ["0", "0"])
 check("discharging 580 mA at 12.864 V is about 7.5 W", abs(powerWatts(milliamps: -580, millivolts: 12864) - 7.461) < 0.01)
 check("charging current is not counted as draw", powerWatts(milliamps: 580, millivolts: 12864) < 0)
@@ -531,7 +531,7 @@ let continued = cursorChat(id: "abc", project: "Claude-Mods", head: cursorHead, 
                            created: cursorNow.addingTimeInterval(-600), now: cursorNow.addingTimeInterval(300), tail: cursorTail)
 check("a continued Cursor chat uses the latest question",
       continued?.title == "Cursor · Latest sessions from Cursor and Claude")
-check("the brief carries the latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil).latest.count == 7)
+check("the compact brief carries the three latest sessions", briefContent(kind: "evening", chats: manySessions, log: [:], now: Date(), offer: nil).latest.count == 3)
 
 // Each latest session carries its real chat link, so a click opens that chat
 let linked = [Chat(id: "L", title: "Linked session", status: .ready, log: [], updatedAt: 5, link: "claude://code/continue?session=abc", waiting: "", isRecent: true, requestId: "", askedAt: 0, detail: "", mode: "", canSwitchMode: false)]
@@ -879,4 +879,82 @@ check("a running Kiro Crew job offers pause instead of resume",
 check("without kirocrew, or for Claude and Cursor, only open and hide",
       automationIcons(link: "x", key: "k", kiroJob: "b09c4bcf", kiroPaused: true, canRunKiroCrew: false).map(\.1) == [.open, .hide] &&
       automationIcons(link: "x", key: "k", kiroJob: nil, kiroPaused: false, canRunKiroCrew: true).map(\.1) == [.open, .hide])
+// The morning brief's agent runs: running first, then what finished in the last day, from Claude and Cursor
+let runNow = autoAt(2026, 11, 23, 9)
+var runSources = AutomationSources()
+runSources.claudeAgents = [AgentRun(id: "done", task: "Old fix", started: runNow.addingTimeInterval(-5 * 3600), lastActivity: runNow.addingTimeInterval(-4 * 3600), session: "cli-x"),
+                           AgentRun(id: "stale", task: "Last week", started: runNow.addingTimeInterval(-90 * 3600), lastActivity: runNow.addingTimeInterval(-89 * 3600))]
+runSources.cloud = [CloudAgentRun(name: "Polish", started: runNow.addingTimeInterval(-3 * 3600), lastActivity: runNow.addingTimeInterval(-2 * 3600), id: "bc-p"),
+                    CloudAgentRun(name: "Live", started: runNow.addingTimeInterval(-600), lastActivity: runNow.addingTimeInterval(-20), id: "bc-l")]
+runSources.claude.localByCli["cli-x"] = "local_x"
+let runSnap = automationSnapshot(sources: runSources, agents: [AgentRun(id: "now", task: "Fix share sheet", started: runNow.addingTimeInterval(-252), lastActivity: runNow.addingTimeInterval(-5))], now: runNow)
+check("agent runs list running ones first, then the last day's finished ones, newest first",
+      runSnap.agentRuns.map(\.title) == ["Fix share sheet", "Live", "Polish", "Old fix"])
+check("an agent run from days ago is left out", !runSnap.agentRuns.contains { $0.title == "Last week" })
+check("a finished Claude agent opens the chat that started it", runSnap.agentRuns.last?.link == "claude://code/continue?session=local_x&source=mochi")
+check("hiding an agent takes it out of the agent runs", !withoutHidden(runSnap, hidden: ["cursor:cloud:bc-p"]).agentRuns.contains { $0.title == "Polish" })
+let runBrief = briefContent(kind: "morning", chats: [], log: [:], now: runNow, offer: nil, cursorByDay: [:], automations: runSnap, hiddenCount: 6)
+check("the brief says which agents are running, and how many are hidden",
+      runBrief.agentRuns.first?.right == "Running · 4m 12s" && runBrief.agentRuns[1].right.hasPrefix("Cloud · running") && runBrief.hiddenCount == 6)
+check("the brief keeps at most five agent runs", briefContent(kind: "morning", chats: [], log: [:], now: runNow, offer: nil, cursorByDay: [:],
+      automations: AutomationSnapshot(agentRuns: Array(repeating: runSnap.agentRuns[0], count: 9))).agentRuns.count == 5)
+check("the wrap-up has no agent runs", briefContent(kind: "evening", chats: [], log: [:], now: autoAt(2026, 11, 23, 19), offer: nil, cursorByDay: [:], automations: runSnap).agentRuns.isEmpty)
+// Cursor's own agents and subagents on this Mac, such as an automation's daily run
+let curHead = #"{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Monday, Nov 23, 2026, 7:44 AM (UTC+7)</timestamp>\n<user_query>\nFull Repository Path: /Users/emma/Documents/x\n**Daily pipeline find-roles — 23 Nov**\nRun `scripts/a.py`\n</user_query>"}]}}"#
+check("a Cursor run is titled by its bold heading, not its path header", cursorRunTitle(head: curHead, isSubagent: true) == "Daily pipeline find-roles — 23 Nov")
+let curPlain = #"{"role":"user","message":{"content":[{"type":"text","text":"Repo: `x`\nRead and follow:\nFix the `login` redirect\n"}]}}"#
+check("without a heading, the first line that is not a header is the title", cursorRunTitle(head: curPlain, isSubagent: true) == "Fix the login redirect")
+check("a run with no readable task still has a name", cursorRunTitle(head: "", isSubagent: true) == "Cursor subagent")
+let curRoot = FileManager.default.temporaryDirectory.appendingPathComponent("mochi-cursor-runs-\(UUID().uuidString)")
+let curSession = curRoot.appendingPathComponent("Users-x/agent-transcripts/s1")
+try! FileManager.default.createDirectory(at: curSession.appendingPathComponent("subagents"), withIntermediateDirectories: true)
+let curNow = Date()
+func curFile(_ url: URL, age: TimeInterval) {
+    try! (curHead + "\n").write(to: url, atomically: true, encoding: .utf8)
+    try! FileManager.default.setAttributes([.modificationDate: curNow.addingTimeInterval(-age)], ofItemAtPath: url.path)
+}
+curFile(curSession.appendingPathComponent("s1.jsonl"), age: 3600)
+curFile(curSession.appendingPathComponent("subagents/a.jsonl"), age: 30)
+curFile(curSession.appendingPathComponent("subagents/b.jsonl"), age: 5 * 3600)
+curFile(curSession.appendingPathComponent("subagents/c.jsonl"), age: 3 * 86_400)
+let curRuns = readCursorAgentRuns(now: curNow, root: curRoot)
+check("Cursor subagents from the last day are read, an idle main agent and old subagents are not",
+      Set(curRuns.map(\.id)) == ["a", "b"] && curRuns.allSatisfy(\.isSubagent))
+check("a Cursor run opens its agent in Cursor", curRuns.first?.link.hasPrefix("cursor://anysphere.cursor-deeplink/agent?id=s1") == true)
+curFile(curSession.appendingPathComponent("s1.jsonl"), age: 10)
+check("a main Cursor agent that is writing now counts as a run", readCursorAgentRuns(now: curNow, root: curRoot).contains { $0.id == "s1" && !$0.isSubagent })
+try? FileManager.default.removeItem(at: curRoot)
+let curSnap = automationSnapshot(sources: AutomationSources(cursorAgents: curRuns), agents: [], now: curNow)
+check("a Cursor subagent working now is running, one that finished is in the agent runs",
+      curSnap.running.map(\.key) == ["cursor:agent:a"] && curSnap.agentRuns.map(\.key) == ["cursor:agent:a", "cursor:agent:b"])
+// The compact morning brief: one Today list, three latest chats, clean titles
+check("a compact title drops \"Cursor ·\" and stray \\n", briefTitle("Cursor · \\nreview\\n") == "review" && briefTitle("Cursor ·   ") == "Untitled" && briefTitle("Plain") == "Plain")
+check("a short power time is whole hours", shortPowerClock(190) == "3 h" && shortPowerClock(40) == "40m")
+let cmpNow = autoAt(2026, 11, 24, 9)
+let cmpRunningChat = Chat(id: "cursor-s1", title: "Cursor · Fix it", status: .running, log: [], updatedAt: cmpNow.timeIntervalSince1970 * 1000, link: "cursor://x", waiting: "", isRecent: true, host: .cursor)
+let cmpOtherRunning = Chat(id: "c2", title: "Claude work", status: .running, log: [], updatedAt: cmpNow.timeIntervalSince1970 * 1000, link: "claude://y", waiting: "", isRecent: true)
+let cmpIdle = (0..<5).map { Chat(id: "i\($0)", title: "Idle \($0)", status: .ready, log: [], updatedAt: (cmpNow.timeIntervalSince1970 - Double($0) * 600) * 1000, link: "claude://i\($0)", waiting: "", isRecent: true) }
+var cmpSnap = AutomationSnapshot()
+cmpSnap.agentRuns = [AutomationRow(app: .cursor, title: "Fix it", detail: "Agent", right: "43s", tone: .running, at: cmpNow, link: "cursor://x", key: "cursor:agent:s1"),
+                     AutomationRow(app: .cursor, title: "Daily pipeline", detail: "Subagent", right: "", tone: .muted, at: cmpNow.addingTimeInterval(-3 * 3600), key: "cursor:agent:sub")]
+cmpSnap.today = [AutomationRow(app: .claude, title: "Later task", detail: "", right: "in 1h", tone: .upcoming, at: cmpNow.addingTimeInterval(3600), key: "claude:task:later")]
+let cmpToday = compactToday(chats: [cmpRunningChat, cmpOtherRunning] + cmpIdle, kiro: nil, automations: cmpSnap, now: cmpNow)
+check("Today lists running first, each once, then today's schedule, then finished agents",
+      cmpToday.map(\.left) == ["Fix it", "Claude work", "Later task", "Daily pipeline"])
+check("a running agent shows its time in blue, a finished one a tick", cmpToday[0].right == "43s" && cmpToday.last?.right.hasSuffix("✓") == true)
+let cmpLatest = compactLatest(chats: [cmpRunningChat, cmpOtherRunning] + cmpIdle, kiro: nil)
+check("Latest keeps three chats that are not running, newest first", cmpLatest.map(\.left) == ["Idle 0", "Idle 1", "Idle 2"])
+let cmpBrief = briefContent(kind: "morning", chats: cmpIdle, log: [:], now: cmpNow, offer: nil, cursorByDay: [:], automations: cmpSnap, hiddenCount: 2)
+let cmpEvening = briefContent(kind: "evening", chats: cmpIdle, log: [:], now: autoAt(2026, 11, 24, 19), offer: nil, cursorByDay: [:], automations: cmpSnap)
+check("both briefs are compact, and the wrap-up keeps its working time and week",
+      cmpBrief.compact && cmpBrief.latest.count == 3 && cmpEvening.compact && cmpEvening.workingToday != nil && cmpEvening.week.count == 7 && cmpEvening.latest.count == 3)
+check("the wrap-up's Today lists what ran, like the morning", cmpEvening.today.contains { $0.left == "Daily pipeline" })
+check("the wrap-up shows how many are hidden", briefContent(kind: "evening", chats: [], log: [:], now: autoAt(2026, 11, 24, 19), offer: nil, cursorByDay: [:], hiddenCount: 4).hiddenCount == 4)
+// Kiro chats open their project in Kiro, since Kiro has no link to one chat
+let kiroLinked = KiroSession(id: "s", title: "T", status: .idle, updatedAt: Date(), folder: URL(fileURLWithPath: "/tmp"), workspace: "/Users/me/My Project")
+let kiroLinkURL = URLComponents(string: kiroSessionLink(kiroLinked))
+check("a Kiro chat links to its project folder", kiroLinkURL?.scheme == "mochi-kiro" && kiroLinkURL?.queryItems?.first?.value == "/Users/me/My Project")
+check("a Kiro chat with no project brings Kiro forward", kiroSessionLink(KiroSession(id: "s", title: "T", status: .idle, updatedAt: Date(), folder: URL(fileURLWithPath: "/tmp"))) == "mochi-app://" + kiroBundleID)
+check("Kiro rows in the latest sessions carry that link", mergeLatestWithKiro([], kiro: [kiroLinked]).first?.link == kiroSessionLink(kiroLinked))
+check("a Kiro chat in the compact brief keeps its link", compactLatest(chats: [], kiro: KiroBrief(sessions: [kiroLinked])).first?.link == kiroSessionLink(kiroLinked))
 print("ALL PASSED")
